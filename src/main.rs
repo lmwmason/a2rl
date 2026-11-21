@@ -1,6 +1,8 @@
 use std::time::{Duration, Instant};
 
-use a2rl_sim::{camera::Camera, mode2_acro, Race, Status, CONTROL_HZ, PHYSICS_HZ};
+use a2rl_sim::{
+    camera::Camera, mode2_acro, Race, Status, CONTROL_HZ, GRAND_CHALLENGE_LAPS, PHYSICS_HZ,
+};
 use eframe::egui::{self, Align2, Color32, FontId, Key, Pos2, Rect, Stroke, Vec2, ViewportCommand};
 
 const WIDTH: usize = 640;
@@ -52,7 +54,7 @@ struct Fpv {
 
 impl Fpv {
     fn new(ctx: &egui::Context) -> Self {
-        let race = Race::ground_start(0., 1.);
+        let race = Race::grand_challenge();
         let camera = Camera::new(WIDTH, HEIGHT);
         let mut rgb = vec![0; camera.byte_len()];
         camera.render(&race, &mut rgb);
@@ -91,7 +93,7 @@ impl Fpv {
     fn reset(&mut self) {
         self.set_running(false);
         let breakup = self.race.video_breakup;
-        self.race = Race::ground_start(0., 1.);
+        self.race = Race::grand_challenge();
         self.race.video_breakup = breakup;
         self.throttle = 0.;
         self.countdown = 0;
@@ -143,20 +145,25 @@ impl Fpv {
             "ACRO"
         };
         show(inset.left_top(), Align2::LEFT_TOP, mode);
-        show(
-            inset.center_top(),
-            Align2::CENTER_TOP,
-            &format!(
+        let gate = if self.race.status == Status::Finished {
+            format!(
+                "FINISH {:02}/{:02}",
+                self.race.passed,
+                self.race.gates.len() * GRAND_CHALLENGE_LAPS
+            )
+        } else {
+            format!(
                 "GATE {:02}/{:02}",
                 self.race.next_gate() + 1,
                 self.race.gates.len()
-            ),
-        );
-        let lap = (self.race.ticks - self.race.lap_start) as f32 / PHYSICS_HZ as f32;
-        let total = self.race.ticks as f32 / PHYSICS_HZ as f32;
+            )
+        };
+        show(inset.center_top(), Align2::CENTER_TOP, &gate);
+        let lap = self.race.lap_seconds();
+        let total = self.race.official_seconds().unwrap_or_default();
         let time = format!(
-            "LAP {:02}  {:06.2}s\nTOTAL   {:06.2}s",
-            self.race.laps + 1,
+            "LAP {:02}/{GRAND_CHALLENGE_LAPS:02}  {:06.2}s\nTOTAL      {:06.2}s",
+            (self.race.laps + 1).min(GRAND_CHALLENGE_LAPS),
             lap,
             total
         );
@@ -227,6 +234,7 @@ impl Fpv {
             Status::Boundary => ("COURSE BOUNDARY", "Restart flight"),
             Status::Timeout => ("SESSION COMPLETE", "Restart flight"),
             Status::Stalled => ("GATE TIME EXPIRED", "Restart flight"),
+            Status::Finished => ("GRAND CHALLENGE FINISH", "Race again"),
         };
         egui::Area::new(egui::Id::new("flight_menu"))
             .anchor(Align2::CENTER_CENTER, Vec2::ZERO)

@@ -5,6 +5,7 @@ use glam::{Quat, Vec3};
 
 pub const PHYSICS_HZ: usize = 240;
 pub const CONTROL_HZ: usize = 30;
+pub const GRAND_CHALLENGE_LAPS: usize = 2;
 const DT: f32 = 1.0 / PHYSICS_HZ as f32;
 pub const ARENA_MIN: Vec3 = Vec3::new(1., -1., 0.);
 pub const ARENA_MAX: Vec3 = Vec3::new(95., 27., 6.2);
@@ -214,6 +215,7 @@ pub enum Status {
     Boundary = 2,
     Timeout = 3,
     Stalled = 4,
+    Finished = 5,
 }
 
 pub struct Race {
@@ -235,6 +237,8 @@ pub struct Race {
     initial_distance: f32,
     progress: f32,
     on_launch_pad: bool,
+    grand_challenge: bool,
+    first_gate_tick: Option<usize>,
 }
 
 impl Default for Race {
@@ -259,6 +263,8 @@ impl Default for Race {
             initial_distance: gates[0].center.distance(START),
             progress: 0.,
             on_launch_pad: false,
+            grand_challenge: false,
+            first_gate_tick: None,
         }
     }
 }
@@ -269,6 +275,27 @@ fn lap_reward(elapsed: f32, best: Option<f32>) -> f32 {
 }
 
 impl Race {
+    pub fn grand_challenge() -> Self {
+        let mut race = Self::ground_start(0., 1.);
+        race.grand_challenge = true;
+        race
+    }
+
+    pub fn official_seconds(&self) -> Option<f32> {
+        self.first_gate_tick
+            .map(|start| (self.ticks - start) as f32 * DT)
+    }
+
+    pub fn lap_seconds(&self) -> f32 {
+        if self.status == Status::Finished {
+            return self.last_lap.unwrap_or_default();
+        }
+        if self.grand_challenge && self.first_gate_tick.is_none() {
+            return 0.;
+        }
+        (self.ticks - self.lap_start) as f32 * DT
+    }
+
     pub fn gate_frames(&self) -> impl Iterator<Item = &Gate> {
         self.gates.iter().chain(std::iter::once(&LOWER_FRAME))
     }
@@ -376,6 +403,10 @@ impl Race {
             reward += 0.8 * (progress - self.progress);
             self.progress = progress;
             if passed {
+                if self.passed == 0 && self.grand_challenge {
+                    self.first_gate_tick = Some(self.ticks);
+                    self.lap_start = self.ticks;
+                }
                 self.passed += 1;
                 self.last_gate_tick = self.ticks;
                 reward += 2.;
@@ -395,6 +426,10 @@ impl Race {
                     }
                     self.lap_start = self.ticks;
                     self.timed_lap = true;
+                    if self.grand_challenge && self.laps == GRAND_CHALLENGE_LAPS {
+                        self.status = Status::Finished;
+                        break;
+                    }
                 }
             }
             if self.ticks - self.last_gate_tick >= 14 * PHYSICS_HZ {
@@ -497,6 +532,38 @@ mod tests {
         let no_delay = lap_reward(40., None) + lap_reward(36., Some(40.));
         let delay = lap_reward(60., None) + lap_reward(36., Some(60.)) - 0.20 * 20.;
         assert!(no_delay > delay);
+    }
+
+    #[test]
+    fn grand_challenge_times_gate_one_to_gate_twenty_two() {
+        let mut race = Race::grand_challenge();
+        let gates_per_lap = race.gates.len();
+        race.ticks = 4 * PHYSICS_HZ;
+        assert_eq!(race.official_seconds(), None);
+        assert_eq!(race.lap_seconds(), 0.);
+        race.on_launch_pad = false;
+        for i in 0..gates_per_lap * GRAND_CHALLENGE_LAPS {
+            let gate = race.gates[i % gates_per_lap];
+            race.ticks += PHYSICS_HZ;
+            race.drone.position = gate.center - gate.normal * 0.04;
+            race.drone.velocity = gate.normal * 5.;
+            race.step([HOVER, 0., 0., 0.]).unwrap();
+            if i == 0 {
+                assert!(race.first_gate_tick.unwrap() >= 5 * PHYSICS_HZ);
+                assert!(race.official_seconds().unwrap() < 1. / CONTROL_HZ as f32);
+            }
+            if i == gates_per_lap - 1 {
+                assert_eq!(race.status, Status::Racing);
+            }
+        }
+        assert_eq!(race.status, Status::Finished);
+        assert_eq!(race.passed, 22);
+        assert_eq!(race.laps, 2);
+        let official = race.official_seconds().unwrap();
+        assert!((21. ..22.).contains(&official));
+        assert_eq!(race.lap_seconds(), race.last_lap.unwrap());
+        assert!(race.step([HOVER, 0., 0., 0.]).is_none());
+        assert_eq!(race.official_seconds(), Some(official));
     }
 
     #[test]

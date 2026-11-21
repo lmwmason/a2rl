@@ -67,14 +67,16 @@ def evaluate(agent, env, stack, episodes):
         if best is not None:
             records.append(best)
         returns.append(reward_total)
+    gates_per_lap = env.lib.sim_gate_count()
     return {"return": float(np.mean(returns)), "gates_mean": float(np.mean(passes)),
-            "laps_total": sum(gate // env.lib.sim_gate_count() for gate in passes),
+            "laps_total": sum(gate // gates_per_lap for gate in passes),
             "best_lap_seconds": min(records, default=None), "crash_rate": crashes / episodes,
             "stall_rate": stalls / episodes,
             "launch_to_gate_one_rate": sum(gate >= 1 for gate in passes) / episodes,
             "split_s_rate": sum(gate >= 6 for gate in passes) / episodes,
             "slalom_rate": sum(gate >= 10 for gate in passes) / episodes,
-            "lap_rate": sum(gate >= env.lib.sim_gate_count() for gate in passes) / episodes}
+            "lap_rate": sum(gate >= gates_per_lap for gate in passes) / episodes,
+            "two_lap_rate": sum(gate >= 2 * gates_per_lap for gate in passes) / episodes}
 
 
 def initial_exploration(rng, previous):
@@ -104,6 +106,7 @@ def train(args, agent, lib):
     gate_weights /= gate_weights.sum()
     started = time.monotonic()
     last_report, last_eval = started, 0
+    last_report_steps = 0
     updates, steps = 0, 0
     best_rank = None
     losses = None
@@ -150,11 +153,13 @@ def train(args, agent, lib):
                         updates += 1
                 now = time.monotonic()
                 if now - last_report > 10:
-                    record = {"steps": steps, "updates": updates, "fps": round(steps / (now - started), 1)}
+                    record = {"steps": steps, "updates": updates, "fps": round(steps / (now - started), 1),
+                              "window_fps": round((steps - last_report_steps) / (now - last_report), 1)}
                     if losses is not None:
                         record["critic_loss"], record["actor_loss"] = (float(loss) for loss in losses)
                     print(json.dumps(record), flush=True)
                     last_report = now
+                    last_report_steps = steps
                 if steps - last_eval >= args.eval_every or steps >= args.steps:
                     result = evaluate(agent, test_env, args.stack, args.eval_episodes)
                     result.update(steps=steps, updates=updates)
@@ -162,7 +167,7 @@ def train(args, agent, lib):
                     log.write(json.dumps(result) + "\n")
                     agent.save(args.run_dir / "latest.pt")
                     fastest = result["best_lap_seconds"]
-                    rank = (result["laps_total"] > 0, -fastest if fastest is not None else 0.,
+                    rank = (result["two_lap_rate"], result["lap_rate"], -fastest if fastest is not None else 0.,
                             result["gates_mean"], -result["crash_rate"], result["return"])
                     if best_rank is None or rank > best_rank:
                         agent.save(args.run_dir / "best.pt")

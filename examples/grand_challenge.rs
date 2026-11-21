@@ -8,7 +8,7 @@ use std::{
 
 use a2rl_sim::{
     camera::{camera_pose, hall_bounds, Camera, LENS},
-    mode2_acro, Race, Status, BARS, CONTROL_HZ, PHYSICS_HZ, START,
+    mode2_acro, Race, Status, BARS, CONTROL_HZ, GRAND_CHALLENGE_LAPS, PHYSICS_HZ, START,
 };
 use glam::{Mat3, Quat, Vec3};
 
@@ -30,7 +30,12 @@ fn course(race: &Race) -> Vec<Waypoint> {
         heading: race.drone.rotation * Vec3::X,
         clearance: 0.2,
     }];
-    for gate in race.gates {
+    for gate in race
+        .gates
+        .iter()
+        .cycle()
+        .take(race.gates.len() * GRAND_CHALLENGE_LAPS)
+    {
         route.push(Waypoint {
             position: gate.center - gate.normal * 2.6,
             heading: gate.normal,
@@ -77,7 +82,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = env::args_os().skip(1);
     let path = args.next();
     let trace = path.as_deref() == Some(std::ffi::OsStr::new("--poses"));
-    let mut race = Race::ground_start(0., 1.);
+    let mut race = Race::grand_challenge();
     let mut poses = if trace {
         let mut output = fs::File::create(args.next().ok_or("Expected a pose output path")?)?;
         writeln!(
@@ -170,7 +175,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             eprintln!(
                 "Gate {:02}/{} at {:.2}s",
                 race.passed,
-                race.gates.len(),
+                race.gates.len() * GRAND_CHALLENGE_LAPS,
                 race.ticks as f32 / PHYSICS_HZ as f32
             );
         }
@@ -204,21 +209,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!(
         "{} / {} gates, {} laps, {:.2}s elapsed, peak {:.1} km/h, {:?}",
         race.passed,
-        race.gates.len(),
+        race.gates.len() * GRAND_CHALLENGE_LAPS,
         race.laps,
         race.ticks as f32 / PHYSICS_HZ as f32,
         peak_speed * 3.6,
         race.status
     );
-    if race.laps != 1 || race.status != Status::Racing {
+    if race.status != Status::Finished {
         eprintln!(
             "Waypoint {point}, position {:?}, velocity {:?}",
             race.drone.position, race.drone.velocity
         );
         return Err(io::Error::other(
-            "The Grand Challenge demonstration did not complete one lap.",
+            "The Grand Challenge demonstration did not complete two laps.",
         )
         .into());
     }
+    println!(
+        "Official elapsed: {:.2}s",
+        race.official_seconds().unwrap_or_default()
+    );
     Ok(())
 }

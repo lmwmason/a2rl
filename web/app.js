@@ -3,12 +3,18 @@ const canvas = el('camera');
 const context = canvas.getContext('2d', { alpha: false });
 const map = el('course').getContext('2d');
 const keys = new Set();
-const controls = new Set(['KeyW', 'KeyS', 'KeyA', 'KeyD', 'KeyQ', 'KeyE', 'Space', 'ShiftLeft', 'ShiftRight']);
-let config, pixels, running = false, busy = false, generation = 0, finished = false;
+const controls = new Set(['KeyW', 'KeyS', 'KeyA', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight']);
+const throttlePerSecond = 0.65;
+let config, pixels, throttle, running = false, busy = false, generation = 0, finished = false;
 
 const point = ([x, y]) => [25 + (x + 8) * 5.35, 195 - (y + 12) * 5.75];
 const clock = seconds => seconds == null ? '—' : seconds.toFixed(2) + ' s';
 const held = code => Number(keys.has(code));
+
+function setThrottle(value) {
+  throttle = Math.max(0, Math.min(1, value));
+  el('throttle').textContent = Math.round(throttle * 100) + '%';
+}
 
 function drawMap(stats) {
   map.clearRect(0, 0, 320, 220);
@@ -93,15 +99,18 @@ async function request(path, body) {
   } finally {
     if (current === generation) {
       busy = false;
-      if (running) setTimeout(loop, Math.max(0, 1000 / 30 - (performance.now() - start)));
+      if (running) setTimeout(loop, Math.max(0, 1000 / config.controlHz - (performance.now() - start)));
     }
   }
 }
 function loop() {
   if (!running || busy) return;
+  setThrottle(throttle + (held('KeyW') - held('KeyS')) * throttlePerSecond / config.controlHz);
   request('/fly', [
-    held('Space') - Number(keys.has('ShiftLeft') || keys.has('ShiftRight')),
-    held('KeyD') - held('KeyA'), held('KeyW') - held('KeyS'), held('KeyQ') - held('KeyE'),
+    throttle,
+    held('ArrowRight') - held('ArrowLeft'),
+    held('ArrowUp') - held('ArrowDown'),
+    held('KeyA') - held('KeyD'),
   ]);
 }
 
@@ -128,6 +137,7 @@ el('reset').addEventListener('click', () => {
   const tryReset = () => {
     if (busy) return setTimeout(tryReset, 20);
     generation++;
+    setThrottle(config.initialThrottle);
     request('/reset', null);
   };
   tryReset();
@@ -137,6 +147,7 @@ try {
   const response = await fetch('/config');
   if (!response.ok) throw new Error('HTTP ' + response.status);
   config = await response.json();
+  setThrottle(config.initialThrottle);
   canvas.width = config.width;
   canvas.height = config.height;
   pixels = context.createImageData(config.width, config.height);

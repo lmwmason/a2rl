@@ -3,7 +3,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use a2rl_sim::{camera::Camera, Race, Status, HOVER, LAYOUT, MASS_KG, PHYSICS_HZ};
+use a2rl_sim::{camera::Camera, Race, Status, CONTROL_HZ, HOVER, LAYOUT, MASS_KG, PHYSICS_HZ};
 use axum::{
     extract::State,
     http::{header, HeaderValue, StatusCode},
@@ -60,17 +60,7 @@ async fn fly(State(app): State<App>, Json(action): Json<[f32; 4]>) -> Response {
     }
     let mut race = app.race.lock().unwrap();
     if race.status == Status::Racing {
-        // Angle assistance applies only to the human keyboard controls.
-        let tilt = 0.46;
-        let (_, pitch, roll) = race.drone.rotation.to_euler(EulerRot::ZYX);
-        let thrust = HOVER / (roll.cos() * pitch.cos()).max(0.5);
-        let throttle = (thrust + 0.17 * action[0] - 0.035 * race.drone.velocity.z).clamp(0., 1.);
-        race.step([
-            throttle,
-            (tilt * action[1] - roll) * 1.2,
-            (tilt * action[2] - pitch) * 1.2,
-            action[3] * 0.48,
-        ]);
+        race.step(action);
     }
     frame(&race, &app.camera)
 }
@@ -98,7 +88,8 @@ fn router() -> Router {
             "/config",
             get(|| async {
                 Json(json!({
-                    "width": WIDTH, "height": HEIGHT, "gates": LAYOUT, "mass": MASS_KG
+                    "width": WIDTH, "height": HEIGHT, "gates": LAYOUT, "mass": MASS_KG,
+                    "controlHz": CONTROL_HZ, "initialThrottle": HOVER
                 }))
             }),
         )
@@ -127,6 +118,30 @@ mod tests {
         http::Request,
     };
     use tower::ServiceExt;
+
+    #[tokio::test]
+    async fn acro_neutral_preserves_bank_and_low_throttle_drops() {
+        let mut race = Race::default();
+        let bank = glam::Quat::from_rotation_x(0.45);
+        race.drone.rotation = bank;
+        let app = App {
+            race: Arc::new(Mutex::new(race)),
+            camera: Arc::new(Camera::new(12, 9)),
+        };
+        for _ in 0..10 {
+            fly(State(app.clone()), Json([HOVER, 0., 0., 0.])).await;
+        }
+        {
+            let mut race = app.race.lock().unwrap();
+            assert!(race.drone.rotation.abs_diff_eq(bank, 0.001));
+            assert!(race.drone.velocity.z < -0.25);
+            *race = Race::default();
+        }
+        for _ in 0..10 {
+            fly(State(app.clone()), Json([0., 0., 0., 0.])).await;
+        }
+        assert!(app.race.lock().unwrap().drone.velocity.z < -2.);
+    }
 
     #[tokio::test]
     async fn gui_routes_deliver_live_rgb_and_reset() {

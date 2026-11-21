@@ -30,6 +30,11 @@ def load_sim():
     lib.sim_destroy.restype = None
     lib.sim_reset.argtypes = [ct.c_void_p, ct.c_int, ct.c_float, ct.c_float, ct.c_float, ct.c_float, ct.c_uint32, ct.c_void_p]
     lib.sim_reset.restype = None
+    lib.sim_reset_after_gate.argtypes = [
+        ct.c_void_p, ct.c_size_t, ct.c_float, ct.c_float, ct.c_float, ct.c_float,
+        ct.c_float, ct.c_uint32, ct.c_void_p,
+    ]
+    lib.sim_reset_after_gate.restype = None
     lib.sim_step.argtypes = [ct.c_void_p, ct.c_void_p, ct.c_void_p, ct.POINTER(ct.c_float)]
     lib.sim_step.restype = ct.c_int
     lib.sim_lap_stats.argtypes = [ct.c_void_p, ct.POINTER(ct.c_uint32), ct.POINTER(ct.c_float)]
@@ -52,6 +57,11 @@ class Environment:
 
     def ground_start(self, side=0., exposure=1., breakup=0., video_seed=1):
         return self.reset(-2, side, exposure=exposure, breakup=breakup, video_seed=video_seed)
+
+    def after_gate(self, gate=0, side=0., height=0., speed=0., exposure=1., breakup=0., video_seed=1):
+        self.lib.sim_reset_after_gate(self.handle, gate, side, height, speed, exposure,
+                                      breakup, video_seed, self.image.ctypes.data)
+        return self.image
 
     def step(self, action):
         image, reward, status = self.advance(action)

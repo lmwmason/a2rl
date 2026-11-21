@@ -72,6 +72,28 @@ pub unsafe extern "C" fn sim_reset(
 }
 
 #[no_mangle]
+pub unsafe extern "C" fn sim_reset_after_gate(
+    env: *mut Environment,
+    gate: usize,
+    side: f32,
+    height: f32,
+    speed: f32,
+    exposure: f32,
+    video_breakup: f32,
+    video_seed: u32,
+    image: *mut u8,
+) {
+    let env = &mut *env;
+    env.race = Race::after_gate(gate, side, height, speed, exposure);
+    env.race.video_breakup = video_breakup;
+    env.race.video_seed = video_seed;
+    env.camera.render(
+        &env.race,
+        std::slice::from_raw_parts_mut(image, env.camera.byte_len()),
+    );
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn sim_step(
     env: *mut Environment,
     action: *const [f32; 4],

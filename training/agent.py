@@ -124,17 +124,29 @@ class Agent:
                 destination.lerp_(source, 0.01)
         return critic_loss.detach(), actor_loss.detach()
 
-    def save(self, path):
-        temp = path.with_suffix(".tmp")
-        torch.save({"action_layout": "mode2-acro-v1", "encoder": self.encoder.state_dict(), "actor": self.actor.state_dict(),
-                    "critic": self.critic.state_dict(), "target": self.target.state_dict()}, temp)
-        temp.replace(path)
+    def weights(self):
+        return {"action_layout": "mode2-acro-v1", "encoder": self.encoder.state_dict(),
+                "actor": self.actor.state_dict(), "critic": self.critic.state_dict(),
+                "target": self.target.state_dict()}
 
-    def load(self, path):
-        params = torch.load(path, map_location=self.device, weights_only=True)
+    def set_weights(self, params):
         if params.get("action_layout") != "mode2-acro-v1":
             raise ValueError("Checkpoint action layout does not match Mode 2 Acro.")
         self.encoder.load_state_dict(params["encoder"])
         self.actor.load_state_dict(params["actor"])
         self.critic.load_state_dict(params["critic"])
         self.target.load_state_dict(params["target"])
+
+    def save(self, path):
+        temp = path.with_suffix(".tmp")
+        torch.save(self.weights(), temp)
+        temp.replace(path)
+
+    def load(self, path):
+        self.set_weights(torch.load(path, map_location=self.device, weights_only=True))
+
+    def configure_warm_start(self):
+        self.critic_opt = torch.optim.Adam([
+            {"params": self.critic.parameters(), "lr": 1e-4},
+            {"params": self.encoder.parameters(), "lr": 1e-5},
+        ])

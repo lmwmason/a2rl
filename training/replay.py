@@ -34,6 +34,15 @@ class Replay:
     def ready(self):
         return self.count >= self.stack + self.n_step
 
+    def truncate_open(self, next_frames):
+        if self.count == 0:
+            return
+        row = (self.count - 1) % self.rows
+        for env in np.flatnonzero(self.flags[row] == 0):
+            self.flags[row, env] = 2
+            self.truncated_frames[self.count - 1, env] = next_frames[env].copy()
+        self.next_start.fill(self.count)
+
     def _stack(self, rows, envs, start):
         offsets = np.arange(1 - self.stack, 1)
         rows = np.maximum(rows[:, None] + offsets, start[:, None])

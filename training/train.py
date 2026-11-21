@@ -8,6 +8,7 @@ import time
 import numpy as np
 import torch
 
+from . import checkpoint
 from .agent import Agent
 from .demonstrations import Demonstrations
 from .replay import Replay
@@ -34,14 +35,18 @@ def options():
     parser.add_argument("--run-dir", type=Path, default=Path("runs/drq"))
     parser.add_argument("--evaluate", type=Path, help="Evaluate this checkpoint on the official simulator start.")
     parser.add_argument("--initialize", type=Path, help="Initialize online training from a Mode 2 checkpoint.")
+    parser.add_argument("--resume", type=Path, help="Restore a saved training state, including optimizer and replay.")
+    parser.add_argument("--checkpoint-every", type=int, default=0, help="Training steps between resumable snapshots.")
+    parser.add_argument("--focus-gate-two", action="store_true", help="Practice the turn from gate 1 to gate 2.")
     parser.add_argument("--demo-sim", type=Path, nargs="*", default=[],
                         help="Simulator demonstrations used as a decaying actor regularizer.")
     args = parser.parse_args()
-    if args.evaluate and args.initialize:
-        parser.error("Choose evaluation or initialization.")
+    if sum(value is not None for value in (args.evaluate, args.initialize, args.resume)) > 1:
+        parser.error("Choose evaluation, weight initialization or training-state resume.")
     positive = (args.steps, args.envs, args.width, args.height, args.stack, args.replay, args.batch,
                 args.update_every, args.n_step, args.eval_every, args.eval_episodes)
-    if min(positive) <= 0 or args.warmup < 0 or not 0 < args.gamma <= 1 or not 0 <= args.hdzero_max <= 1:
+    if (min(positive) <= 0 or min(args.warmup, args.checkpoint_every) < 0
+            or not 0 < args.gamma <= 1 or not 0 <= args.hdzero_max <= 1):
         parser.error("Counts must be positive, warmup nonnegative and gamma and HDZero strength must be in range.")
     return args
 
@@ -79,10 +84,30 @@ def evaluate(agent, env, stack, episodes):
             "best_lap_seconds": min(records, default=None), "crash_rate": crashes / episodes,
             "stall_rate": stalls / episodes,
             "launch_to_gate_one_rate": sum(gate >= 1 for gate in passes) / episodes,
+            "gate_two_rate": sum(gate >= 2 for gate in passes) / episodes,
             "split_s_rate": sum(gate >= 6 for gate in passes) / episodes,
             "slalom_rate": sum(gate >= 10 for gate in passes) / episodes,
             "lap_rate": sum(gate >= gates_per_lap for gate in passes) / episodes,
             "two_lap_rate": sum(gate >= 2 * gates_per_lap for gate in passes) / episodes}
+
+
+def evaluate_gate_exit(agent, env, stack):
+    passed = 0
+    crashes = 0
+    starts = [(2.5, 0.), (5., -0.18), (7.5, 0.18)]
+    for speed, side in starts:
+        obs = fresh_stack(env.after_gate(side=side, speed=speed), stack)
+        while True:
+            frame, _, status = env.advance(agent.action(obs[None])[0])
+            gates, _ = env.lap_stats()
+            if gates or status:
+                passed += int(gates > 0)
+                crashes += int(status == 1)
+                break
+            obs[:-1] = obs[1:]
+            obs[-1] = frame
+    return {"gate_exit_to_two_rate": passed / len(starts), "gate_exit_crash_rate": crashes / len(starts)}
+
 
 
 def initial_exploration(rng, previous):
@@ -100,8 +125,6 @@ def train(args, agent, lib):
     replay = Replay(args.replay, args.envs, shape, args.stack, args.n_step, args.gamma, rng)
     demonstrations = (Demonstrations([], args.demo_sim, args.stack, args.height, args.width, args.seed)
                       if args.demo_sim else None)
-    envs = [Environment(lib, args.width, args.height) for _ in range(args.envs)]
-    test_env = Environment(lib, args.width, args.height)
     rewards = np.zeros(args.envs, np.float32)
     flags = np.zeros(args.envs, np.uint8)
     next_frames = np.empty((args.envs, *shape), np.uint8)
@@ -114,14 +137,30 @@ def train(args, agent, lib):
     gate_weights /= gate_weights.sum()
     started = time.monotonic()
     last_report, last_eval = started, 0
-    last_report_steps = 0
     updates, steps = 0, 0
     best_rank = None
     losses = None
+    warm_started = bool(args.initialize)
+    if args.resume:
+        progress = checkpoint.load(args.resume, agent, replay, demonstrations)
+        steps, updates = progress["steps"], progress["updates"]
+        last_eval, best_rank = progress["last_eval"], progress["best_rank"]
+        warm_started = progress["warm_started"]
+        print(json.dumps({"restored_steps": steps, "restored_updates": updates,
+                          "restored_replay_rows": min(replay.count, replay.rows)}), flush=True)
+    last_report_steps = initial_steps = last_save = steps
+    envs = [Environment(lib, args.width, args.height) for _ in range(args.envs)]
+    test_env = Environment(lib, args.width, args.height)
 
     def reset(env, step):
         breakup = rng.uniform(0.05 * args.hdzero_max, args.hdzero_max) if rng.random() < 0.4 else 0.
         video_seed = int(rng.integers(1 << 32))
+        if args.focus_gate_two:
+            progress = min(1., step / args.steps)
+            if rng.random() < .53 - .33 * progress:
+                return env.after_gate(side=rng.uniform(-.35, .35), height=rng.uniform(-.22, .22),
+                                      speed=rng.uniform(2., 6. + 4. * progress),
+                                      exposure=rng.uniform(.8, 1.2), breakup=breakup, video_seed=video_seed)
         probability = gate_practice[min(100, round(step * 100 / args.steps))]
         if rng.random() > probability:
             return env.ground_start(rng.uniform(-0.3, 0.3), rng.uniform(0.8, 1.2), breakup, video_seed)
@@ -130,16 +169,16 @@ def train(args, agent, lib):
 
     try:
         for i, env in enumerate(envs):
-            starts[i] = fresh_stack(reset(env, 0), args.stack)
+            starts[i] = fresh_stack(reset(env, steps), args.stack)
         with ThreadPoolExecutor(max_workers=args.envs) as workers, (
             args.run_dir / "metrics.jsonl"
         ).open("a", encoding="utf-8", buffering=1) as log:
             while steps < args.steps:
-                if args.initialize:
+                if warm_started:
                     noise = max(.055, .13 - .075 * steps / max(1, args.steps // 2))
                 else:
                     noise = max(.10, .32 - .22 * steps / max(1, args.steps // 2))
-                if steps < args.warmup and not args.initialize:
+                if steps < args.warmup and not warm_started:
                     exploration = initial_exploration(rng, exploration)
                     actions = np.clip(exploration + trim, -1., 1.)
                 else:
@@ -159,7 +198,7 @@ def train(args, agent, lib):
                 previous_steps = steps
                 steps += args.envs
                 if steps >= args.warmup and replay.ready():
-                    actor_ready = not args.initialize or steps >= args.warmup + 8_000
+                    actor_ready = not warm_started or steps >= args.warmup + 8_000
                     imitation_weight = max(0., 1. - steps / 200_000.)
                     for _ in range(steps // args.update_every - previous_steps // args.update_every):
                         demo = (demonstrations.sample(args.batch // 2 or 1)
@@ -169,7 +208,7 @@ def train(args, agent, lib):
                         updates += 1
                 now = time.monotonic()
                 if now - last_report > 10:
-                    record = {"steps": steps, "updates": updates, "fps": round(steps / (now - started), 1),
+                    record = {"steps": steps, "updates": updates, "fps": round((steps - initial_steps) / (now - started), 1),
                               "window_fps": round((steps - last_report_steps) / (now - last_report), 1)}
                     if losses is not None:
                         record["critic_loss"], record["actor_loss"] = (float(loss) for loss in losses)
@@ -178,20 +217,31 @@ def train(args, agent, lib):
                     last_report_steps = steps
                 if steps - last_eval >= args.eval_every or steps >= args.steps:
                     result = evaluate(agent, test_env, args.stack, args.eval_episodes)
+                    if args.focus_gate_two:
+                        result.update(evaluate_gate_exit(agent, test_env, args.stack))
                     result.update(steps=steps, updates=updates)
                     print(json.dumps(result), flush=True)
                     log.write(json.dumps(result) + "\n")
                     agent.save(args.run_dir / "latest.pt")
                     fastest = result["best_lap_seconds"]
                     rank = (result["two_lap_rate"], result["lap_rate"], -fastest if fastest is not None else 0.,
-                            result["gates_mean"], -result["crash_rate"], result["return"])
+                            result["gate_two_rate"], result["gates_mean"], -result["crash_rate"], result["return"])
                     if best_rank is None or rank > best_rank:
                         agent.save(args.run_dir / "best.pt")
                         best_rank = rank
                     last_eval = steps
+                save_after = args.checkpoint_every if last_save else min(25_000, args.checkpoint_every)
+                if args.checkpoint_every and (steps - last_save >= save_after or steps >= args.steps):
+                    path = args.run_dir / "training-state.zip"
+                    checkpoint.save(path, agent, replay,
+                                    {"steps": steps, "updates": updates, "last_eval": last_eval,
+                                     "best_rank": best_rank, "warm_started": warm_started},
+                                    starts[:, -1], demonstrations)
+                    last_save = steps
+                    print(json.dumps({"saved_training_state": str(path), "steps": steps}), flush=True)
         elapsed = time.monotonic() - started
         print(json.dumps({"steps": steps, "updates": updates, "seconds": round(elapsed, 2),
-                          "fps": round(steps / elapsed, 1)}), flush=True)
+                          "fps": round((steps - initial_steps) / elapsed, 1)}), flush=True)
     finally:
         for env in [*envs, test_env]:
             env.close()
@@ -213,16 +263,16 @@ def main():
     agent = Agent(args.stack, device, lib.sim_hover_stick())
     if args.initialize:
         agent.load(args.initialize)
-        # Preserve visual features while the freshly initialized critic learns the simulator.
-        agent.critic_opt = torch.optim.Adam([
-            {"params": agent.critic.parameters(), "lr": 1e-4},
-            {"params": agent.encoder.parameters(), "lr": 1e-5},
-        ])
+        # Preserve visual features while the critic adapts to the new replay.
+        agent.configure_warm_start()
     if args.evaluate:
         agent.load(args.evaluate)
         env = Environment(lib, args.width, args.height)
         try:
-            print(json.dumps(evaluate(agent, env, args.stack, args.eval_episodes)))
+            result = evaluate(agent, env, args.stack, args.eval_episodes)
+            if args.focus_gate_two:
+                result.update(evaluate_gate_exit(agent, env, args.stack))
+            print(json.dumps(result))
         finally:
             env.close()
     else:

@@ -342,6 +342,26 @@ impl Race {
         race
     }
 
+    pub fn after_gate(
+        gate_index: usize,
+        side_offset: f32,
+        height_offset: f32,
+        speed: f32,
+        exposure: f32,
+    ) -> Self {
+        let index = gate_index % LAYOUT.len();
+        let mut race = Self::practice(index + 1, 0., 0., exposure);
+        let gate = race.gates[index];
+        race.drone.position =
+            gate.center + 1.35 * gate.normal + side_offset * gate.side + height_offset * Vec3::Z;
+        race.drone.rotation = Quat::from_rotation_z(gate.normal.y.atan2(gate.normal.x));
+        race.drone.velocity = gate.normal * speed;
+        race.initial_distance = race.gates[race.next_gate()]
+            .center
+            .distance(race.drone.position);
+        race
+    }
+
     pub fn step(&mut self, action: [f32; 4]) -> Option<f32> {
         if self.status != Status::Racing || action.iter().any(|x| !x.is_finite()) {
             return None;

@@ -122,6 +122,18 @@ python -m training.train --device cuda --initialize runs/bc/best.pt \
 
 - [공개 대회 비행 로그와 데이터 라이선스](https://doi.org/10.4121/039abd82-094c-4c93-baa1-e7446f562e0e)
 
+### 1번 게이트에서 2번 게이트로 이어지는 구간 훈련
+
+기존 최상위 정책에서 추가로 500만 전이를 학습합니다. 일반 출발과 게이트 연습에 1번 게이트 직후의 이동 중 출발을 섞습니다. 정규 출발의 `gate_two_rate`와 `crash_rate`를 기록하고, 구간 연습의 `gate_exit_to_two_rate`도 함께 기록합니다.
+
+```bash
+python -m training.train --device cuda --initialize runs/bc-rl/best.pt \
+  --focus-gate-two --steps 5000000 --eval-every 25000 --eval-episodes 5 \
+  --checkpoint-every 100000 --run-dir runs/gate-two-5m
+```
+
+`training-state.zip`에 정책, 옵티마이저, 리플레이와 난수 상태를 저장합니다. 재개할 때는 같은 환경·리플레이 설정으로 `--initialize` 인수 대신 `--resume runs/gate-two-5m/training-state.zip`을 사용합니다. 시뮬레이터는 새 에피소드에서 시작하고, 중단 시 마지막 카메라 프레임을 유지해 이전 에피소드의 리플레이가 새 프레임과 섞이지 않게 합니다.
+
 ## CBGPU GPU 4에서 실행
 
 승인된 예약 시간에 등록된 SSH 별칭으로 GPU와 드라이버를 확인합니다.

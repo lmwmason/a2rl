@@ -10,6 +10,17 @@ from training.sim import Environment, load_sim
 
 
 class ReplayTest(unittest.TestCase):
+    def test_restart_only_truncates_open_episodes(self):
+        replay = Replay(24, 2, (1, 1, 3), 2, 2, 0.99, np.random.default_rng(1))
+        initial = np.zeros((2, 1, 1, 3), dtype=np.uint8)
+        last = np.full_like(initial, 27)
+        replay.append(initial, np.zeros((2, 4)), np.zeros(2), np.array([0, 1]), last)
+        replay.truncate_open(last)
+        np.testing.assert_array_equal(replay.flags[0], [2, 1])
+        np.testing.assert_array_equal(replay.next_start, [1, 1])
+        np.testing.assert_array_equal(replay.truncated_frames[0, 0], last[0])
+        self.assertNotIn((0, 1), replay.truncated_frames)
+
     def test_timeout_bootstraps_from_terminal_frame_within_same_episode(self):
         replay = Replay(20, 1, (1, 1, 3), 2, 3, 0.5, np.random.default_rng(0))
         for i, (value, flag) in enumerate([(10, 0), (11, 2), (20, 0), (21, 0), (22, 0)]):
@@ -48,6 +59,18 @@ class DemonstrationTest(unittest.TestCase):
 
 
 class EnvironmentTest(unittest.TestCase):
+    def test_gate_exit_starts_with_an_uncounted_gate_two_approach(self):
+        env = Environment(load_sim(), 96, 72)
+        try:
+            before = env.ground_start().copy()
+            after = env.after_gate(speed=4.).copy()
+            self.assertGreater(np.mean(before != after), 0.1)
+            self.assertEqual(env.lap_stats(), (0, None))
+            _, _, terminated, truncated = env.step([0, env.lib.sim_hover_stick(), 0, 0])
+            self.assertFalse(terminated or truncated)
+        finally:
+            env.close()
+
     def test_native_interface_returns_pixels_and_reward_without_telemetry(self):
         env = Environment(load_sim(), 96, 72)
         try:

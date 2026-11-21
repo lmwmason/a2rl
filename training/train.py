@@ -9,6 +9,7 @@ import numpy as np
 import torch
 
 from .agent import Agent
+from .demonstrations import Demonstrations
 from .replay import Replay
 from .sim import Environment, load_sim
 
@@ -32,7 +33,12 @@ def options():
     parser.add_argument("--eval-episodes", type=int, default=1)
     parser.add_argument("--run-dir", type=Path, default=Path("runs/drq"))
     parser.add_argument("--evaluate", type=Path, help="Evaluate this checkpoint on the official simulator start.")
+    parser.add_argument("--initialize", type=Path, help="Initialize online training from a Mode 2 checkpoint.")
+    parser.add_argument("--demo-sim", type=Path, nargs="*", default=[],
+                        help="Simulator demonstrations used as a decaying actor regularizer.")
     args = parser.parse_args()
+    if args.evaluate and args.initialize:
+        parser.error("Choose evaluation or initialization.")
     positive = (args.steps, args.envs, args.width, args.height, args.stack, args.replay, args.batch,
                 args.update_every, args.n_step, args.eval_every, args.eval_episodes)
     if min(positive) <= 0 or args.warmup < 0 or not 0 < args.gamma <= 1 or not 0 <= args.hdzero_max <= 1:
@@ -92,6 +98,8 @@ def train(args, agent, lib):
         json.dumps(vars(args), default=str, indent=2) + "\n", encoding="utf-8")
     shape = (args.height, args.width, 3)
     replay = Replay(args.replay, args.envs, shape, args.stack, args.n_step, args.gamma, rng)
+    demonstrations = (Demonstrations([], args.demo_sim, args.stack, args.height, args.width, args.seed)
+                      if args.demo_sim else None)
     envs = [Environment(lib, args.width, args.height) for _ in range(args.envs)]
     test_env = Environment(lib, args.width, args.height)
     rewards = np.zeros(args.envs, np.float32)
@@ -127,8 +135,11 @@ def train(args, agent, lib):
             args.run_dir / "metrics.jsonl"
         ).open("a", encoding="utf-8", buffering=1) as log:
             while steps < args.steps:
-                noise = max(0.10, 0.32 - 0.22 * steps / max(1, args.steps // 2))
-                if steps < args.warmup:
+                if args.initialize:
+                    noise = max(.055, .13 - .075 * steps / max(1, args.steps // 2))
+                else:
+                    noise = max(.10, .32 - .22 * steps / max(1, args.steps // 2))
+                if steps < args.warmup and not args.initialize:
                     exploration = initial_exploration(rng, exploration)
                     actions = np.clip(exploration + trim, -1., 1.)
                 else:
@@ -148,8 +159,13 @@ def train(args, agent, lib):
                 previous_steps = steps
                 steps += args.envs
                 if steps >= args.warmup and replay.ready():
+                    actor_ready = not args.initialize or steps >= args.warmup + 8_000
+                    imitation_weight = max(0., 1. - steps / 200_000.)
                     for _ in range(steps // args.update_every - previous_steps // args.update_every):
-                        losses = agent.update(replay.sample(args.batch), noise)
+                        demo = (demonstrations.sample(args.batch // 2 or 1)
+                                if demonstrations and actor_ready and imitation_weight else None)
+                        losses = agent.update(replay.sample(args.batch), noise, update_actor=actor_ready,
+                                              demonstration=demo, imitation_weight=imitation_weight)
                         updates += 1
                 now = time.monotonic()
                 if now - last_report > 10:
@@ -195,6 +211,13 @@ def main():
         torch.backends.cudnn.benchmark = True
     lib = load_sim()
     agent = Agent(args.stack, device, lib.sim_hover_stick())
+    if args.initialize:
+        agent.load(args.initialize)
+        # Preserve visual features while the freshly initialized critic learns the simulator.
+        agent.critic_opt = torch.optim.Adam([
+            {"params": agent.critic.parameters(), "lr": 1e-4},
+            {"params": agent.encoder.parameters(), "lr": 1e-5},
+        ])
     if args.evaluate:
         agent.load(args.evaluate)
         env = Environment(lib, args.width, args.height)

@@ -28,6 +28,14 @@ def random_shift(image, pad=4):
     return image.flatten(2).gather(2, index[:, None].expand(-1, channels, -1)).reshape(batch, channels, height, width)
 
 
+def stick_loss(prediction, labels, confidence):
+    target = torch.from_numpy(labels).to(prediction.device)
+    weights = torch.from_numpy(confidence).to(prediction.device)
+    axis_weights = prediction.new_tensor([1., 2., 1.4, 1.4])
+    errors = F.smooth_l1_loss(prediction, target, reduction="none", beta=.12)
+    return (weights * (errors * axis_weights).mean(dim=1)).sum() / weights.sum()
+
+
 def mlp(in_features, out_features):
     return nn.Sequential(nn.Linear(in_features, 256), nn.ReLU(), nn.Linear(256, 256),
                          nn.ReLU(), nn.Linear(256, out_features))
@@ -74,7 +82,7 @@ class Agent:
             action = (action + torch.randn_like(action) * noise).clamp(-1., 1.)
         return action.cpu().numpy()
 
-    def update(self, batch, noise):
+    def update(self, batch, noise, *, update_actor=True, demonstration=None, imitation_weight=0.):
         obs, action, reward, discount, next_obs = batch
         obs = random_shift(pixel_tensor(obs, self.device).float() / 255. - 0.5)
         next_obs = random_shift(pixel_tensor(next_obs, self.device).float() / 255. - 0.5)
@@ -87,6 +95,8 @@ class Agent:
             target = reward * 0.1 + discount * torch.minimum(*self.target(future, target_action))
 
         features = self.encoder(obs)
+        if not update_actor:
+            features = features.detach()
         q1, q2 = self.critic(features, action)
         critic_loss = F.mse_loss(q1, target) + F.mse_loss(q2, target)
         self.critic_opt.zero_grad(set_to_none=True)
@@ -94,13 +104,21 @@ class Agent:
         nn.utils.clip_grad_norm_([*self.encoder.parameters(), *self.critic.parameters()], 10.)
         self.critic_opt.step()
 
-        self.critic.requires_grad_(False)
-        actor_action = self.actor(features.detach()).tanh()
-        actor_loss = -torch.minimum(*self.critic(features.detach(), actor_action)).mean()
-        self.actor_opt.zero_grad(set_to_none=True)
-        actor_loss.backward()
-        self.actor_opt.step()
-        self.critic.requires_grad_(True)
+        actor_loss = critic_loss.new_zeros(())
+        if update_actor:
+            self.critic.requires_grad_(False)
+            actor_action = self.actor(features.detach()).tanh()
+            actor_loss = -torch.minimum(*self.critic(features.detach(), actor_action)).mean()
+            if demonstration is not None and imitation_weight > 0:
+                frames, labels, weights = demonstration
+                with torch.no_grad():
+                    demo_image = pixel_tensor(frames, self.device).float() / 255. - .5
+                    demo_features = self.encoder(random_shift(demo_image, pad=3))
+                actor_loss += imitation_weight * stick_loss(self.actor(demo_features).tanh(), labels, weights)
+            self.actor_opt.zero_grad(set_to_none=True)
+            actor_loss.backward()
+            self.actor_opt.step()
+            self.critic.requires_grad_(True)
         with torch.no_grad():
             for destination, source in zip(self.target.parameters(), self.critic.parameters()):
                 destination.lerp_(source, 0.01)

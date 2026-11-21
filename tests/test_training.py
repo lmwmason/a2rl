@@ -1,7 +1,10 @@
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
 import numpy as np
 
+from training.demonstrations import Clip
 from training.replay import Replay
 from training.sim import Environment, load_sim
 
@@ -28,6 +31,20 @@ class ReplayTest(unittest.TestCase):
         for stack, weight in zip(obs[:, :, 0, 0, 0], discount):
             old, new = stack
             self.assertIn((old, new, weight), [(7, 8, 0.0), (9, 9, 0.25)])
+
+
+class DemonstrationTest(unittest.TestCase):
+    def test_frame_stack_restarts_after_a_camera_gap(self):
+        frames = np.broadcast_to(np.arange(4, dtype=np.uint8)[:, None, None, None], (4, 1, 1, 3))
+        actions = np.arange(16, dtype=np.float32).reshape(4, 4) / 16
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "clip.npz"
+            np.savez(path, frames=frames, actions=actions, timestamps=[0., .033, .2, .233],
+                     weights=np.ones(4, dtype=np.float32))
+            clip = Clip(path, 2, 1, 1)
+        image, label, _ = clip.batch(np.array([1, 2, 3]))
+        np.testing.assert_array_equal(image[:, :, 0, 0, 0], [[0, 1], [2, 2], [2, 3]])
+        np.testing.assert_array_equal(label, actions[1:])
 
 
 class EnvironmentTest(unittest.TestCase):

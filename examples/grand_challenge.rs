@@ -16,6 +16,8 @@ const WIDTH: usize = 820;
 const HEIGHT: usize = 616;
 const PLAYBACK_SPEED: usize = 2;
 const GRAVITY: f32 = 9.80665;
+const DATA_WIDTH: usize = 96;
+const DATA_HEIGHT: usize = 72;
 
 #[derive(Clone, Copy)]
 struct Waypoint {
@@ -78,11 +80,63 @@ fn write_pose(out: &mut impl Write, race: &Race) -> io::Result<()> {
     writeln!(out)
 }
 
+struct Demonstration {
+    camera: Camera,
+    image: Vec<u8>,
+    frames: io::BufWriter<fs::File>,
+    actions: io::BufWriter<fs::File>,
+}
+
+impl Demonstration {
+    fn new(path: &Path) -> io::Result<Self> {
+        fs::create_dir_all(path)?;
+        let camera = Camera::new(DATA_WIDTH, DATA_HEIGHT);
+        Ok(Self {
+            image: vec![0; camera.byte_len()],
+            camera,
+            frames: io::BufWriter::new(fs::File::create(path.join("frames.rgb"))?),
+            actions: io::BufWriter::new(fs::File::create(path.join("actions.f32"))?),
+        })
+    }
+
+    fn push(&mut self, race: &Race, sticks: [f32; 4]) -> io::Result<()> {
+        self.camera.render(race, &mut self.image);
+        self.frames.write_all(&self.image)?;
+        for command in sticks {
+            self.actions.write_all(&command.to_le_bytes())?;
+        }
+        Ok(())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.frames.flush()?;
+        self.actions.flush()
+    }
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = env::args_os().skip(1);
     let path = args.next();
     let trace = path.as_deref() == Some(std::ffi::OsStr::new("--poses"));
+    let dataset = path.as_deref() == Some(std::ffi::OsStr::new("--dataset"));
     let mut race = Race::grand_challenge();
+    let mut demonstration = if dataset {
+        let output = args.next().ok_or("Expected a dataset output directory")?;
+        let seed = args
+            .next()
+            .map(|value| value.to_string_lossy().parse::<u32>())
+            .transpose()?
+            .unwrap_or(0);
+        if seed != 0 {
+            race.video_seed = seed;
+            race.video_breakup = 0.22;
+            race.exposure = 0.88 + 0.03 * (seed % 7) as f32;
+            race.drone.position.y += 0.12 * ((seed % 3) as f32 - 1.);
+        }
+        Some(Demonstration::new(Path::new(&output))?)
+    } else {
+        None
+    };
     let mut poses = if trace {
         let mut output = fs::File::create(args.next().ok_or("Expected a pose output path")?)?;
         writeln!(
@@ -114,7 +168,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let camera = Camera::new(WIDTH, HEIGHT);
     let mut rgb = vec![0; camera.byte_len()];
-    let mut encoder = if let Some(ref path) = path.filter(|_| !trace) {
+    let mut encoder = if let Some(ref path) = path.filter(|_| !trace && !dataset) {
         let path = Path::new(path);
         if let Some(parent) = path
             .parent()
@@ -168,7 +222,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     while race.status == Status::Racing && point < route.len() {
         let waypoint = route[point];
         let previous = race.passed;
-        race.step(mode2_acro(sticks(&race, waypoint)));
+        let action = sticks(&race, waypoint);
+        if let Some(output) = &mut demonstration {
+            output.push(&race, action)?;
+        }
+        race.step(mode2_acro(action));
         let position = race.drone.position;
         peak_speed = peak_speed.max(race.drone.velocity.length());
         if race.passed != previous {
@@ -197,6 +255,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     if let Some(mut output) = poses {
+        output.flush()?;
+    }
+    if let Some(mut output) = demonstration {
         output.flush()?;
     }
     if let Some(mut child) = encoder {

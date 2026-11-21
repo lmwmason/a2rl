@@ -103,6 +103,25 @@ nvcc -O3 -arch=sm_75 tools/render_fpv.cu -o render_fpv
     -i - -an -c:v libx264 -pix_fmt yuv420p runs/grand-challenge-gpu.mp4
 ```
 
+## 실제 비행 모방학습 후 강화학습
+
+4TU의 MAVLab Log 5는 2025 Grand Challenge 실제 비행이며, Log 7은 비행 단위 홀드아웃 평가에만 사용합니다. 원본은 직접 모터 명령을 쓰므로 Mode 2 스틱 라벨은 저장돼 있지 않습니다. 시간 정렬한 모터 회전수와 자이로 측정값에서 근사 스틱 목표를 만들고, 범위를 넘는 값은 클리핑하고 가중치를 낮춥니다. 시뮬레이터 데모에는 적용 직전의 정확한 스틱을 저장합니다. 정책 입력은 두 경우 모두 RGB 네 프레임입니다.
+
+```bash
+python -m pip install Pillow
+python -m tools.prepare_monorace_demos runs/monorace
+cargo run --release --no-default-features --example grand_challenge -- --dataset runs/monorace/sim-clean 0
+cargo run --release --no-default-features --example grand_challenge -- --dataset runs/monorace/sim-noise 7
+python -m training.imitate --real runs/monorace/log5.npz --held-out runs/monorace/log7.npz \
+  --sim runs/monorace/sim-clean runs/monorace/sim-noise --out runs/bc
+python -m training.train --device cuda --initialize runs/bc/best.pt \
+  --demo-sim runs/monorace/sim-clean runs/monorace/sim-noise --run-dir runs/bc-rl
+```
+
+사전학습 체크포인트는 시뮬레이터 롤아웃을 기준으로 고릅니다. 강화학습에서는 초기 전이를 사전학습 정책으로 모으고, Q 함수가 준비되는 동안 정책 업데이트를 지연합니다. 이후 시뮬레이터 데모에 대한 보조 손실을 점진적으로 줄입니다. 홀드아웃 스틱 오차, 첫 게이트 통과율, 충돌률 및 2랩 완주율을 기록합니다.
+
+- [공개 대회 비행 로그와 데이터 라이선스](https://doi.org/10.4121/039abd82-094c-4c93-baa1-e7446f562e0e)
+
 ## CBGPU GPU 4에서 실행
 
 승인된 예약 시간에 등록된 SSH 별칭으로 GPU와 드라이버를 확인합니다.

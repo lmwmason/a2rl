@@ -1,0 +1,20 @@
+[package]
+name = "a2rl-sim"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.88"
+
+[lib]
+crate-type = ["rlib", "cdylib"]
+
+[dependencies]
+glam = "0.32"
+serde_json = "1"
+axum = "0.8"
+tokio = { version = "1", features = ["rt", "net", "macros"] }
+
+[profile.release]
+lto = "thin"
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }

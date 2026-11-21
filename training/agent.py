@@ -1,5 +1,6 @@
 """DrQ-v2-style continuous actor critic for stacks of RGB frames."""
 from copy import deepcopy
+from math import atanh
 
 import torch
 from torch import nn
@@ -54,10 +55,12 @@ class Critic(nn.Module):
 
 
 class Agent:
-    def __init__(self, stack, device):
+    def __init__(self, stack, device, hover_stick):
         self.device = device
         self.encoder = Encoder(stack).to(device, memory_format=torch.channels_last)
         self.actor = mlp(128, 4).to(device)
+        with torch.no_grad():
+            self.actor[-1].bias[1] = atanh(hover_stick)
         self.critic = Critic().to(device)
         self.target = deepcopy(self.critic).requires_grad_(False)
         self.critic_opt = torch.optim.Adam([*self.critic.parameters(), *self.encoder.parameters()], lr=1e-4)
@@ -105,12 +108,14 @@ class Agent:
 
     def save(self, path):
         temp = path.with_suffix(".tmp")
-        torch.save({"encoder": self.encoder.state_dict(), "actor": self.actor.state_dict(),
+        torch.save({"action_layout": "mode2-acro-v1", "encoder": self.encoder.state_dict(), "actor": self.actor.state_dict(),
                     "critic": self.critic.state_dict(), "target": self.target.state_dict()}, temp)
         temp.replace(path)
 
     def load(self, path):
         params = torch.load(path, map_location=self.device, weights_only=True)
+        if params.get("action_layout") != "mode2-acro-v1":
+            raise ValueError("Checkpoint action layout does not match Mode 2 Acro.")
         self.encoder.load_state_dict(params["encoder"])
         self.actor.load_state_dict(params["actor"])
         self.critic.load_state_dict(params["critic"])

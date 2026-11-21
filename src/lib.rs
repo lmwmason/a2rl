@@ -6,42 +6,72 @@ use glam::{Quat, Vec3};
 pub const PHYSICS_HZ: usize = 240;
 pub const CONTROL_HZ: usize = 30;
 const DT: f32 = 1.0 / PHYSICS_HZ as f32;
-pub const ARENA_MIN: Vec3 = Vec3::new(-10., -18., 0.);
-pub const ARENA_MAX: Vec3 = Vec3::new(43., 20., 12.);
-pub const START: Vec3 = Vec3::new(3., -10., 2.6);
+pub const ARENA_MIN: Vec3 = Vec3::new(1., -1., 0.);
+pub const ARENA_MAX: Vec3 = Vec3::new(95., 27., 6.2);
+pub const START: Vec3 = Vec3::new(8., 22., 1.47);
+const START_HEADING: f32 = 13.;
 const GRAVITY: f32 = 9.80665;
 pub const MASS_KG: f32 = 0.966;
 pub const HOVER: f32 = MASS_KG * GRAVITY / (4. * KT * RPM_RAD_MAX * RPM_RAD_MAX);
-const KT: f32 = 4.8e-7;
-const RPM_RAD_MAX: f32 = 5100.;
+pub const HOVER_STICK: f32 = 2. * HOVER - 1.;
+const KT: f32 = 1.436723e-6;
+const RPM_RAD_MAX: f32 = 3100.;
 const RADIUS: f32 = 0.205;
 const ARM_AXIS: f32 = 0.155 * std::f32::consts::FRAC_1_SQRT_2;
 const YAW_MOMENT: f32 = 0.016;
-const MOTOR_TAU: f32 = 0.032;
+const MOTOR_TAU: f32 = 0.030;
 const INERTIA: Vec3 = Vec3::new(0.0036, 0.0038, 0.0062);
+const LINEAR_DRAG: Vec3 = Vec3::new(0.09, 0.13, 0.);
+const QUADRATIC_DRAG: Vec3 = Vec3::new(0.045, 0.065, 0.);
 const X: [f32; 4] = [ARM_AXIS, ARM_AXIS, -ARM_AXIS, -ARM_AXIS];
 const Y: [f32; 4] = [ARM_AXIS, -ARM_AXIS, -ARM_AXIS, ARM_AXIS];
 const SPIN: [f32; 4] = [1., -1., 1., -1.];
 
-pub const LAYOUT: [[f32; 4]; 12] = [
-    [9., -10., 2.6, 0.],
-    [18., -10., 3.1, 0.],
-    [27., -9., 4., 0.34],
-    [34., -4., 4.8, 0.89],
-    [36., 4., 4.1, 1.61],
-    [31., 11., 3.1, 2.5],
-    [22., 13., 3.5, 3.08],
-    [13., 12., 4.6, 3.37],
-    [4., 8., 4.1, 3.8],
-    [-2., 1., 3., 4.3],
-    [-2.5, -6., 2.8, 5.],
-    [3., -10., 2.6, 6.],
+// Mode 2 transmitter axes, with right and up positive on each stick.
+pub fn mode2_acro([left_x, left_y, right_x, right_y]: [f32; 4]) -> [f32; 4] {
+    [(left_y + 1.) * 0.5, right_x, right_y, -left_x]
+}
+
+fn drag(airspeed: Vec3) -> Vec3 {
+    -(LINEAR_DRAG + QUADRATIC_DRAG * airspeed.abs()) * airspeed
+}
+
+fn thrust_coefficient(mean_rotor_speed: f32, axial_airspeed: f32, horizontal_airspeed: f32) -> f32 {
+    let tip = (0.0485775 * mean_rotor_speed).max(1.);
+    let axial_angle = (-axial_airspeed).atan2(tip);
+    let horizontal_angle = horizontal_airspeed.powi(2).atan2(tip.powi(2));
+    (KT + 4.492359e-6 * axial_angle + 3.180793e-6 * horizontal_angle).max(KT * 0.05)
+}
+
+fn axial_specific_force(omega_squared: f32, mean_speed: f32, axial: f32, horizontal: f32) -> f32 {
+    thrust_coefficient(mean_speed, axial, horizontal) * omega_squared / MASS_KG
+}
+
+// TU Delft MAVLab's Grand Challenge flight plan, transformed to +Z up, +Y left.
+// github.com/tudelft/optimal_quad_control_RL/blob/a2rl2025/flight_plans/grand_challenge.json
+pub const LAYOUT: [[f32; 4]; 11] = [
+    [14., 25., 1.47, 35.],
+    [30., 19., 1.47, -15.],
+    [46., 22., 1.47, 10.],
+    [63., 20., 4.17, 0.],
+    [85., 18., 4.17, 0.],
+    [85., 18., 1.47, 180.],
+    [68., 13., 1.47, -165.],
+    [55., 7., 1.47, 180.],
+    [37., 12., 1.47, 180.],
+    [19., 7., 1.47, 180.],
+    [9., 14., 1.47, 90.],
 ];
 
-const W: f32 = 1.55;
-const H: f32 = 1.36;
-const BEAM: f32 = 0.22;
-const DEPTH: f32 = 0.20;
+const W: f32 = 0.75;
+const H: f32 = 0.75;
+const BEAM: f32 = 0.60;
+const DEPTH: f32 = 0.40;
+const LOWER_FRAME: Gate = Gate {
+    center: Vec3::new(63., 20., 1.47),
+    normal: Vec3::X,
+    side: Vec3::Y,
+};
 pub const BARS: [(Vec3, Vec3); 4] = [
     (
         Vec3::new(-DEPTH, -W - BEAM, H),
@@ -65,7 +95,7 @@ pub struct Gate {
 impl Gate {
     pub fn all() -> [Self; LAYOUT.len()] {
         LAYOUT.map(|[x, y, z, yaw]| {
-            let (sin, cos) = yaw.sin_cos();
+            let (sin, cos) = yaw.to_radians().sin_cos();
             Self {
                 center: Vec3::new(x, y, z),
                 normal: Vec3::new(cos, sin, 0.),
@@ -128,7 +158,7 @@ impl Drone {
         Self {
             position: START,
             velocity: Vec3::ZERO,
-            rotation: Quat::IDENTITY,
+            rotation: Quat::from_rotation_z(START_HEADING.to_radians()),
             omega: Vec3::ZERO,
             rotors: [RPM_RAD_MAX * HOVER.sqrt(); 4],
         }
@@ -151,14 +181,16 @@ impl Drone {
         let response = 1. - (-DT / MOTOR_TAU).exp();
 
         let airflow = self.rotation.conjugate() * self.velocity;
-        let mut force = -(Vec3::new(0.09, 0.13, 0.16)
-            + Vec3::new(0.045, 0.065, 0.075) * airflow.abs())
-            * airflow;
+        let mut force = drag(airflow);
+        for (rotor, correction) in self.rotors.iter_mut().zip(correction) {
+            let target = ((collective + correction * authority).max(0.) / KT).sqrt();
+            *rotor += response * (target - *rotor);
+        }
+        let mean_speed = self.rotors.iter().sum::<f32>() / 4.;
+        let coefficient = thrust_coefficient(mean_speed, airflow.z, airflow.x.hypot(airflow.y));
         let mut moment = Vec3::ZERO;
         for i in 0..4 {
-            let target = ((collective + correction[i] * authority).max(0.) / KT).sqrt();
-            self.rotors[i] += response * (target - self.rotors[i]);
-            let thrust = KT * self.rotors[i].powi(2);
+            let thrust = coefficient * self.rotors[i].powi(2);
             force.z += thrust;
             moment += Vec3::new(Y[i], -X[i], SPIN[i] * YAW_MOMENT) * thrust;
         }
@@ -195,11 +227,14 @@ pub struct Race {
     pub best_lap: Option<f32>,
     pub status: Status,
     pub exposure: f32,
+    pub video_breakup: f32,
+    pub video_seed: u32,
     start_gate: usize,
     timed_lap: bool,
     last_gate_tick: usize,
     initial_distance: f32,
     progress: f32,
+    on_launch_pad: bool,
 }
 
 impl Default for Race {
@@ -216,11 +251,14 @@ impl Default for Race {
             best_lap: None,
             status: Status::Racing,
             exposure: 1.,
+            video_breakup: 0.,
+            video_seed: 1,
             start_gate: 0,
             timed_lap: true,
             last_gate_tick: 0,
             initial_distance: gates[0].center.distance(START),
             progress: 0.,
+            on_launch_pad: false,
         }
     }
 }
@@ -231,6 +269,10 @@ fn lap_reward(elapsed: f32, best: Option<f32>) -> f32 {
 }
 
 impl Race {
+    pub fn gate_frames(&self) -> impl Iterator<Item = &Gate> {
+        self.gates.iter().chain(std::iter::once(&LOWER_FRAME))
+    }
+
     pub fn next_gate(&self) -> usize {
         (self.passed + self.start_gate) % self.gates.len()
     }
@@ -243,6 +285,15 @@ impl Race {
         race.drone.position.y += side;
         race.drone.position.z += height;
         race.initial_distance = race.gates[0].center.distance(race.drone.position);
+        race
+    }
+
+    pub fn ground_start(side: f32, exposure: f32) -> Self {
+        let mut race = Self::from_start(side, 0., exposure);
+        race.drone.position.z = RADIUS;
+        race.drone.rotors = [0.; 4];
+        race.initial_distance = race.gates[0].center.distance(race.drone.position);
+        race.on_launch_pad = true;
         race
     }
 
@@ -277,7 +328,18 @@ impl Race {
         let mut reward = 0.;
         for _ in 0..(PHYSICS_HZ / CONTROL_HZ) {
             let previous = self.drone.position;
+            let rotation = self.drone.rotation;
             self.drone.integrate(action);
+            if self.on_launch_pad {
+                if self.drone.position.z > RADIUS {
+                    self.on_launch_pad = false;
+                } else {
+                    self.drone.position = previous;
+                    self.drone.rotation = rotation;
+                    self.drone.velocity = Vec3::ZERO;
+                    self.drone.omega = Vec3::ZERO;
+                }
+            }
             self.ticks += 1;
             reward -= 0.20 * DT;
             let current = self.drone.position;
@@ -287,13 +349,17 @@ impl Race {
             if current.cmplt(ARENA_MIN + RADIUS).any() || current.cmpgt(ARENA_MAX - RADIUS).any() {
                 self.status = Status::Boundary;
             } else {
-                for (i, gate) in self.gates.iter().enumerate() {
+                let mut hit_frame = false;
+                for (i, gate) in self.gate_frames().enumerate() {
                     let (collision, crossed) = gate.progress(previous, current);
                     if collision {
-                        self.status = Status::GateCollision;
+                        hit_frame = true;
                         break;
                     }
                     passed |= crossed && i == target;
+                }
+                if hit_frame {
+                    self.status = Status::GateCollision;
                 }
             }
             if self.status != Status::Racing {
@@ -363,6 +429,20 @@ mod tests {
     }
 
     #[test]
+    fn ground_launch_uses_throttle_without_a_separate_control_mode() {
+        let mut race = Race::ground_start(0., 1.);
+        for _ in 0..12 {
+            race.step(mode2_acro([0., -1., 0., 0.])).unwrap();
+        }
+        assert_eq!(race.drone.position.z, RADIUS);
+        for _ in 0..7 {
+            race.step(mode2_acro([0., 0.4, 0., 0.])).unwrap();
+        }
+        assert!(race.drone.position.z > RADIUS + 0.2 && race.drone.velocity.z > 1.);
+        assert!(!race.on_launch_pad);
+    }
+
+    #[test]
     fn individual_axes_and_quaternion_norm() {
         for axis in 1..=3 {
             let mut drone = Drone::new();
@@ -379,16 +459,16 @@ mod tests {
     #[test]
     fn gate_intersection_requires_direction_and_clearance() {
         let gate = Gate::all()[0];
-        let a = gate.center - Vec3::X;
-        let b = gate.center + Vec3::X;
+        let a = gate.center - gate.normal;
+        let b = gate.center + gate.normal;
         assert_eq!(gate.progress(a, b), (false, true));
         assert_eq!(gate.progress(b, a), (false, false));
         assert_eq!(
-            gate.progress(a + W * Vec3::Y, b + W * Vec3::Y),
+            gate.progress(a + W * gate.side, b + W * gate.side),
             (true, false)
         );
         assert_eq!(
-            gate.progress(a + 3. * Vec3::Y, b + 3. * Vec3::Y),
+            gate.progress(a + 3. * gate.side, b + 3. * gate.side),
             (false, false)
         );
         assert_eq!(gate.progress(a, gate.center), (false, true));

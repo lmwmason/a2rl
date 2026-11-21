@@ -1,6 +1,6 @@
 # A2RL FPV 드론 레이싱
 
-Rust로 구현한 실내 순환 코스 시뮬레이터입니다. 브라우저에서 비행을 조종하거나 Python에서 RGB 영상만 보는 정책을 학습할 수 있습니다. 두 실행 경로는 동일한 기체, 카메라 모델과 게이트 판정을 사용합니다.
+Rust로 구현한 실내 순환 코스 시뮬레이터입니다. 데스크톱 앱에서 FPV 비행을 조종하거나 Python에서 RGB 영상만 보는 정책을 학습할 수 있습니다. 두 실행 경로는 동일한 기체, 카메라 모델과 게이트 판정을 사용합니다.
 
 ## GUI로 비행하기
 
@@ -10,7 +10,7 @@ Rust 1.88 이상에서 프로젝트 루트에서 실행합니다.
 cargo run --release
 ```
 
-브라우저에서 <http://127.0.0.1:8765>를 열고 **비행 시작**을 누릅니다.
+데스크톱 창에서 **Start flight**를 누르거나 `Space`를 누릅니다. 3·2·1 카운트다운 중 W/S로 스로틀을 미리 맞추면 GO와 함께 물리 스텝이 시작됩니다. 우상단 HUD에 현재 랩과 전체 경과 시간이 표시됩니다. Linux에서는 Wayland 또는 X11 세션에서 실행합니다.
 
 | 조종 | 키 |
 | --- | --- |
@@ -18,8 +18,12 @@ cargo run --release
 | 요 왼쪽 / 오른쪽 | A / D |
 | 피치 앞으로 / 뒤로 | ↑ / ↓ |
 | 롤 왼쪽 / 오른쪽 | ← / → |
+| 시작 / 일시정지 / 재개 | Space |
+| 비행 리셋 | R |
+| 전체 화면 전환 | F11 |
+| HDZero 영상 열화 전환 | N |
 
-Mode 2 Acro에서 요·피치·롤 키를 놓으면 각속도 입력이 중앙으로 돌아옵니다. 기체는 기울어진 자세를 유지합니다. 스로틀은 키를 놓아도 마지막 값에 머물고, 리셋하면 공중 출발에 필요한 호버 추력으로 돌아옵니다. 코스 지도에 다음 게이트와 현재 기체 위치가 표시됩니다. 마지막 게이트가 출발·결승선이고, 게이트는 순서대로 정방향으로 통과합니다.
+Mode 2 Acro에서 요·피치·롤 키를 놓으면 각속도 입력이 중앙으로 돌아옵니다. 기체는 기울어진 자세를 유지합니다. 스로틀은 키를 놓아도 마지막 값에 머물고, 리셋하면 스로틀 0으로 지상에 돌아옵니다. 게이트는 순서대로 정방향으로 통과합니다. 11번에서 랩을 마치며 타이머는 GO부터 진행합니다.
 
 ## 기체와 카메라
 
@@ -27,14 +31,25 @@ Mode 2 Acro에서 요·피치·롤 키를 놓으면 각속도 입력이 중앙�
 | --- | --- |
 | 기준 기체 | 2025 A2RL × DCL 카본 프레임 기체. 966 g, 약 30 × 28 × 10 cm, 5인치급 프로펠러, XNOVA Black Thunder 2207 2100 KV, 6S 1400 mAh |
 | 동역학 | 240 Hz 6자유도 강체 적분, 4개 모터 응답 지연 및 추력, 자이로스코프 피드백을 근사한 기체 내부 각속도 제어, 이차 공기저항, 게이트 프레임의 스윕 충돌 검사 |
-| 카메라 | 전방 단안 RGB, 155° × 115° 등거리 투영 근사. 시뮬레이션 제어·관측은 30 Hz. 실기체 자료의 해상도·프레임레이트는 820 × 616, 90 Hz |
-| 코스 | 자체 제작 12개 게이트 순환 코스 |
+| 카메라 | 전방 단안 RGB. 실제 IMX219 로그의 어안 렌즈 내부 파라미터와 장착 피치 51.33°를 적용합니다. 실기체는 820 × 616, 90 Hz이며 시뮬레이션 관측과 스틱 입력은 30 Hz입니다. |
+| 코스 | 2025 Grand Challenge 결승 공개 비행 계획의 11개 게이트, 1.5 m 개구부, 두 개의 더블 프레임과 5→6 스플릿 S |
 
-질량과 시야각은 참가팀 자료를 따릅니다. 모터 시정수, 추력·항력 계수, 관성, 카메라 장착각과 충돌 반경은 추정값입니다. 실기체 이전에는 모터 스텝 응답, 고속 항력, 렌즈 캘리브레이션과 롤링셔터를 실측해 검증해야 합니다. Rust 렌더러는 CPU용 기하 장면입니다. CBGPU 환경에서 RTX/Vulkan을 사용할 수 있는지 확인하면 Isaac Sim의 타일 카메라를 같은 과제의 렌더링 비교에 사용할 수 있습니다.
+실제 게이트 사진을 펼쳐 전면과 후면의 재질로 사용했습니다. 홀의 바닥, 커튼, 천장과 조명은 사진을 참고해 모델링했습니다. 천장 높이와 조명 배치는 재구성값이며, 현장의 3D 스캔, 카메라 롤링셔터, 모션 블러와 노출 응답은 재현 범위 밖입니다. HDZero 효과는 약한 영상 링크에서 나타나는 국소 픽셀 열화를 근사합니다.
 
+### 실제 비행 로그와 비교
+
+MonoRace Log 8의 대회 비행에서 공개된 모터 회전수·IMU·EKF로 몸체 수직축 비력을 비교했습니다. 55–69.8초를 20ms 구간으로 나눠 보정에 쓰지 않은 후반 367개 구간에서 RMSE가 **29.81 → 3.41 m/s²**로 줄었습니다. 이 테스트는 측정된 모터 속도를 입력으로 사용하므로 모터 명령 응답, 관성 및 전체 6자유도 궤적의 검증은 별도로 필요합니다. 모터 회전 상한과 30ms 지연은 참가팀 M16 설정을 사용합니다.
+
+```bash
+cargo build --release --lib --no-default-features
+python -m tools.check_flight_log path/to/imu.csv path/to/ekf.csv
+```
+
+- [Grand Challenge 비행 계획](https://github.com/tudelft/optimal_quad_control_RL/blob/a2rl2025/flight_plans/grand_challenge.json)
+- [4TU MonoRace 비행 로그와 카메라 캘리브레이션](https://doi.org/10.4121/039abd82-094c-4c93-baa1-e7446f562e0e)
 - [TU Delft MonoRace 논문](https://arxiv.org/html/2601.15222v1)
 - [Azhari 외 참가팀의 기체 사양](https://onlinelibrary.wiley.com/doi/10.1002/rob.70371)
-- [NVIDIA Isaac Sim 시스템 요구 사항](https://docs.isaacsim.omniverse.nvidia.com/6.0.0/installation/requirements.html)
+- [HDZero 픽셀 단위 열화 설명](https://www.hd-zero.com/motion-clarity)
 
 ## 보상
 
@@ -51,11 +66,11 @@ PyTorch에서 그 환경의 NVIDIA 드라이버와 호환되는 CUDA 빌드를 �
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install -r training/requirements.txt
-cargo build --release --lib
+cargo build --release --lib --no-default-features
 python -m training.train --device cuda --steps 1000000 --envs 8 --eval-episodes 5
 ```
 
-CPU에서도 `--device cpu`로 실행할 수 있습니다. 기본 96 × 72 RGB 카메라를 병렬로 실행하고, 리플레이는 각 프레임을 `uint8`로 한 번만 저장합니다. 조종 출력은 추력과 롤·피치·요 각속도입니다. 학습에는 공유 CNN, 프레임 스택 전체에 동일한 랜덤 시프트, 이중 Q와 다중 스텝 리턴을 쓰는 DrQ-v2 계열 기준선을 적용했습니다. 여러 게이트 앞에서 시작하는 연습을 섞고, 진행에 따라 시작선 출발 비중을 높입니다. 완주 기록과 충돌률을 출발선에서 따로 평가합니다.
+CPU에서도 `--device cpu`로 실행할 수 있습니다. 기본 96 × 72 RGB 카메라를 병렬로 실행하고, 리플레이는 각 프레임을 `uint8`로 한 번만 저장합니다. 정책의 네 출력은 실제 Mode 2 스틱 순서로 왼쪽 X·Y와 오른쪽 X·Y입니다. 데스크톱과 동일한 변환으로 요, 스로틀, 롤, 피치를 조종합니다. 학습에는 공유 CNN, 프레임 스택 전체에 동일한 랜덤 시프트, 이중 Q와 다중 스텝 리턴을 쓰는 DrQ-v2 계열 기준선을 적용했습니다. 지상 론치와 스플릿 S·슬라럼·급턴 앞에서 출발하는 에피소드를 섞고, 진행에 따라 지상 출발 비중을 높입니다. 일부 학습 에피소드에 HDZero 픽셀 열화를 적용하며 `--hdzero-max`로 강도를 조절합니다. 출발선 평가에서는 첫 게이트, 스플릿 S, 슬라럼 및 완주 통과율을 기록합니다.
 
 ```bash
 python -m training.train --device cuda --evaluate runs/drq/best.pt --eval-episodes 5
@@ -69,6 +84,24 @@ python -m training.train --device cuda --evaluate runs/drq/best.pt --eval-episod
 - [DR.Q, ICML 2026](https://proceedings.mlr.press/v306/lyu26f.html)
 
 DreamerV3, Ego-Foresight와 DR.Q는 후속 비교 후보입니다. 현재 수렴 성능이나 알고리즘 간 우위를 측정한 결과는 없습니다.
+
+## 하드코딩 비행 녹화
+
+아래 예제는 고정 웨이포인트를 따라 실제 물리 스텝으로 지상 론치부터 게이트 11개를 통과합니다. 웨이포인트 검증에는 시뮬레이터 상태를 사용합니다. FPV 학습 정책은 RGB만 받습니다.
+
+```bash
+cargo run --release --no-default-features --example grand_challenge -- runs/grand-challenge-cpu.mp4
+cargo run --release --no-default-features --example grand_challenge -- --poses runs/grand-challenge.poses
+```
+
+CUDA 렌더러는 Rust에서 내보낸 자세, 렌즈 및 게이트 형상을 픽셀별로 렌더링합니다. GPU 4의 Quadro RTX 5000에서는 다음과 같이 빌드합니다. 마지막 인수는 HDZero 열화 강도입니다. 영상의 비행 구간은 2배속입니다.
+
+```bash
+nvcc -O3 -arch=sm_75 tools/render_fpv.cu -o render_fpv
+./render_fpv runs/grand-challenge.poses assets/grand-challenge-gate.rgb 0.32 |
+  ffmpeg -f rawvideo -pixel_format rgb24 -video_size 820x616 -framerate 30 \
+    -i - -an -c:v libx264 -pix_fmt yuv420p runs/grand-challenge-gpu.mp4
+```
 
 ## CBGPU GPU 4에서 실행
 
@@ -92,7 +125,7 @@ cd ~/a2rl-racing
 
 ```bash
 cargo test
-cargo build --release --lib
+cargo build --release --lib --no-default-features
 python -m unittest discover -s tests -v
 python -m training.train --device cpu --steps 160 --envs 2 --warmup 16 --replay 256 --batch 8 --eval-every 80 --run-dir /tmp/a2rl-smoke
 git --git-dir=.a2rl-git --work-tree=. status

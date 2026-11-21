@@ -12,9 +12,6 @@ from .agent import Agent
 from .replay import Replay
 from .sim import Environment, load_sim
 
-TRACK_GATES = 12
-
-
 def options():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--device", default="auto", choices=("auto", "cuda", "cpu"))
@@ -29,6 +26,7 @@ def options():
     parser.add_argument("--update-every", type=int, default=8, help="Environment transitions per optimizer step.")
     parser.add_argument("--gamma", type=float, default=0.999)
     parser.add_argument("--n-step", type=int, default=5)
+    parser.add_argument("--hdzero-max", type=float, default=0.45, help="Maximum pixel breakup strength.")
     parser.add_argument("--seed", type=int, default=21)
     parser.add_argument("--eval-every", type=int, default=20_000)
     parser.add_argument("--eval-episodes", type=int, default=1)
@@ -37,8 +35,8 @@ def options():
     args = parser.parse_args()
     positive = (args.steps, args.envs, args.width, args.height, args.stack, args.replay, args.batch,
                 args.update_every, args.n_step, args.eval_every, args.eval_episodes)
-    if min(positive) <= 0 or args.warmup < 0 or not 0 < args.gamma <= 1:
-        parser.error("Counts must be positive, warmup nonnegative and gamma must be in (0, 1].")
+    if min(positive) <= 0 or args.warmup < 0 or not 0 < args.gamma <= 1 or not 0 <= args.hdzero_max <= 1:
+        parser.error("Counts must be positive, warmup nonnegative and gamma and HDZero strength must be in range.")
     return args
 
 
@@ -51,9 +49,8 @@ def evaluate(agent, env, stack, episodes):
     stalls = 0
     rng = np.random.default_rng(71)
     for index in range(episodes):
-        frame = env.reset() if index == 0 else env.reset(
-            side=rng.uniform(-0.35, 0.35), height=rng.uniform(-0.2, 0.2),
-            exposure=rng.uniform(0.85, 1.15))
+        frame = env.ground_start() if index == 0 else env.ground_start(
+            side=rng.uniform(-0.35, 0.35), exposure=rng.uniform(0.85, 1.15))
         obs = fresh_stack(frame, stack)
         reward_total = 0.
         while True:
@@ -71,9 +68,13 @@ def evaluate(agent, env, stack, episodes):
             records.append(best)
         returns.append(reward_total)
     return {"return": float(np.mean(returns)), "gates_mean": float(np.mean(passes)),
-            "laps_total": sum(gate // TRACK_GATES for gate in passes),
+            "laps_total": sum(gate // env.lib.sim_gate_count() for gate in passes),
             "best_lap_seconds": min(records, default=None), "crash_rate": crashes / episodes,
-            "stall_rate": stalls / episodes}
+            "stall_rate": stalls / episodes,
+            "launch_to_gate_one_rate": sum(gate >= 1 for gate in passes) / episodes,
+            "split_s_rate": sum(gate >= 6 for gate in passes) / episodes,
+            "slalom_rate": sum(gate >= 10 for gate in passes) / episodes,
+            "lap_rate": sum(gate >= env.lib.sim_gate_count() for gate in passes) / episodes}
 
 
 def initial_exploration(rng, previous):
@@ -95,8 +96,12 @@ def train(args, agent, lib):
     flags = np.zeros(args.envs, np.uint8)
     next_frames = np.empty((args.envs, *shape), np.uint8)
     exploration = np.zeros((args.envs, 4), np.float32)
+    trim = np.array([0., lib.sim_hover_stick(), 0., 0.], dtype=np.float32)
     starts = np.zeros((args.envs, args.stack, *shape), np.uint8)
-    gate_practice = np.linspace(0.85, 0.30, 101)
+    gate_practice = np.linspace(0.80, 0.25, 101)
+    gate_weights = np.ones(lib.sim_gate_count())
+    gate_weights[[4, 6, 10]] = 2.  # Split-S, slalom and hairpin.
+    gate_weights /= gate_weights.sum()
     started = time.monotonic()
     last_report, last_eval = started, 0
     updates, steps = 0, 0
@@ -104,11 +109,13 @@ def train(args, agent, lib):
     losses = None
 
     def reset(env, step):
+        breakup = rng.uniform(0.05 * args.hdzero_max, args.hdzero_max) if rng.random() < 0.4 else 0.
+        video_seed = int(rng.integers(1 << 32))
         probability = gate_practice[min(100, round(step * 100 / args.steps))]
         if rng.random() > probability:
-            return env.reset()
-        return env.reset(int(rng.integers(TRACK_GATES)), rng.uniform(-0.6, 0.6),
-                         rng.uniform(-0.35, 0.35), rng.uniform(0.75, 1.25))
+            return env.ground_start(rng.uniform(-0.3, 0.3), rng.uniform(0.8, 1.2), breakup, video_seed)
+        return env.reset(int(rng.choice(len(gate_weights), p=gate_weights)), rng.uniform(-0.6, 0.6),
+                         rng.uniform(-0.35, 0.35), rng.uniform(0.75, 1.25), breakup, video_seed)
 
     try:
         for i, env in enumerate(envs):
@@ -120,7 +127,7 @@ def train(args, agent, lib):
                 noise = max(0.10, 0.32 - 0.22 * steps / max(1, args.steps // 2))
                 if steps < args.warmup:
                     exploration = initial_exploration(rng, exploration)
-                    actions = exploration.copy()
+                    actions = np.clip(exploration + trim, -1., 1.)
                 else:
                     actions = agent.action(starts, noise)
                 tasks = [workers.submit(env.step, action) for env, action in zip(envs, actions)]
@@ -182,7 +189,7 @@ def main():
         torch.backends.cudnn.allow_tf32 = True
         torch.backends.cudnn.benchmark = True
     lib = load_sim()
-    agent = Agent(args.stack, device)
+    agent = Agent(args.stack, device, lib.sim_hover_stick())
     if args.evaluate:
         agent.load(args.evaluate)
         env = Environment(lib, args.width, args.height)

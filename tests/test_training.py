@@ -38,7 +38,7 @@ class EnvironmentTest(unittest.TestCase):
             self.assertEqual(first.shape, (72, 96, 3))
             self.assertEqual(first.dtype, np.uint8)
             for _ in range(8):
-                frame, reward, terminated, truncated = env.step([0, 0, 0.8, 0])
+                frame, reward, terminated, truncated = env.step([0, env.lib.sim_hover_stick(), 0, 0.8])
             self.assertFalse(terminated or truncated)
             self.assertTrue(np.isfinite(reward))
             self.assertGreater(np.mean(first != frame), 0.25)

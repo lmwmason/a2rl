@@ -7,6 +7,7 @@ This report checks the 2025 Grand Challenge layout, the Mode 2 RC interface, fir
 | MSP RC interface | Four 1000–2000 µs AETR channels round-trip to Mode 2 commands with 1 µs resolution | MSP v1 command framing, channel mapping, and checksum |
 | Native 2026 practice flow teacher | 22 gates and two laps in each of three runs, fastest 66.11 s, mean crossing speed 5.00 m/s | State-driven teacher tested from three ground starts |
 | Elodin with Betaflight SITL, 2026 practice | Reached 0.96 m and exported 41 FPV frames at 820 × 616 | Scripted 1.4 s takeoff, no course completion |
+| Elodin flow teacher, 2026 practice | Default controller reached 0/22. Two lower-gain trials reached 1/22 before leaving the flight volume. | The rate controller is sensitive to the plant model. The trials did not qualify either gain set for training. |
 | MonoRace Log 8, late segment | Axial specific-force RMSE of 3.41 m/s², bias of +0.45 m/s², and peak error of 14.54 m/s² over 367 windows | Calibrated plant prediction using measured rotor speeds and estimated motion |
 | MonoRace Log 5, held-out flight | 1.57 m/s² forward and 1.99 m/s² lateral specific-force RMSE over 897 windows | Horizontal drag prediction using independent flight data |
 | MonoRace Log 7, held-out flight | 1.40 m/s² forward and 2.25 m/s² lateral specific-force RMSE over 881 windows | Horizontal drag prediction using independent flight data |

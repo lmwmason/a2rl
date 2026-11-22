@@ -6,6 +6,7 @@ const setText = (id, value) => {
   if (element.textContent !== value) element.textContent = value;
 };
 const number = new Intl.NumberFormat("en-US");
+const dateTime = new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeStyle: "short" });
 const count = (value) => Number.isFinite(value) ? number.format(value) : "—";
 const percent = (value) => Number.isFinite(value) ? count(Math.round(value * 100)) + "%" : "—";
 const quantity = (value, unit) => Number.isFinite(value) ? value.toFixed(2) + " " + unit : "—";
@@ -185,6 +186,15 @@ function startReplay() {
     setText("replay-result", firmwareCheck ? "Takeoff verified"
       : { 1: "Crash", 2: "Timed out", 3: "Stalled", 4: "Finished two laps" }[playing.status] || "—");
     setText("replay-physics", physicsLabel(playing));
+    const recorded = byId("replay-recorded");
+    const recordedDate = new Date(Number(playing.version) / 1_000_000);
+    if (Number.isFinite(recordedDate.getTime())) {
+      recorded.dateTime = recordedDate.toISOString();
+      recorded.textContent = dateTime.format(recordedDate);
+      recorded.closest("div").hidden = false;
+    } else {
+      recorded.closest("div").hidden = true;
+    }
   } else if (playing && !playing.archived) {
     camera.currentTime = 0;
   } else {
@@ -202,6 +212,7 @@ function renderStatus(info) {
   const connected = info.connection === "connected" && Date.now() / 1000 - info.snapshot_at < 15;
   const speedTraining = info.phase === "SPEED RL";
   const season2 = info.course === "2026-practice";
+  for (const row of document.querySelectorAll(".evaluation")) row.hidden = info.phase === "VALIDATION";
   setText("course", season2 ? "2026 practice reconstruction" : info.course === "2025" ? "2025 baseline" : "—");
   if (info.archived) {
     pill("connection", "No live training", "stale");
@@ -277,7 +288,7 @@ async function queueReplay({ url, value: info }) {
   if (info.version === playing?.version || info.version === pending?.version) return;
   if (!/^replay-[0-9]+\.mp4$/.test(info.url)) throw new Error("Invalid replay filename");
   const video = await requestData(new URL(info.url, url), true);
-  const blob = URL.createObjectURL(video.value);
+  const blob = URL.createObjectURL(video.value.slice(0, video.value.size, "video/mp4"));
   if (pending) URL.revokeObjectURL(pending.blob);
   pending = { ...info, blob };
   if (!playing || camera.ended) startReplay();

@@ -1,11 +1,24 @@
 {
   "archived": true,
-  "phase": "VALIDATION",
+  "phase": "TEACHER",
   "course": "2026-practice",
-  "physics_engine": "elodin",
+  "physics_engine": "rust",
+  "gates_per_race": 24,
   "active": false,
   "connection": "disconnected",
-  "recent_gates": [],
-  "recent_finish_times": [],
-  "gates_per_race": 24
+  "recent_gates": [
+    24
+  ],
+  "recent_finish_times": [
+    {
+      "at": 1,
+      "standard_s": null,
+      "comparison_s": 34.8458366394043
+    }
+  ],
+  "best_two_lap_seconds": 34.8458366394043,
+  "finish_rate": 1.0,
+  "collision_rate": 0.0,
+  "mean_gate_crossing_speed_m_s": 5.143910549305104,
+  "mean_gate_approach_delay_seconds": 0.1329184671243032
 }

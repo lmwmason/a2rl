@@ -1,11 +1,12 @@
 {
   "archived": true,
-  "phase": "VALIDATION",
+  "phase": "TEACHER",
   "course": "2026-practice",
-  "physics_engine": "elodin",
-  "kind": "takeoff-check",
-  "gates": 0,
-  "version": "1795351837145551490",
-  "url": "replay-1795351837145551490.mp4",
-  "gates_per_race": 24
+  "physics_engine": "rust",
+  "gates_per_race": 24,
+  "kind": "teacher-evaluation",
+  "gates": 24,
+  "status": 4,
+  "version": "1795352200966323180",
+  "url": "replay-1795352200966323180.mp4"
 }

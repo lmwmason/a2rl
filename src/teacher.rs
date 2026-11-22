@@ -1,4 +1,6 @@
 //! Training-only expert. Its state and gate path are never input to the RGB policy.
+mod line;
+
 use glam::{Mat3, Quat, Vec3};
 
 use crate::{Course, Race, HOVER};
@@ -61,6 +63,13 @@ impl Teacher {
     }
 
     pub fn action(&mut self, race: &Race) -> [f32; 4] {
+        if self.flow && race.grand_challenge && race.course == Course::Season2Practice2026 {
+            if let Some((accel, heading)) = line::track(race) {
+                let accel = accel.with_z(0.).clamp_length_max(12.)
+                    + Vec3::Z * (GRAVITY + accel.z.clamp(-5.5, 8.));
+                return rate_action(race, accel, heading);
+            }
+        }
         let next = race.next_gate();
         let gate = race.gates[next];
         let previous_index = (next + race.gates.len() - 1) % race.gates.len();
@@ -209,19 +218,23 @@ impl Teacher {
         } else {
             5.2
         }) + Vec3::Z * (GRAVITY + error.z.clamp(-5.5, 6.0));
-        let up = accel.normalize();
-        let left = up.cross(heading).normalize();
-        let desired = Quat::from_mat3(&Mat3::from_cols(left.cross(up), left, up));
-        let rotation_error = race.drone.rotation.conjugate() * desired;
-        let rotation_error = if rotation_error.w < 0. {
-            -rotation_error
-        } else {
-            rotation_error
-        };
-        let rates = rotation_error.to_scaled_axis() * 6.0 / Vec3::new(5.5, 5.5, 3.4);
-        let throttle = (accel.dot(race.drone.rotation * Vec3::Z) / GRAVITY * HOVER).clamp(0., 1.);
-        [-rates.z, 2. * throttle - 1., rates.x, rates.y].map(|axis| axis.clamp(-1., 1.))
+        rate_action(race, accel, heading)
     }
+}
+
+fn rate_action(race: &Race, accel: Vec3, heading: Vec3) -> [f32; 4] {
+    let up = accel.normalize();
+    let left = up.cross(heading).normalize();
+    let desired = Quat::from_mat3(&Mat3::from_cols(left.cross(up), left, up));
+    let rotation_error = race.drone.rotation.conjugate() * desired;
+    let rotation_error = if rotation_error.w < 0. {
+        -rotation_error
+    } else {
+        rotation_error
+    };
+    let rates = rotation_error.to_scaled_axis() * 6.0 / Vec3::new(5.5, 5.5, 3.4);
+    let throttle = (accel.dot(race.drone.rotation * Vec3::Z) / GRAVITY * HOVER).clamp(0., 1.);
+    [-rates.z, 2. * throttle - 1., rates.x, rates.y].map(|axis| axis.clamp(-1., 1.))
 }
 
 #[cfg(test)]
@@ -267,6 +280,6 @@ mod tests {
             race.step(mode2_acro(teacher.action(&race))).unwrap();
         }
         assert_eq!((race.status, race.passed), (Status::Finished, 24));
-        assert!(race.official_seconds().unwrap() < 80.);
+        assert!(race.official_seconds().unwrap() < 37.);
     }
 }

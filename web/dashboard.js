@@ -172,13 +172,16 @@ function startReplay() {
     const download = byId("download-replay");
     download.href = playing.blob;
     const firmwareCheck = playing.kind === "takeoff-check";
+    const teacher = playing.kind === "teacher-evaluation";
     const season = playing.course === "2026-practice" ? "2026-practice" : "2025";
-    download.download = firmwareCheck ? `a2rl-${season}-elodin-takeoff.mp4`
+    download.download = teacher ? `a2rl-${season}-flow-teacher.mp4`
+      : firmwareCheck ? `a2rl-${season}-elodin-takeoff.mp4`
       : playing.phase === "SPEED RL" ? `a2rl-${season}-rl-${playing.steps}.mp4`
       : `a2rl-${season}-imitation-round-${playing.round}.mp4`;
     download.hidden = false;
     byId("waiting").hidden = true;
-    const stage = firmwareCheck ? "Firmware takeoff check"
+    const stage = teacher ? "Flow teacher evaluation"
+      : firmwareCheck ? "Firmware takeoff check"
       : playing.phase === "SPEED RL" ? "Reinforcement learning · " + count(playing.steps) + " steps"
       : playing.round ? "Imitation · Round " + count(playing.round) : "Imitation checkpoint";
     setText("replay-stage", stage);
@@ -212,7 +215,10 @@ function renderStatus(info) {
   const connected = info.connection === "connected" && Date.now() / 1000 - info.snapshot_at < 15;
   const speedTraining = info.phase === "SPEED RL";
   const season2 = info.course === "2026-practice";
-  for (const row of document.querySelectorAll(".evaluation")) row.hidden = info.phase === "VALIDATION";
+  const teacher = info.phase === "TEACHER";
+  for (const row of document.querySelectorAll(".evaluation")) {
+    row.hidden = info.phase === "VALIDATION" || (teacher && row.classList.contains("training-counter"));
+  }
   setText("course", season2 ? "2026 race reconstruction" : info.course === "2025" ? "2025 baseline" : "—");
   if (info.archived) {
     pill("connection", "No live training", "stale");
@@ -221,7 +227,8 @@ function renderStatus(info) {
   } else {
     pill("connection", info.connection === "connecting" ? "Connecting to GPU" : "GPU feed offline", "stale");
   }
-  setText("phase", info.phase === "VALIDATION" ? "Firmware validation" : info.target_beaten ? "Target reached" : speedTraining ? "Reinforcement learning"
+  setText("phase", teacher ? "Teacher validation"
+    : info.phase === "VALIDATION" ? "Firmware validation" : info.target_beaten ? "Target reached" : speedTraining ? "Reinforcement learning"
     : info.full_course ? "Full-course imitation" : info.phase ? "Imitation learning" : "—");
   setText("progress-label", speedTraining ? "Reinforcement learning steps" : "Imitation round");
   setText("progress", count(speedTraining ? info.steps : info.round));

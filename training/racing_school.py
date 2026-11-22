@@ -16,7 +16,7 @@ from . import checkpoint
 from .agent import Agent, pixel_tensor, random_shift, stick_loss
 from .betaflight_link import decode_rc, encode_rc
 from .demonstrations import Demonstrations
-from .sim import Environment, LEGACY_PHYSICS, gate_count as course_gate_count, load_sim, physics_identity, teacher_profile
+from .sim import Environment, LEGACY_PHYSICS, course_profile, gate_count as course_gate_count, load_sim, physics_identity, teacher_profile
 from .telemetry import FramePublisher
 from .train import fresh_stack
 
@@ -106,6 +106,7 @@ def evaluate_student(agent, env, stack, seed, episodes, teacher=False):
     n_gates = course_gate_count(env.lib) * 2
     passes, crashes, times = [], 0, []
     approach_delay, crossing_speed = 0., 0.
+    longest_slow_seconds = 0.
     rng = np.random.default_rng(seed)
     for i in range(episodes):
         if i == 0:
@@ -114,10 +115,14 @@ def evaluate_student(agent, env, stack, seed, episodes, teacher=False):
             frame = env.official_start(side=float(rng.uniform(-.22, .22)),
                                      exposure=float(rng.uniform(.90, 1.10)))
         obs = fresh_stack(frame, stack)
+        slow_ticks = 0
         for tick in range(1, 180 * 30 + 1):
-            action = env.expert_action() if teacher else agent.command(obs, env)
+            action = decode_rc(encode_rc(env.expert_action())) if teacher else agent.command(obs, env)
             frame, _, status = env.advance(action)
             gates, _ = env.lap_stats()
+            if gates > 0:
+                velocity = env.rigid_state()[3:6]
+                slow_ticks += int(velocity @ velocity < 4.)
             if status or gates >= n_gates:
                 passes.append(gates)
                 delay, speed_sum = env.flow_stats()
@@ -125,6 +130,7 @@ def evaluate_student(agent, env, stack, seed, episodes, teacher=False):
                 crossing_speed += speed_sum
                 if status == 4 and gates == n_gates:
                     times.append(env.official_seconds())
+                    longest_slow_seconds = max(longest_slow_seconds, slow_ticks / 30.)
                 crashes += int(status == 1)
                 break
             obs[:-1] = obs[1:]
@@ -137,6 +143,8 @@ def evaluate_student(agent, env, stack, seed, episodes, teacher=False):
         "two_lap_rate": len(times) / episodes,
         "crash_rate": crashes / episodes,
         "best_two_lap_s": min(times, default=None),
+        "worst_two_lap_s": max(times, default=None),
+        "longest_completed_run_below_2_m_s": longest_slow_seconds if times else None,
         "mean_gate_approach_delay_seconds": approach_delay / episodes,
         "mean_gate_crossing_speed_m_s": crossing_speed / sum(passes) if sum(passes) else None,
     }
@@ -150,6 +158,14 @@ def evaluation_rank(result):
             -lap_time if lap_time is not None else -float("inf"),
             -result["mean_gate_approach_delay_seconds"],
             crossing_speed if crossing_speed is not None else 0.)
+
+
+def matches_teacher_pace(result, expert):
+    return (result["two_lap_rate"] == 1.
+            and result["worst_two_lap_s"] <= 1.20 * expert["worst_two_lap_s"]
+            and result["longest_completed_run_below_2_m_s"]
+            <= expert["longest_completed_run_below_2_m_s"] + 1.
+            and result["mean_gate_crossing_speed_m_s"] >= .80 * expert["mean_gate_crossing_speed_m_s"])
 
 
 def demonstration_loss(agent, demonstrations, batch):
@@ -168,7 +184,8 @@ def training_reset(env, index, rng, target, continuous=False):
     video_seed = int(rng.integers(1 << 32))
     exposure = float(rng.uniform(.82, 1.18))
     if continuous:
-        return env.official_start(side=rng.uniform(-.22, .22), exposure=exposure)
+        return env.official_start(side=rng.uniform(-.22, .22), exposure=exposure,
+                                  breakup=breakup, video_seed=video_seed)
     if index % 4 < 2:
         return env.ground_start(side=rng.uniform(-.25, .25), exposure=exposure,
                                 breakup=breakup, video_seed=video_seed)
@@ -306,6 +323,9 @@ def main():
     lib = load_sim()
     physics = physics_identity(lib)
     teacher = teacher_profile()
+    line_teacher = course_profile() == "2026-practice" and teacher == "flow"
+    qualify_pace = args.full_course and line_teacher
+    teacher_revision = 2 if line_teacher else 1
     height, width = 72, 96
     human_demo = (Demonstrations(args.human_demos, [], args.stack, height, width, 213, args.imu)
                   if args.human_demos else None)
@@ -359,6 +379,7 @@ def main():
             progress = restore_school(args.resume, agent, auxiliary, optimizer, buffer, rng, physics)
             if (progress.get("human_ids", {}) != human_ids or progress.get("monorace_ids", {}) != monorace_ids
                     or progress.get("teacher_profile", "standard") != teacher
+                    or progress.get("teacher_revision", 1) != teacher_revision
                     or progress.get("teacher_warmup_rounds", 0) != args.teacher_warmup_rounds):
                 raise ValueError("Resume with the original teacher profile and flight datasets.")
             if progress.get("full_course", False) != args.full_course:
@@ -434,10 +455,13 @@ def main():
                         robustness = evaluate_student(agent, test_env, args.stack,
                                                       EVALUATION_SEED + round_no, args.eval_episodes)
                     ready = robustness is not None and robustness["two_lap_rate"] == 1.
+                    if ready and qualify_pace:
+                        ready = matches_teacher_pace(result, expert) and matches_teacher_pace(robustness, expert)
                     result.update(round=round_no, transitions=buffer.count * args.envs,
                                   target_gate=target,
                                   evaluation_seed=EVALUATION_SEED,
                                   holdout_two_lap_rate=robustness["two_lap_rate"] if robustness else None,
+                                  meets_teacher_pace=matches_teacher_pace(result, expert) if qualify_pace else None,
                                   teacher_probability=teacher_probability, collection_crashes=accidents,
                                   pace_training_samples=pace_samples,
                                   collection_two_lap_finishes=course_finishes,
@@ -478,7 +502,8 @@ def main():
                                      "first_full": first_full, "qualified": qualified, "physics": physics,
                                      "evaluation_seed": EVALUATION_SEED, "human_ids": human_ids,
                                      "teacher_warmup_rounds": args.teacher_warmup_rounds, "full_course": args.full_course,
-                                     "teacher_profile": teacher, "monorace_ids": monorace_ids,
+                                     "teacher_profile": teacher, "teacher_revision": teacher_revision,
+                                     "monorace_ids": monorace_ids,
                                      "monorace_rng": monorace_demo.rng.bit_generator.state if monorace_demo else None,
                                      "human_rng": human_demo.rng.bit_generator.state if human_demo else None})
                     if qualified >= 2 and round_no - first_full >= args.consolidation_rounds:

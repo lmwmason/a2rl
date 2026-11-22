@@ -142,8 +142,8 @@ class Environment:
     def ground_start(self, side=0., exposure=1., breakup=0., video_seed=1):
         return self.reset(-2, side, exposure=exposure, breakup=breakup, video_seed=video_seed)
 
-    def official_start(self, side=0., exposure=1.):
-        return self.reset(-3, side, exposure=exposure)
+    def official_start(self, side=0., exposure=1., breakup=0., video_seed=1):
+        return self.reset(-3, side, exposure=exposure, breakup=breakup, video_seed=video_seed)
 
     def official_seconds(self):
         value = self.lib.sim_official_seconds(self.handle)

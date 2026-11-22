@@ -5,7 +5,7 @@ This report checks the 2025 Grand Challenge layout, the Mode 2 RC interface, fir
 | Check | Result | Scope |
 | --- | --- | --- |
 | MSP RC interface | Four 1000–2000 µs AETR channels round-trip to Mode 2 commands with 1 µs resolution | MSP v1 command framing, channel mapping, and checksum |
-| Native 2026 race reconstruction | 24 gate passes in each of three runs, fastest 76.37 s, mean crossing speed 4.82 m/s | State-driven teacher tested from three ground starts |
+| Native 2026 flow teacher | Nine clean two-lap runs with 24 passes each, 34.85–34.86 s, mean crossing speed 5.14 m/s | Continuous line tracked after a ground start. The longest run spent 0.33 s below 2 m/s after the first gate. The prior waypoint controller needed 76.37 s. |
 | Elodin with Betaflight SITL, 2026 race reconstruction | Recorded the scripted takeoff at 480 × 360 and 30 fps with the shared Rust camera | Takeoff and video smoke test |
 | MonoRace Log 8, late segment | Axial specific-force RMSE of 3.41 m/s², bias of +0.45 m/s², and peak error of 14.54 m/s² over 367 windows | Calibrated plant prediction using measured rotor speeds and estimated motion |
 | MonoRace Log 5, held-out flight | 1.57 m/s² forward and 1.99 m/s² lateral specific-force RMSE over 897 windows | Horizontal drag prediction using independent flight data |

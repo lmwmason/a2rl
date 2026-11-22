@@ -9,6 +9,7 @@ import torch
 
 from training.agent import Agent
 from training.demonstrations import Clip
+from training.racing_school import matches_teacher_pace
 from training.replay import Replay
 from training.sim import Environment, gate_count, load_sim
 from training.telemetry import FramePublisher, finish_time_history, read_packet
@@ -102,6 +103,15 @@ class SharedCameraTest(unittest.TestCase):
 
 
 class RecordTargetTest(unittest.TestCase):
+    def test_course_qualification_requires_continuous_pace(self):
+        expert = {"two_lap_rate": 1., "worst_two_lap_s": 35.,
+                  "longest_completed_run_below_2_m_s": .35, "mean_gate_crossing_speed_m_s": 5.2}
+        self.assertTrue(matches_teacher_pace(expert | {"worst_two_lap_s": 39.}, expert))
+        self.assertFalse(matches_teacher_pace(expert | {"two_lap_rate": 2 / 3}, expert))
+        self.assertFalse(matches_teacher_pace(expert | {"worst_two_lap_s": 45.}, expert))
+        self.assertFalse(matches_teacher_pace(expert | {"longest_completed_run_below_2_m_s": 3.}, expert))
+        self.assertFalse(matches_teacher_pace(expert | {"mean_gate_crossing_speed_m_s": 2.8}, expert))
+
     def test_strict_time_and_clean_finishes_from_every_start(self):
         result = {"official_start_seconds": 16.55, "official_finishes": 3, "crash_rate": 0.}
         self.assertTrue(beats_record(result, 16.56, 3))

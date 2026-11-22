@@ -6,7 +6,7 @@ An indoor FPV racing research project with a Rust simulator for batch experiment
 
 ![Rust FPV frame rendered from an Elodin takeoff on the 2026 race reconstruction](docs/screenshots/elodin-2026-fpv.png)
 
-The public dashboard shows the replay, its simulator, and evaluation histories. In the absence of an Elodin feed it plays the saved firmware takeoff check and shows **No live training**. The takeoff clip does not have an evaluation round.
+The public dashboard shows the replay, its simulator, and evaluation histories. The saved **Flow teacher evaluation** shows one complete Rust simulation race and the results of the teacher's validation batch. The status panel shows **No live training** when no live run is connected.
 
 ## Fly the course
 
@@ -125,6 +125,10 @@ A custom three-layer PyTorch CNN maps RGB frames to a 128-dimensional feature ve
 The optional `A2RL_REWARD_PROFILE=pace` compares each completed gate segment against a pace reference based on its distance and change in heading. It adds a two-lap completion bonus, raises the time, collision, and stall penalties, and removes the reward for beating a driver's earlier lap within the same episode. Start from policy weights in a new run when switching reward profiles. Replay snapshots retain their original reward version.
 
 ## Train and evaluate
+
+On the 2026 reconstruction, `A2RL_TEACHER_PROFILE=flow` follows a closed racing line through the gate centers, with a curvature-dependent speed profile. The expert follows that line from takeoff through both laps. The student observes FPV and IMU when using `--imu` and receives four Mode 2 Acro labels. Use `--full-course` to retain complete student and expert episodes.
+
+For the 2026 flow teacher, full-course imitation qualifies after repeated clean finishes on fixed and independent starts. The worst run must finish within 20% of the teacher batch's slowest time, spend at most one extra second below 2 m/s after the first gate, and reach at least 80% of the teacher's mean gate crossing speed. The MCK transmitter logs are from TII's trackRATM and can supplement the course-specific simulation labels. [Flight validation report](docs/simulator-validation.md) · [TII MCK data](https://github.com/tii-racing/drone-racing-dataset/releases/tag/v3.0.0)
 
 Install a CUDA-compatible PyTorch build for the GPU environment. The training stack uses PyTorch and NumPy. FFmpeg encodes dashboard replays.
 

@@ -13,7 +13,7 @@ import torch
 
 from . import checkpoint
 from .agent import Agent, pixel_tensor, random_shift, stick_loss
-from .sim import Environment, load_sim
+from .sim import Environment, LEGACY_PHYSICS, load_sim, physics_identity
 from .telemetry import FramePublisher
 from .train import fresh_stack
 
@@ -70,9 +70,11 @@ def save_school(path, agent, aux, optimizer, buffer, rng, progress):
             checkpoint.write_array(archive, field, getattr(buffer, field)[:min(buffer.count, buffer.rows)])
 
 
-def restore_school(path, agent, aux, optimizer, buffer, rng):
+def restore_school(path, agent, aux, optimizer, buffer, rng, physics):
     with ZipFile(path) as archive:
         payload = torch.load(BytesIO(archive.read("school.pt")), map_location="cpu", weights_only=True)
+        if payload["progress"].get("physics", LEGACY_PHYSICS) != physics:
+            raise ValueError("Use the original physics to resume, or initialize a new run from weights.")
         if payload["layout"] != (tuple(buffer.frames.shape), buffer.stack):
             raise ValueError("Use the original environment, replay and frame-stack settings to resume.")
         buffer.count = payload["count"]
@@ -214,6 +216,7 @@ def main():
         torch.backends.cudnn.benchmark = True
     rng = np.random.default_rng(74)
     lib = load_sim()
+    physics = physics_identity(lib)
     height, width = 72, 96
     test_env = Environment(lib, width, height)
     args.out.mkdir(parents=True, exist_ok=True)
@@ -238,7 +241,7 @@ def main():
         if args.initialize:
             agent.load(args.initialize)
         if args.resume:
-            progress = restore_school(args.resume, agent, auxiliary, optimizer, buffer, rng)
+            progress = restore_school(args.resume, agent, auxiliary, optimizer, buffer, rng, physics)
             best, first_full = progress["best"], progress["first_full"]
             qualified, first_round, target = progress["qualified"], progress["round"], progress["target"]
         envs = [Environment(lib, width, height) for _ in range(args.envs)]
@@ -295,7 +298,7 @@ def main():
                     if round_no == 1 or round_no % args.save_every == 0 or round_no == args.rounds:
                         save_school(args.out / "imitation-state.zip", agent, auxiliary, optimizer, buffer, rng,
                                     {"round": round_no, "target": target, "best": best,
-                                     "first_full": first_full, "qualified": qualified})
+                                     "first_full": first_full, "qualified": qualified, "physics": physics})
                     if qualified >= 2 and round_no - first_full >= args.consolidation_rounds:
                         agent.save(args.out / "qualified.pt")
                         print(json.dumps({"qualified": True, "verified_two_lap_evaluations": 2 * args.eval_episodes}), flush=True)

@@ -7,6 +7,14 @@ import sys
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
+FLOAT_POINTER = ct.POINTER(ct.c_float)
+RIGID_STEP = ct.CFUNCTYPE(ct.c_int, FLOAT_POINTER, FLOAT_POINTER, FLOAT_POINTER)
+LEGACY_PHYSICS = {"engine": "rust", "model_version": 1}
+
+
+def physics_identity(lib, engine=None):
+    return {"engine": engine or os.environ.get("A2RL_PHYSICS_ENGINE", "rust"),
+            "model_version": lib.sim_physics_model_version()}
 
 
 def load_sim():
@@ -24,6 +32,8 @@ def load_sim():
     lib.sim_gate_count.restype = ct.c_size_t
     lib.sim_hover_stick.argtypes = []
     lib.sim_hover_stick.restype = ct.c_float
+    lib.sim_physics_model_version.argtypes = []
+    lib.sim_physics_model_version.restype = ct.c_uint32
     lib.sim_create.argtypes = [ct.c_size_t, ct.c_size_t]
     lib.sim_create.restype = ct.c_void_p
     lib.sim_destroy.argtypes = [ct.c_void_p]
@@ -41,6 +51,12 @@ def load_sim():
     lib.sim_expert_features.restype = None
     lib.sim_step.argtypes = [ct.c_void_p, ct.c_void_p, ct.c_void_p, ct.POINTER(ct.c_float)]
     lib.sim_step.restype = ct.c_int
+    lib.sim_step_external.argtypes = [ct.c_void_p, ct.c_void_p, ct.c_void_p, FLOAT_POINTER, RIGID_STEP]
+    lib.sim_step_external.restype = ct.c_int
+    lib.sim_rigid_parameters.argtypes = [FLOAT_POINTER]
+    lib.sim_rigid_parameters.restype = None
+    lib.sim_rigid_state.argtypes = [ct.c_void_p, FLOAT_POINTER]
+    lib.sim_rigid_state.restype = None
     lib.sim_lap_stats.argtypes = [ct.c_void_p, ct.POINTER(ct.c_uint32), ct.POINTER(ct.c_float)]
     lib.sim_lap_stats.restype = None
     lib.sim_official_seconds.argtypes = [ct.c_void_p]
@@ -49,8 +65,15 @@ def load_sim():
 
 
 class Environment:
-    def __init__(self, lib, width, height):
+    def __init__(self, lib, width, height, physics=None):
         self.lib = lib
+        physics = physics_identity(lib, physics)["engine"]
+        self.body = None
+        if physics == "mujoco":
+            from .mujoco_body import MujocoBody
+            self.body = MujocoBody(lib)
+        elif physics != "rust":
+            raise ValueError(f"Unknown physics engine: {physics}")
         self.handle = lib.sim_create(width, height)
         if not self.handle:
             raise ValueError("Unsupported camera resolution.")
@@ -58,6 +81,8 @@ class Environment:
         self.reward = ct.c_float()
 
     def reset(self, gate=-1, side=0., height=0., exposure=1., breakup=0., video_seed=1):
+        if self.body is not None:
+            self.body.reset()
         self.lib.sim_reset(self.handle, gate, side, height, exposure, breakup, video_seed, self.image.ctypes.data)
         return self.image
 
@@ -72,6 +97,8 @@ class Environment:
         return None if np.isnan(value) else value
 
     def after_gate(self, gate=0, side=0., height=0., speed=0., exposure=1., breakup=0., video_seed=1):
+        if self.body is not None:
+            self.body.reset()
         self.lib.sim_reset_after_gate(self.handle, gate, side, height, speed, exposure,
                                       breakup, video_seed, self.image.ctypes.data)
         return self.image
@@ -94,10 +121,21 @@ class Environment:
         native = np.ascontiguousarray(action, dtype=np.float32)
         if native.shape != (4,):
             raise ValueError("Expected four policy action values.")
-        status = self.lib.sim_step(self.handle, native.ctypes.data, self.image.ctypes.data, ct.byref(self.reward))
+        args = self.handle, native.ctypes.data, self.image.ctypes.data, ct.byref(self.reward)
+        if self.body is None:
+            status = self.lib.sim_step(*args)
+        else:
+            status = self.lib.sim_step_external(*args, self.body.callback)
+            if self.body.error is not None:
+                raise RuntimeError("MuJoCo integration failed") from self.body.error
         if status < 0:
             raise ValueError("Non-finite action or step after episode end.")
         return self.image, self.reward.value, status
+
+    def rigid_state(self):
+        state = (ct.c_float * 13)()
+        self.lib.sim_rigid_state(self.handle, state)
+        return np.asarray(state).copy()
 
     def lap_stats(self):
         gates, best = ct.c_uint32(), ct.c_float()

@@ -3,8 +3,14 @@ mod ffi;
 pub mod teacher;
 
 use glam::{Quat, Vec3};
+use parry3d::{
+    na::{Isometry3, Vector3},
+    query::{cast_shapes, ShapeCastOptions},
+    shape::{Ball, Cuboid},
+};
 
 pub const PHYSICS_HZ: usize = 240;
+pub const PHYSICS_MODEL_VERSION: u32 = 2;
 pub const CONTROL_HZ: usize = 30;
 pub const GRAND_CHALLENGE_LAPS: usize = 2;
 const DT: f32 = 1.0 / PHYSICS_HZ as f32;
@@ -23,8 +29,9 @@ const ARM_AXIS: f32 = 0.155 * std::f32::consts::FRAC_1_SQRT_2;
 const YAW_MOMENT: f32 = 0.016;
 const MOTOR_TAU: f32 = 0.030;
 const INERTIA: Vec3 = Vec3::new(0.0036, 0.0038, 0.0062);
-const LINEAR_DRAG: Vec3 = Vec3::new(0.09, 0.13, 0.);
-const QUADRATIC_DRAG: Vec3 = Vec3::new(0.045, 0.065, 0.);
+// Fit on the first airborne segment of MonoRace Log 8. Logs 5 and 7 are held out.
+const LINEAR_DRAG: Vec3 = Vec3::new(0.3935197, 0.7070415, 0.);
+const QUADRATIC_DRAG: Vec3 = Vec3::new(0.002257, 0., 0.);
 const X: [f32; 4] = [ARM_AXIS, ARM_AXIS, -ARM_AXIS, -ARM_AXIS];
 const Y: [f32; 4] = [ARM_AXIS, -ARM_AXIS, -ARM_AXIS, ARM_AXIS];
 const SPIN: [f32; 4] = [1., -1., 1., -1.];
@@ -119,7 +126,7 @@ impl Gate {
         let delta = b - a;
         if BARS
             .iter()
-            .any(|&(min, max)| ray_box(a, delta, min - RADIUS, max + RADIUS, 0., 1.).is_some())
+            .any(|&(min, max)| frame_contact(a, delta, min, max))
         {
             return (true, false);
         }
@@ -129,6 +136,27 @@ impl Gate {
         let hit = a + delta * (-a.x / delta.x);
         (false, hit.y.abs() < W - RADIUS && hit.z.abs() < H - RADIUS)
     }
+}
+
+fn frame_contact(origin: Vec3, travel: Vec3, min: Vec3, max: Vec3) -> bool {
+    if ray_box(origin, travel, min - RADIUS, max + RADIUS, 0., 1.).is_none() {
+        return false;
+    }
+    let position = Isometry3::translation(origin.x, origin.y, origin.z);
+    let motion = Vector3::new(travel.x, travel.y, travel.z);
+    let center = (min + max) * 0.5;
+    let extent = (max - min) * 0.5;
+    let frame = Isometry3::translation(center.x, center.y, center.z);
+    cast_shapes(
+        &position,
+        &motion,
+        &Ball::new(RADIUS),
+        &frame,
+        &Vector3::zeros(),
+        &Cuboid::new(Vector3::new(extent.x, extent.y, extent.z)),
+        ShapeCastOptions::with_max_time_of_impact(1.),
+    )
+    .map_or(true, |hit| hit.is_some())
 }
 
 pub fn ray_box(
@@ -167,6 +195,16 @@ impl Drone {
     }
 
     fn integrate(&mut self, action: [f32; 4]) {
+        let (force, torque) = self.body_wrench(action);
+        let accel = self.rotation * force / MASS_KG - Vec3::Z * GRAVITY;
+        let net = torque - self.omega.cross(INERTIA * self.omega) - self.angular_damping();
+        self.omega += DT * net / INERTIA;
+        self.rotation = (self.rotation * Quat::from_scaled_axis(self.omega * DT)).normalize();
+        self.velocity += accel * DT;
+        self.position += self.velocity * DT;
+    }
+
+    fn body_wrench(&mut self, action: [f32; 4]) -> (Vec3, Vec3) {
         let wanted = Vec3::new(action[1], action[2], action[3]) * Vec3::new(5.5, 5.5, 3.4);
         let torque = (wanted - self.omega) * Vec3::new(0.040, 0.041, 0.027);
         let max_thrust = KT * RPM_RAD_MAX.powi(2);
@@ -197,14 +235,32 @@ impl Drone {
             moment += Vec3::new(Y[i], -X[i], SPIN[i] * YAW_MOMENT) * thrust;
         }
 
-        let accel = self.rotation * force / MASS_KG - Vec3::Z * GRAVITY;
-        let net = moment
-            - self.omega.cross(INERTIA * self.omega)
-            - Vec3::new(0.002, 0.002, 0.003) * self.omega;
-        self.omega += DT * net / INERTIA;
-        self.rotation = (self.rotation * Quat::from_scaled_axis(self.omega * DT)).normalize();
-        self.velocity += accel * DT;
-        self.position += self.velocity * DT;
+        (force, moment)
+    }
+
+    fn angular_damping(&self) -> Vec3 {
+        Vec3::new(0.002, 0.002, 0.003) * self.omega
+    }
+
+    fn rigid_state(&self) -> [f32; 13] {
+        let mut state = [0.; 13];
+        state[..3].copy_from_slice(&self.position.to_array());
+        state[3..6].copy_from_slice(&self.velocity.to_array());
+        state[6..10].copy_from_slice(&self.rotation.to_array());
+        state[10..].copy_from_slice(&self.omega.to_array());
+        state
+    }
+
+    fn set_rigid_state(&mut self, state: [f32; 13]) -> bool {
+        let attitude = Quat::from_slice(&state[6..10]);
+        if !state.iter().all(|value| value.is_finite()) || attitude.length_squared() < 0.5 {
+            return false;
+        }
+        self.position = Vec3::from_slice(&state[..3]);
+        self.velocity = Vec3::from_slice(&state[3..6]);
+        self.rotation = attitude.normalize();
+        self.omega = Vec3::from_slice(&state[10..]);
+        true
     }
 }
 
@@ -364,6 +420,17 @@ impl Race {
     }
 
     pub fn step(&mut self, action: [f32; 4]) -> Option<f32> {
+        self.step_with(action, |drone, input| {
+            drone.integrate(input);
+            true
+        })
+    }
+
+    fn step_with(
+        &mut self,
+        action: [f32; 4],
+        mut integrate: impl FnMut(&mut Drone, [f32; 4]) -> bool,
+    ) -> Option<f32> {
         if self.status != Status::Racing || action.iter().any(|x| !x.is_finite()) {
             return None;
         }
@@ -377,7 +444,9 @@ impl Race {
         for _ in 0..(PHYSICS_HZ / CONTROL_HZ) {
             let previous = self.drone.position;
             let rotation = self.drone.rotation;
-            self.drone.integrate(action);
+            if !integrate(&mut self.drone, action) {
+                return None;
+            }
             if self.on_launch_pad {
                 if self.drone.position.z > RADIUS {
                     self.on_launch_pad = false;
@@ -529,6 +598,14 @@ mod tests {
         );
         assert_eq!(gate.progress(a, gate.center), (false, true));
         assert_eq!(gate.progress(gate.center, b), (false, false));
+    }
+
+    #[test]
+    fn round_vehicle_distinguishes_corner_clearance_from_contact() {
+        let (min, max) = BARS[3];
+        let travel = Vec3::new(0., 0., 0.09);
+        assert!(!frame_contact(Vec3::new(-0.55, 0.60, 0.), travel, min, max));
+        assert!(frame_contact(Vec3::new(-0.53, 0.61, 0.), travel, min, max));
     }
 
     #[test]

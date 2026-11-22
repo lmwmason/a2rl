@@ -1,7 +1,7 @@
 // Python owns the image buffer and one exclusive handle per environment.
 use crate::{
-    axial_specific_force, camera::Camera, mode2_acro, teacher::Teacher, Race, Status, HOVER_STICK,
-    LAYOUT,
+    axial_specific_force, camera::Camera, mode2_acro, teacher::Teacher, Race, Status, DT, GRAVITY,
+    HOVER_STICK, INERTIA, LAYOUT, MASS_KG, PHYSICS_MODEL_VERSION,
 };
 
 pub struct Environment {
@@ -18,6 +18,17 @@ pub extern "C" fn sim_gate_count() -> usize {
 #[no_mangle]
 pub extern "C" fn sim_hover_stick() -> f32 {
     HOVER_STICK
+}
+
+#[no_mangle]
+pub extern "C" fn sim_physics_model_version() -> u32 {
+    PHYSICS_MODEL_VERSION
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn sim_horizontal_specific_force(x: f32, y: f32, result: *mut [f32; 2]) {
+    let force = crate::drag(glam::Vec3::new(x, y, 0.)) / MASS_KG;
+    *result = [force.x, force.y];
 }
 
 #[no_mangle]
@@ -141,6 +152,44 @@ pub unsafe extern "C" fn sim_step(
     let Some(value) = env.race.step(mode2_acro(*action)) else {
         return -1;
     };
+    write_step(env, image, reward, value)
+}
+
+type RigidBodyStep = unsafe extern "C" fn(*const [f32; 13], *const [f32; 6], *mut [f32; 13]) -> i32;
+
+#[no_mangle]
+pub unsafe extern "C" fn sim_rigid_parameters(output: *mut [f32; 6]) {
+    *output = [DT, MASS_KG, INERTIA.x, INERTIA.y, INERTIA.z, GRAVITY];
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn sim_rigid_state(env: *const Environment, output: *mut [f32; 13]) {
+    *output = (&*env).race.drone.rigid_state();
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn sim_step_external(
+    env: *mut Environment,
+    action: *const [f32; 4],
+    image: *mut u8,
+    reward: *mut f32,
+    integrate: RigidBodyStep,
+) -> i32 {
+    let env = &mut *env;
+    let Some(value) = env.race.step_with(mode2_acro(*action), |drone, input| {
+        let state = drone.rigid_state();
+        let (force, torque) = drone.body_wrench(input);
+        let torque = torque - drone.angular_damping();
+        let wrench = [force.x, force.y, force.z, torque.x, torque.y, torque.z];
+        let mut result = [0.; 13];
+        integrate(&state, &wrench, &mut result) == 0 && drone.set_rigid_state(result)
+    }) else {
+        return -1;
+    };
+    write_step(env, image, reward, value)
+}
+
+unsafe fn write_step(env: &mut Environment, image: *mut u8, reward: *mut f32, value: f32) -> i32 {
     *reward = value;
     env.camera.render(
         &env.race,

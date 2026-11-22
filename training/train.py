@@ -13,7 +13,7 @@ from . import checkpoint
 from .agent import Agent
 from .demonstrations import Demonstrations
 from .replay import Replay
-from .sim import Environment, load_sim
+from .sim import Environment, LEGACY_PHYSICS, load_sim, physics_identity
 from .telemetry import FramePublisher
 
 def options():
@@ -158,9 +158,8 @@ def initial_exploration(rng, previous):
 
 def train(args, agent, lib):
     rng = np.random.default_rng(args.seed)
+    physics = physics_identity(lib)
     args.run_dir.mkdir(parents=True, exist_ok=True)
-    (args.run_dir / "config.json").write_text(
-        json.dumps(vars(args), default=str, indent=2) + "\n", encoding="utf-8")
     shape = (args.height, args.width, 3)
     replay = Replay(args.replay, args.envs, shape, args.stack, args.n_step, args.gamma, rng)
     demonstrations = (Demonstrations([], args.demo_sim, args.stack, args.height, args.width, args.seed)
@@ -183,11 +182,15 @@ def train(args, agent, lib):
     warm_started = bool(args.initialize)
     if args.resume:
         progress = checkpoint.load(args.resume, agent, replay, demonstrations)
+        if progress.get("physics", LEGACY_PHYSICS) != physics:
+            raise ValueError("Use the original physics to resume, or initialize a new run from weights.")
         steps, updates = progress["steps"], progress["updates"]
         last_eval, best_rank = progress["last_eval"], progress["best_rank"]
         warm_started = progress["warm_started"]
         print(json.dumps({"restored_steps": steps, "restored_updates": updates,
                           "restored_replay_rows": min(replay.count, replay.rows)}), flush=True)
+    (args.run_dir / "config.json").write_text(
+        json.dumps(vars(args) | {"physics": physics}, default=str, indent=2) + "\n", encoding="utf-8")
     last_report_steps = initial_steps = last_save = steps
     envs = [Environment(lib, args.width, args.height) for _ in range(args.envs)]
     test_env = Environment(lib, args.width, args.height)
@@ -300,7 +303,7 @@ def train(args, agent, lib):
                     path = args.run_dir / "training-state.zip"
                     checkpoint.save(path, agent, replay,
                                     {"steps": steps, "updates": updates, "last_eval": last_eval,
-                                     "best_rank": best_rank, "warm_started": warm_started},
+                                     "best_rank": best_rank, "warm_started": warm_started, "physics": physics},
                                     starts[:, -1], demonstrations)
                     last_save = steps
                     print(json.dumps({"saved_training_state": str(path), "steps": steps}), flush=True)

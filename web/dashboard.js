@@ -14,16 +14,13 @@ const chartContext = chart.getContext("2d");
 const trend = { values: [], key: "" };
 let playing = null;
 let pending = null;
-let polling = false;
-let statusTimer;
 const hosted = !["127.0.0.1", "localhost", "[::1]"].includes(window.location.hostname);
-const dataRoot = hosted ? "http://127.0.0.1:8765/" : "/";
+const dataRoot = hosted ? "https://a2rl-fpv-feed.server.cbgpu.com/" : "/";
 
 function dataFile(name) {
   return fetch(dataRoot + name, {
     cache: "no-store",
     credentials: "omit",
-    ...(hosted && { targetAddressSpace: "loopback" }),
   });
 }
 
@@ -69,6 +66,11 @@ function startReplay() {
     pending = null;
     camera.src = playing.blob;
     camera.hidden = false;
+    const download = byId("download-replay");
+    download.href = playing.blob;
+    download.download = playing.phase === "SPEED RL" ? `a2rl-rl-${playing.steps}.mp4`
+      : `a2rl-imitation-round-${playing.round}.mp4`;
+    download.hidden = false;
     byId("waiting").hidden = true;
     const stage = playing.phase === "SPEED RL" ? "강화학습 · " + count(playing.steps) + " 스텝"
       : playing.round ? "모방학습 · " + count(playing.round) + " 라운드" : "모방학습 체크포인트";
@@ -84,7 +86,7 @@ function startReplay() {
 camera.addEventListener("ended", startReplay);
 
 function renderStatus(info) {
-  const connected = info.connection === "connected" && Date.now() / 1000 - info.snapshot_at < 6;
+  const connected = info.connection === "connected" && Date.now() / 1000 - info.snapshot_at < 15;
   const speedTraining = info.phase === "SPEED RL";
   if (connected) {
     pill("connection", info.active ? "GPU 연결 · 학습 중" : "GPU 연결 · 학습 종료", info.active ? "live" : "");
@@ -115,16 +117,10 @@ async function fetchStatus() {
     const response = await dataFile("status.json");
     if (!response.ok) throw new Error("Status unavailable");
     renderStatus(await response.json());
-    byId("connect-local").hidden = true;
-    byId("connection-help").hidden = true;
   } catch {
-    pill("connection", "로컬 데이터 연결 대기", "stale");
-    if (hosted) {
-      byId("connect-local").hidden = false;
-      byId("connection-help").hidden = false;
-    }
+    pill("connection", "학습 데이터 연결 대기", "stale");
   } finally {
-    statusTimer = window.setTimeout(fetchStatus, 1000);
+    window.setTimeout(fetchStatus, 2000);
   }
 }
 
@@ -145,24 +141,10 @@ async function fetchReplay() {
   } catch {
     if (!playing) pill("video-state", "리플레이 준비 중");
   } finally {
-    window.setTimeout(fetchReplay, 1000);
+    window.setTimeout(fetchReplay, 3000);
   }
 }
 
 new ResizeObserver(drawHistory).observe(chart);
-function startPolling() {
-  byId("connect-local").hidden = true;
-  window.clearTimeout(statusTimer);
-  fetchStatus();
-  if (!polling) {
-    polling = true;
-    fetchReplay();
-  }
-}
-if (hosted) {
-  byId("connect-local").hidden = false;
-  byId("connection-help").hidden = false;
-  byId("connect-local").addEventListener("click", startPolling);
-} else {
-  startPolling();
-}
+fetchStatus();
+fetchReplay();

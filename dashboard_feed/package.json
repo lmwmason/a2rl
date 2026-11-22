@@ -1,0 +1,7 @@
+{
+  "name": "a2rl-fpv-feed",
+  "private": true,
+  "scripts": {
+    "start": "node server.mjs"
+  }
+}

@@ -91,6 +91,7 @@ impl Teacher {
                 if firmware {
                     reinforce_braking(race, accel, &mut command);
                     self.sprint(race, &mut command);
+                    line::gate_height_guard(race, accel, &mut command);
                 }
                 // Use full launch thrust while there is room to arrest the climb.
                 let height = race.drone.position.z;

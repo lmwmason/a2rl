@@ -8,6 +8,40 @@ use crate::{Course, Gate, Race, GRAVITY};
 const SAMPLES_PER_LEG: usize = 64;
 const SPEED_ACCEL: f32 = 12.;
 
+// Calibrated per leg against the reconstructed course with Betaflight SITL.
+const FIRMWARE_SPEED_SCALE: [f32; crate::LAYOUT_2026.len()] = [
+    1.070800, 1.042064, 1.080000, 1.094382, 1.124069, 1.073815, 1.071267, 1.171599, 1.096856,
+    1.069650, 1.169062, 1.,
+];
+const ATTITUDE_PREVIEW_SECONDS: f32 = 1.102928 * 0.15;
+
+#[derive(Clone, Copy)]
+struct TrackingGains {
+    preview: f32,
+    velocity: f32,
+    position: f32,
+    curvature: f32,
+    level_approach: f32,
+    lateral: f32,
+}
+
+const REFERENCE_TRACKING: TrackingGains = TrackingGains {
+    preview: 1.,
+    velocity: 3.8,
+    position: 10.,
+    curvature: 1.,
+    level_approach: 1.,
+    lateral: 1.,
+};
+const PREDICTIVE_TRACKING: TrackingGains = TrackingGains {
+    preview: 0.876500,
+    velocity: 3.8 * 1.016821,
+    position: 10. * 1.010967,
+    curvature: 1.076000,
+    level_approach: 0.957144,
+    lateral: 1.086832,
+};
+
 #[derive(Clone, Copy)]
 struct Pace {
     max_speed: f32,
@@ -361,6 +395,34 @@ fn blend(a: Point, b: Point, t: f32) -> Point {
     }
 }
 
+fn predictive_leg(race: &Race) -> bool {
+    // The takeoff and the Ladder loop use their dedicated pace and geometry.
+    race.passed > 0 && race.next_gate() != crate::LAYOUT_2026.len() - 1
+}
+
+pub(super) fn gate_height_guard(race: &Race, accel: Vec3, command: &mut [f32; 4]) {
+    if !predictive_leg(race) {
+        return;
+    }
+    let gate = race.gates[race.next_gate()];
+    let depth = (gate.center - race.drone.position).dot(gate.normal);
+    let closing = race.drone.velocity.dot(gate.normal);
+    let up_z = (race.drone.rotation * Vec3::Z).z;
+    if depth <= 0. || closing < 2. || depth > 6. || up_z < 0.15 {
+        return;
+    }
+    let horizon = (depth / closing).min(0.55);
+    let predicted_height = race.drone.position.z + race.drone.velocity.z * horizon;
+    let error = predicted_height - gate.center.z;
+    if error <= 0.12 {
+        return;
+    }
+    // Limit excess lift as collective rises before the aircraft has banked.
+    let trim = (8. * (error - 0.12)).min(7.);
+    let collective = ((accel.z - trim + 1.5) * crate::HOVER / (GRAVITY * up_z)).clamp(0., 1.);
+    command[1] = command[1].min(2. * collective - 1.);
+}
+
 pub(super) fn track(race: &Race, firmware: bool) -> Option<(Vec3, Vec3)> {
     let target = race.gates[race.next_gate()];
     let position = race.drone.position;
@@ -384,14 +446,31 @@ pub(super) fn track(race: &Race, firmware: bool) -> Option<(Vec3, Vec3)> {
     if here.position.distance_squared(position) > 3.0_f32.powi(2) {
         return None;
     }
-    let preview = line.look_ahead(index, 0.32 + 0.18 * here.speed);
-    let velocity_error = here.tangent * preview.speed - race.drone.velocity;
+    let predictive = firmware && predictive_leg(race);
+    let (speed_scale, gains) = if predictive {
+        (FIRMWARE_SPEED_SCALE[race.next_gate()], PREDICTIVE_TRACKING)
+    } else {
+        (1., REFERENCE_TRACKING)
+    };
+    let preview = line.look_ahead(index, (0.32 + 0.18 * here.speed) * gains.preview);
+    let velocity_error = here.tangent * preview.speed * speed_scale - race.drone.velocity;
     let correction = here.position - position;
-    let mut accel = 3.8 * velocity_error
-        + 10. * correction
-        + 0.75 * here.speed.powi(2) * here.curvature
+    let curvature_accel =
+        0.75 * (here.speed * speed_scale).powi(2) * here.curvature * gains.curvature;
+    let mut accel = gains.velocity * velocity_error + gains.position * correction + curvature_accel
         - race.drone.rotation * crate::drag(race.drone.rotation.conjugate() * race.drone.velocity)
             / crate::MASS_KG;
+    if predictive {
+        // Command the change in target velocity before the aircraft reaches
+        // the turn so that rate and rotor lag do not delay the maneuver.
+        let delay = ATTITUDE_PREVIEW_SECONDS;
+        let step = (race.drone.velocity.dot(here.tangent).max(1.) * delay).max(0.2);
+        let near = line.look_ahead(index, step * 0.65);
+        let far = line.look_ahead(index, step * 1.35);
+        let preview_accel =
+            (far.speed * far.tangent - near.speed * near.tangent) * speed_scale / (0.7 * delay);
+        accel += 0.131834 * (preview_accel - curvature_accel);
+    }
     if firmware && matches!(race.next_gate(), 2 | 3 | 8) {
         // Add forward thrust on longer legs where the aircraft is aligned,
         // with enough room before the gate and speed left in the plan.
@@ -413,13 +492,23 @@ pub(super) fn track(race: &Race, firmware: bool) -> Option<(Vec3, Vec3)> {
     // Avoid braking through the opening. The backwards speed pass already
     // limits entry speed before the gate according to the upcoming curvature.
     let minimum_forward = (GRAVITY + accel.z.clamp(-5.5, 8.)) * 0.065;
-    accel += heading * (level_approach(race) * (minimum_forward - accel.dot(heading)).max(0.));
+    accel += heading
+        * (gains.level_approach
+            * level_approach(race)
+            * (minimum_forward - accel.dot(heading)).max(0.));
     if firmware {
         let offset = position - target.center;
         let depth = -offset.dot(target.normal);
         let closing = race.drone.velocity.dot(target.normal);
         let minimum_closing = if race.next_gate() == 11 { 1.8 } else { 3. };
-        if (0.85..3.2).contains(&depth) && closing > minimum_closing {
+        // Gate three has little lateral margin on the second lap. Start
+        // correcting before the faster line carries the aircraft to the edge.
+        let (lateral_preview, lateral_margin) = if predictive && race.next_gate() == 2 {
+            (4.5, 0.15)
+        } else {
+            (3.2, 0.28)
+        };
+        if (0.85..lateral_preview).contains(&depth) && closing > minimum_closing {
             // Reserve room inside the opening based on the predicted crossing
             // position, allowing time for the attitude and motor response.
             let until_plane = depth / closing;
@@ -427,9 +516,20 @@ pub(super) fn track(race: &Race, firmware: bool) -> Option<(Vec3, Vec3)> {
             let lateral = offset.dot(target.side)
                 + race.drone.velocity.dot(target.side) * until_plane
                 + 0.5 * accel.dot(target.side) * response_time.powi(2);
-            let outside = lateral - lateral.clamp(-0.28, 0.28);
+            let outside = lateral - lateral.clamp(-lateral_margin, lateral_margin);
             let correction = (2. * outside / response_time.powi(2)).clamp(-6., 6.);
-            accel -= target.side * correction;
+            accel -= target.side * correction * gains.lateral;
+        }
+        if predictive && (0.75..6.).contains(&depth) && closing > 2. {
+            // Correct the predicted crossing height before committing to the
+            // aperture. Use the time remaining after the attitude response.
+            let time = (depth / closing).min(0.65);
+            let response = (time - 0.16).max(0.12);
+            let estimate =
+                offset.z + race.drone.velocity.z * time + 0.5 * accel.z * response.powi(2);
+            let excess = estimate - estimate.clamp(-0.18, 0.18);
+            let correction = (2. * excess / response.powi(2)).clamp(-9., 9.);
+            accel.z -= correction;
         }
     }
     Some((accel, heading))
@@ -452,6 +552,26 @@ pub(super) fn level_approach(race: &Race) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn firmware_height_guard_limits_collective_when_projected_above_the_gate() {
+        let mut race = Race::grand_challenge_on(Course::Season2Practice2026);
+        race.passed = 2;
+        let gate = race.gates[race.next_gate()];
+        race.drone.position = gate.center - 2. * gate.normal;
+        race.drone.velocity = 5. * gate.normal + Vec3::Z;
+        race.drone.rotation = Quat::IDENTITY;
+        let desired = Vec3::Z * GRAVITY;
+        let mut command = [0., 1., 0., 0.];
+
+        gate_height_guard(&race, desired, &mut command);
+        assert!((command[1] + 1.) / 2. < crate::HOVER);
+
+        race.drone.velocity = 5. * gate.normal - Vec3::Z;
+        command[1] = 1.;
+        gate_height_guard(&race, desired, &mut command);
+        assert_eq!(command[1], 1.);
+    }
 
     #[test]
     fn firmware_line_reduces_estimated_time_and_clears_frames() {

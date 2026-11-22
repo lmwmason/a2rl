@@ -267,6 +267,11 @@ function renderStatus(info) {
   const meanSpeed = info.mean_flight_speed_m_s;
   byId("mean-speed").closest("div").hidden = !Number.isFinite(meanSpeed);
   setText("mean-speed", quantity(meanSpeed, "m/s"));
+  const meanThrottle = info.mean_throttle_fraction;
+  byId("mean-throttle").closest("div").hidden = !Number.isFinite(meanThrottle);
+  if (Number.isFinite(meanThrottle)) {
+    setText("mean-throttle", (100 * meanThrottle).toFixed(2) + "%");
+  }
   const highThrottle = info.high_throttle_seconds;
   const highFraction = info.high_throttle_fraction;
   const throttleMeasured = Number.isFinite(highThrottle) && Number.isFinite(highFraction);

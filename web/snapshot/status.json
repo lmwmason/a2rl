@@ -1,0 +1,279 @@
+{
+  "type": "meta",
+  "active": false,
+  "phase": "IMITATION",
+  "round": 43,
+  "steps": 206400,
+  "target_gate": 9,
+  "recent_gates": [
+    1.6666666666666667,
+    1.0,
+    2.3333333333333335,
+    1.0,
+    2.6666666666666665,
+    3.3333333333333335,
+    3.6666666666666665,
+    4.0,
+    4.333333333333333,
+    3.0,
+    6.0,
+    1.6666666666666667,
+    2.0,
+    1.0,
+    2.3333333333333335,
+    1.3333333333333333,
+    5.0,
+    1.3333333333333333,
+    3.0,
+    4.666666666666667,
+    3.3333333333333335,
+    2.3333333333333335,
+    2.6666666666666665,
+    3.6666666666666665,
+    4.666666666666667,
+    6.333333333333333,
+    7.333333333333333,
+    3.0,
+    8.0,
+    4.333333333333333,
+    4.0,
+    1.3333333333333333,
+    6.333333333333333,
+    4.666666666666667,
+    5.666666666666667,
+    3.3333333333333335,
+    8.0,
+    6.0,
+    5.333333333333333,
+    3.6666666666666665,
+    0.6666666666666666,
+    3.6666666666666665,
+    6.0
+  ],
+  "best_gates": 8.0,
+  "recent_finish_times": [
+    {
+      "at": 1,
+      "standard_s": null,
+      "comparison_s": null
+    },
+    {
+      "at": 2,
+      "standard_s": null,
+      "comparison_s": null
+    },
+    {
+      "at": 3,
+      "standard_s": null,
+      "comparison_s": null
+    },
+    {
+      "at": 4,
+      "standard_s": null,
+      "comparison_s": null
+    },
+    {
+      "at": 5,
+      "standard_s": null,
+      "comparison_s": null
+    },
+    {
+      "at": 6,
+      "standard_s": null,
+      "comparison_s": null
+    },
+    {
+      "at": 7,
+      "standard_s": null,
+      "comparison_s": null
+    },
+    {
+      "at": 8,
+      "standard_s": null,
+      "comparison_s": null
+    },
+    {
+      "at": 9,
+      "standard_s": null,
+      "comparison_s": null
+    },
+    {
+      "at": 10,
+      "standard_s": null,
+      "comparison_s": null
+    },
+    {
+      "at": 11,
+      "standard_s": null,
+      "comparison_s": null
+    },
+    {
+      "at": 12,
+      "standard_s": null,
+      "comparison_s": null
+    },
+    {
+      "at": 13,
+      "standard_s": null,
+      "comparison_s": null
+    },
+    {
+      "at": 14,
+      "standard_s": null,
+      "comparison_s": null
+    },
+    {
+      "at": 15,
+      "standard_s": null,
+      "comparison_s": null
+    },
+    {
+      "at": 16,
+      "standard_s": null,
+      "comparison_s": null
+    },
+    {
+      "at": 17,
+      "standard_s": null,
+      "comparison_s": null
+    },
+    {
+      "at": 18,
+      "standard_s": null,
+      "comparison_s": null
+    },
+    {
+      "at": 19,
+      "standard_s": null,
+      "comparison_s": null
+    },
+    {
+      "at": 20,
+      "standard_s": null,
+      "comparison_s": null
+    },
+    {
+      "at": 21,
+      "standard_s": null,
+      "comparison_s": null
+    },
+    {
+      "at": 22,
+      "standard_s": null,
+      "comparison_s": null
+    },
+    {
+      "at": 23,
+      "standard_s": null,
+      "comparison_s": null
+    },
+    {
+      "at": 24,
+      "standard_s": null,
+      "comparison_s": null
+    },
+    {
+      "at": 25,
+      "standard_s": null,
+      "comparison_s": null
+    },
+    {
+      "at": 26,
+      "standard_s": null,
+      "comparison_s": null
+    },
+    {
+      "at": 27,
+      "standard_s": null,
+      "comparison_s": null
+    },
+    {
+      "at": 28,
+      "standard_s": null,
+      "comparison_s": null
+    },
+    {
+      "at": 29,
+      "standard_s": null,
+      "comparison_s": null
+    },
+    {
+      "at": 30,
+      "standard_s": null,
+      "comparison_s": null
+    },
+    {
+      "at": 31,
+      "standard_s": null,
+      "comparison_s": null
+    },
+    {
+      "at": 32,
+      "standard_s": null,
+      "comparison_s": null
+    },
+    {
+      "at": 33,
+      "standard_s": null,
+      "comparison_s": null
+    },
+    {
+      "at": 34,
+      "standard_s": null,
+      "comparison_s": null
+    },
+    {
+      "at": 35,
+      "standard_s": null,
+      "comparison_s": null
+    },
+    {
+      "at": 36,
+      "standard_s": null,
+      "comparison_s": null
+    },
+    {
+      "at": 37,
+      "standard_s": null,
+      "comparison_s": null
+    },
+    {
+      "at": 38,
+      "standard_s": null,
+      "comparison_s": null
+    },
+    {
+      "at": 39,
+      "standard_s": null,
+      "comparison_s": null
+    },
+    {
+      "at": 40,
+      "standard_s": null,
+      "comparison_s": null
+    },
+    {
+      "at": 41,
+      "standard_s": null,
+      "comparison_s": null
+    },
+    {
+      "at": 42,
+      "standard_s": null,
+      "comparison_s": null
+    },
+    {
+      "at": 43,
+      "standard_s": null,
+      "comparison_s": null
+    }
+  ],
+  "finish_rate": 0.0,
+  "collision_rate": 1.0,
+  "best_two_lap_seconds": null,
+  "target_two_lap_seconds": null,
+  "target_beaten": false,
+  "connection": "disconnected",
+  "snapshot_at": 1795345841.0487154,
+  "archived": true
+}

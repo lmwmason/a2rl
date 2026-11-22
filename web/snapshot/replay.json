@@ -1,0 +1,12 @@
+{
+  "type": "checkpoint",
+  "best": false,
+  "phase": "IMITATION",
+  "round": 42,
+  "steps": 201600,
+  "version": "1795345813680616063",
+  "gates": 7,
+  "status": 1,
+  "url": "replay-1795345813680616063.mp4",
+  "archived": true
+}

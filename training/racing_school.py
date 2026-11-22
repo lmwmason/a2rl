@@ -169,7 +169,15 @@ def collect(envs, workers, agent, buffer, obs, rng, ticks, teacher_probability, 
             continuous_env=None):
     ended = np.zeros(len(envs), dtype=bool)
     authority = np.ones(len(envs), dtype=bool)
-    accidents = 0
+    gate_count = np.zeros(len(envs), dtype=np.int32)
+    delay = np.zeros(len(envs), dtype=np.float32)
+    crossing_ticks = np.zeros(len(envs), dtype=np.int32)
+    pace_assist_ticks = np.zeros(len(envs), dtype=np.int32)
+    if continuous_env is not None:
+        for i, env in enumerate(envs):
+            gate_count[i], _ = env.lap_stats()
+            delay[i], _ = env.flow_stats()
+    accidents = pace_samples = 0
     for tick in range(ticks):
         labels = np.asarray([env.expert_action() for env in envs], dtype=np.float32)
         features = np.asarray([env.expert_features() for env in envs], dtype=np.float32)
@@ -182,7 +190,7 @@ def collect(envs, workers, agent, buffer, obs, rng, ticks, teacher_probability, 
             student = agent.action(obs)
             errors = np.abs(student - labels).max(axis=1)
             intervene = (errors > .48) & (rng.random(len(envs)) < .55)
-            assisted = authority | intervene
+            assisted = authority | intervene | (pace_assist_ticks > 0)
             action = np.where(assisted[:, None], labels, student)
         # Small disturbances create new camera states for exact corrective labels.
         if tick % 7 in (0, 1):
@@ -191,6 +199,7 @@ def collect(envs, workers, agent, buffer, obs, rng, ticks, teacher_probability, 
             assisted[continuous_env] = True
             action[continuous_env] = labels[continuous_env]
         following = np.empty_like(obs[:, -1])
+        emphasis = 1. + 1.25 * np.abs(labels[:, [0, 2, 3]]).max(axis=1)
         tasks = [workers.submit(env.advance, command) for env, command in zip(envs, action)]
         for i, task in enumerate(tasks):
             image, _, status = task.result()
@@ -199,16 +208,30 @@ def collect(envs, workers, agent, buffer, obs, rng, ticks, teacher_probability, 
             continuous = i == continuous_env
             ended[i] = bool(status) or (not continuous and gates >= threshold)
             accidents += int(status == 1)
+            if continuous_env is not None:
+                approach_delay, _ = envs[i].flow_stats()
+                slow = approach_delay - delay[i] > .006
+                crossed = gates > gate_count[i]
+                # Learn the corrective sticks during a loss of pace and the first half-second after a gate.
+                crossing_ticks[i] = 15 if crossed else max(0, crossing_ticks[i] - 1)
+                if slow or crossing_ticks[i]:
+                    emphasis[i] *= 2.5
+                    pace_samples += 1
+                pace_assist_ticks[i] = 6 if slow else max(0, pace_assist_ticks[i] - 1)
+                delay[i] = 0. if ended[i] else approach_delay
+                gate_count[i] = 0 if ended[i] else gates
+                if ended[i]:
+                    crossing_ticks[i] = 0
+                    pace_assist_ticks[i] = 0
             if i == 0 and publisher is not None:
                 publisher.show(image, gates=gates, step=buffer.count * len(envs),
                                phase="IMITATION", status=status, driver="Teacher" if assisted[0] else "Student")
             following[i] = training_reset(envs[i], i, rng, target, continuous) if ended[i] else image
-        emphasis = 1. + 1.25 * np.abs(labels[:, [0, 2, 3]]).max(axis=1)
         buffer.append(obs[:, -1], labels, features, emphasis, ended)
         obs[:, :-1] = obs[:, 1:]
         obs[:, -1] = following
         obs[ended] = following[ended, None]
-    return accidents
+    return accidents, pace_samples
 
 
 def main():
@@ -336,8 +359,10 @@ def main():
                     if args.rounds and round_no > args.rounds:
                         break
                     teacher_probability = max(.19, .57 - .012 * (round_no - 1))
-                    accidents = collect(envs, workers, agent, buffer, obs, rng, args.collect_ticks,
-                                        teacher_probability, target, publisher, continuous_env)
+                    accidents, pace_samples = collect(
+                        envs, workers, agent, buffer, obs, rng, args.collect_ticks,
+                        teacher_probability, target, publisher, continuous_env,
+                    )
                     for _ in range(args.updates):
                         frames, labels, features, weights = buffer.sample(rng, args.batch)
                         pixels = random_shift(pixel_tensor(frames, args.device).float() / 255. - .5, pad=1)
@@ -371,6 +396,7 @@ def main():
                                   evaluation_seed=EVALUATION_SEED,
                                   holdout_two_lap_rate=robustness["two_lap_rate"] if robustness else None,
                                   teacher_probability=teacher_probability, collection_crashes=accidents,
+                                  pace_training_samples=pace_samples,
                                   continuous_teacher_gates=envs[continuous_env].lap_stats()[0]
                                   if continuous_env is not None else None,
                                   imitation_loss=float(loss.detach()), seconds=round(time.monotonic() - started, 1))

@@ -159,15 +159,22 @@ impl Teacher {
             };
             let passed_exit = matches!(self.phase, Phase::Exit)
                 && (position - previous.center).dot(previous.normal)
-                    > if self.flow && straight { 0.95 } else { 2.05 };
+                    > if self.flow {
+                        if straight {
+                            0.95
+                        } else {
+                            1.60
+                        }
+                    } else {
+                        2.05
+                    };
             let lateral = gate.center - position + gate.normal * depth;
             let lateral_velocity =
                 race.drone.velocity - gate.normal * race.drone.velocity.dot(gate.normal);
             let aligned_approach = self.flow
-                && carry
                 && matches!(self.phase, Phase::Approach)
-                && depth > -3.4
-                && lateral.length() < 0.29
+                && depth > if carry { -3.4 } else { -2.95 }
+                && lateral.length() < if carry { 0.29 } else { 0.24 }
                 && lateral_velocity.length() < 1.0;
             if position.distance(point) > tolerance && !passed_exit && !aligned_approach {
                 break (point, direction, speed);

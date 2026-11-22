@@ -4,7 +4,9 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 import numpy as np
+import torch
 
+from training.agent import Agent
 from training.demonstrations import Clip
 from training.replay import Replay
 from training.sim import Environment, load_sim
@@ -80,6 +82,27 @@ class RecordTargetTest(unittest.TestCase):
         self.assertFalse(beats_record(result | {"official_finishes": 2}, 16.56, 3))
         self.assertFalse(beats_record(result | {"crash_rate": 1 / 3}, 16.56, 3))
         self.assertFalse(beats_record(result | {"official_start_seconds": None}, 16.56, 3))
+
+
+class QualifiedPolicyTest(unittest.TestCase):
+    def test_rl_updates_keep_the_reference_and_frozen_features_and_allow_rollback(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "qualified.pt"
+            policy = Agent(2, "cpu", 0.)
+            policy.save(path)
+            policy.configure_warm_start()
+            policy.protect_qualified_policy(path)
+            frames = np.random.default_rng(1).integers(0, 256, (2, 2, 16, 12, 3), dtype=np.uint8)
+            initial = policy.action(frames)
+            observations = (frames, initial, np.ones(2, np.float32), np.full(2, .95, np.float32), frames)
+            with torch.no_grad():
+                policy.actor[-1].bias.add_(.1)
+            policy.update(observations, .02)
+            self.assertFalse(np.array_equal(policy.action(frames), initial))
+            np.testing.assert_array_equal(policy.action(frames, reference=True), initial)
+            self.assertTrue(all(weight.grad is None for weight in policy.encoder.parameters()))
+            policy.restore_actor(path)
+            np.testing.assert_array_equal(policy.action(frames), initial)
 
 
 class EnvironmentTest(unittest.TestCase):

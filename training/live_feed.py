@@ -1,4 +1,4 @@
-"""Expose live FPV frames, training metrics and completed firmware replays."""
+"""Expose training metrics and completed firmware evaluation replays."""
 import argparse
 import fcntl
 from functools import partial
@@ -8,12 +8,10 @@ import json
 from pathlib import Path
 import re
 from shutil import copyfileobj
-import struct
 import time
 from urllib.parse import urlsplit
-from zlib import compress, crc32
 
-from .telemetry import finish_time_history, read_metrics, read_packet
+from .telemetry import finish_time_history, read_metrics
 
 
 ORIGIN = "https://a2rl-fpv-dashboard.front.cbgpu.com"
@@ -30,34 +28,6 @@ def training_active(run):
     except FileNotFoundError:
         pass
     return False
-
-
-def live_frame(folder):
-    path = folder / "live-frame.bin"
-    with path.open("rb") as stream:
-        frame = path.stat()
-        age = max(0., time.time() - frame.st_mtime)
-        if age > 60.:
-            raise FileNotFoundError("No recent live frame")
-        result = read_packet(stream)
-        if result is None:
-            raise ValueError("Empty frame packet")
-    return (*result, age)
-
-
-def encode_png(metadata, pixels):
-    width, height = metadata["width"], metadata["height"]
-    stride = width * 3
-    if not 0 < width <= 640 or not 0 < height <= 480 or len(pixels) != height * stride:
-        raise ValueError("Malformed RGB frame")
-
-    def chunk(kind, data):
-        body = kind + data
-        return struct.pack(">I", len(data)) + body + struct.pack(">I", crc32(body))
-
-    scanlines = b"".join(b"\x00" + pixels[offset:offset + stride] for offset in range(0, len(pixels), stride))
-    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">2I5B", width, height, 8, 2, 0, 0, 0))
-            + chunk(b"IDAT", compress(scanlines, 2)) + chunk(b"IEND", b""))
 
 
 def phase_folder(run):
@@ -88,12 +58,6 @@ def status(run, media):
         "target_beaten": (run / "speed-qualified.pt").is_file(),
     }
     try:
-        frame, _, age = live_frame(folder)
-        snapshot.update(live_url="/live.png", live_driver=frame["driver"], live_gates=frame["gates"],
-                        live_age_seconds=age)
-    except (OSError, ValueError):
-        pass
-    try:
         evaluation = json.loads((media / "replay.json").read_text())
         snapshot["firmware_result_seconds"] = evaluation["official_seconds"]
     except (OSError, ValueError, KeyError):
@@ -112,10 +76,6 @@ class Feed(BaseHTTPRequestHandler):
             if path_info == "/status.json":
                 body = json.dumps(status(self.run, self.media)).encode()
                 self.send("application/json", BytesIO(body), len(body))
-            elif path_info == "/live.png":
-                metadata, pixels, _ = live_frame(phase_folder(self.run)[1])
-                body = encode_png(metadata, pixels)
-                self.send("image/png", BytesIO(body), len(body))
             elif MEDIA.fullmatch(path_info):
                 path = self.media / path_info[1:]
                 kind = "video/mp4" if path.suffix == ".mp4" else "application/json"

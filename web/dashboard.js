@@ -21,10 +21,6 @@ let pending = null;
 let displayedControl = -1;
 let pilot = "teacher";
 let selection = 0;
-let studentView = "evaluation";
-let liveUrl = null;
-let liveDriver = null;
-let liveAge = 0;
 const hosted = !["127.0.0.1", "localhost", "[::1]"].includes(window.location.hostname);
 const feeds = hosted ? [
   "https://beam-snapshot-down-museums.trycloudflare.com/",
@@ -235,8 +231,7 @@ function startReplay() {
   } else {
     return;
   }
-  applyStudentView();
-  if (playing && !camera.hidden) camera.play().catch(() => {});
+  if (playing) camera.play().catch(() => {});
 }
 camera.addEventListener("ended", startReplay);
 camera.addEventListener("seeked", () => showSticks());
@@ -331,13 +326,10 @@ function renderStatus(info) {
 async function fetchStatus(poll = true) {
   const selected = selection;
   try {
-    const { url, value } = await readFeed("status.json", pilot);
-    if (selected !== selection) return;
-    updateStudentFeed(url, value);
-    renderStatus(value);
+    const { value } = await readFeed("status.json", pilot);
+    if (selected === selection) renderStatus(value);
   } catch {
     if (selected === selection) {
-      updateStudentFeed(null, {});
       pill("connection", pilot === "student" ? "Awaiting student evaluation" : "Teacher unavailable", "stale");
     }
   } finally {
@@ -375,8 +367,6 @@ function selectPilot(view, refresh = true) {
   window.history.replaceState(null, "", page.href);
   byId("show-teacher").setAttribute("aria-pressed", String(view === "teacher"));
   byId("show-student").setAttribute("aria-pressed", String(view === "student"));
-  liveUrl = null;
-  liveDriver = null;
   camera.pause();
   camera.hidden = true;
   camera.removeAttribute("src");
@@ -390,68 +380,12 @@ function selectPilot(view, refresh = true) {
   byId("waiting").hidden = false;
   setText("waiting", "Loading replay");
   for (const id of ["replay-stage", "flight-gates", "replay-result", "replay-physics"]) setText(id, "—");
-  applyStudentView();
   renderStatus({ course: "2026-practice", pending: true, phase: view === "teacher" ? "TEACHER" : "IMITATION", gates_per_race: 24 });
   if (refresh) {
     fetchStatus(false);
     fetchReplay(false);
   }
 }
-
-function updateStudentFeed(origin, info) {
-  const next = pilot === "student" && info.active && info.live_url === "/live.png"
-    ? new URL(info.live_url, origin).href : null;
-  const changed = liveUrl !== next;
-  liveUrl = next;
-  liveDriver = info.live_driver || null;
-  liveAge = info.live_age_seconds ?? 0;
-  setText("live-gates", count(info.live_gates) + " / " + count(info.gates_per_race));
-  applyStudentView();
-  if (changed && liveUrl) refreshLiveFrame();
-}
-
-function applyStudentView() {
-  const showLive = pilot === "student" && studentView === "live" && Boolean(liveUrl);
-  const frame = byId("live-fpv");
-  byId("student-source").hidden = pilot !== "student";
-  byId("show-live").disabled = !liveUrl;
-  byId("show-live").setAttribute("aria-pressed", String(showLive));
-  byId("show-evaluation").setAttribute("aria-pressed", String(!showLive));
-  frame.hidden = !showLive;
-  camera.hidden = showLive || !playing;
-  byId("mode2-sticks").hidden = showLive || !playing?.controls;
-  byId("download-replay").hidden = showLive || !playing;
-  byId("waiting").hidden = showLive || Boolean(playing);
-  byId("replay-stage").hidden = showLive;
-  byId("live-stage").hidden = !showLive;
-  byId("replay-gate-count").hidden = showLive;
-  byId("live-gate-count").hidden = !showLive;
-  byId("replay-result").hidden = showLive;
-  if (showLive) {
-    camera.pause();
-    const source = liveAge > 3 ? "Last training frame" : "Live training";
-    setText("live-stage", liveDriver ? `${source} · ${liveDriver} · Rust` : `${source} · Rust`);
-  }
-}
-
-function refreshLiveFrame() {
-  if (pilot !== "student" || studentView !== "live" || !liveUrl) return;
-  const frame = new URL(liveUrl);
-  frame.searchParams.set("t", Date.now());
-  byId("live-fpv").src = frame.href;
-}
-
-byId("show-live").addEventListener("click", () => {
-  studentView = "live";
-  applyStudentView();
-  refreshLiveFrame();
-});
-byId("show-evaluation").addEventListener("click", () => {
-  studentView = "evaluation";
-  applyStudentView();
-  if (playing) camera.play().catch(() => {});
-});
-window.setInterval(refreshLiveFrame, 320);
 
 byId("show-teacher").addEventListener("click", () => selectPilot("teacher"));
 byId("show-student").addEventListener("click", () => selectPilot("student"));

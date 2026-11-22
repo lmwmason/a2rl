@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="FPV policy evaluation, training metrics, and checkpoint replays">
   <title>Flight Policy Research</title>
-  <link rel="stylesheet" href="style.css?v=latest-student">
-  <script src="dashboard.js?v=latest-student" defer></script>
+  <link rel="stylesheet" href="style.css?v=evaluation-only">
+  <script src="dashboard.js?v=evaluation-only" defer></script>
 </head>
 <body>
   <main>
@@ -20,7 +20,6 @@
           </div>
         </div>
         <div class="screen">
-          <img id="live-fpv" alt="Live training FPV frame" hidden>
           <video id="fpv" muted playsinline controls hidden aria-label="FPV replay"></video>
           <div id="mode2-sticks" class="mode2-sticks" role="group" aria-label="Recorded Mode 2 stick positions" hidden>
             <div class="stick">
@@ -36,14 +35,8 @@
           <p id="waiting">Loading replay</p>
         </div>
         <footer class="bar">
-          <div class="pilot-switch" id="student-source" role="group" aria-label="Student view" hidden>
-            <button type="button" id="show-live" aria-pressed="false">Live FPV</button>
-            <button type="button" id="show-evaluation" aria-pressed="true">Evaluation</button>
-          </div>
           <span id="replay-stage">—</span>
-          <span id="live-stage" hidden>Live training · Rust</span>
-          <span id="replay-gate-count">Gates <strong id="flight-gates">—</strong></span>
-          <span id="live-gate-count" hidden>Gates <strong id="live-gates">—</strong></span>
+          <span>Gates <strong id="flight-gates">—</strong></span>
           <span id="replay-result">—</span>
           <a id="download-replay" class="download" hidden>Download this video</a>
         </footer>

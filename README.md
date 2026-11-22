@@ -134,7 +134,7 @@ To restart a run from a training snapshot, preserve the environment and replay s
 
 ## Watch or download replays
 
-The CBGPU frontend connects automatically. GPU 4 publishes evaluation data and student checkpoint replays even when the original viewing computer is off. A completed replay loops until the next clip is ready, then switches at the end of the current playback. **Download this video** saves the displayed version as an MP4. An HTTPS tunnel from GPU 4 currently backs up the managed CBGPU feed. A tunnel restart can change the backup URL.
+The CBGPU frontend connects automatically. GPU 4 publishes evaluation data and student checkpoint replays even when the original viewing computer is off. A completed replay loops until the next clip is ready, then switches at the end of the current playback. **Download this video** saves the displayed version as an MP4. An HTTPS tunnel from GPU 4 currently backs up the managed CBGPU feed. A tunnel restart can change the backup URL. If both feeds are unreachable, the frontend shows a labeled snapshot and MP4 stored with the deployment.
 
 A local browser viewer and a native live view are also available. The browser simulates the latest checkpoint on a standard start and encodes 480 × 360 video. The desktop viewer displays sampled live training frames and labels whether the teacher or student was driving. If live frames stop, it labels checkpoint replays separately.
 

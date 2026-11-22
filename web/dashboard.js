@@ -16,22 +16,34 @@ let playing = null;
 let pending = null;
 const hosted = !["127.0.0.1", "localhost", "[::1]"].includes(window.location.hostname);
 const feeds = hosted ? [
-  "https://a2rl-fpv-feed.server.cbgpu.com/",
   "https://beam-snapshot-down-museums.trycloudflare.com/",
+  "https://a2rl-fpv-feed.server.cbgpu.com/",
 ] : ["/"];
 
-async function dataFile(name, manifestUrl) {
-  const urls = manifestUrl ? [new URL(name, manifestUrl)] : feeds.map((feed) => feed + name);
-  for (const url of urls) {
-    try {
-      const timeout = manifestUrl ? 90_000 : 5_000;
-      const response = await fetch(url, { cache: "no-store", credentials: "omit", signal: AbortSignal.timeout(timeout) });
-      if (response.ok) return response;
-    } catch {
-      // Try the GPU-hosted feed if the managed feed is unavailable.
-    }
+async function requestData(url, video = false) {
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), video ? 90_000 : 3000);
+  try {
+    const response = await fetch(url, { cache: "no-store", credentials: "omit", signal: controller.signal });
+    if (!response.ok) throw new Error("Training feed unavailable");
+    return { url: response.url, value: video ? await response.blob() : await response.json() };
+  } finally {
+    window.clearTimeout(timer);
   }
-  return null;
+}
+
+async function readFeed(name) {
+  const requests = feeds.map((feed) => requestData(feed + name));
+  try {
+    if (typeof Promise.any === "function") return await Promise.any(requests);
+    const responses = await Promise.all(requests.map((request) => request.catch(() => null)));
+    const first = responses.find(Boolean);
+    if (first) return first;
+    throw new Error("Training feed unavailable");
+  } catch (error) {
+    if (!hosted) throw error;
+    return requestData("/snapshot/" + name);
+  }
 }
 
 function pill(id, label, state = "") {
@@ -82,6 +94,7 @@ function startReplay() {
     playing = pending;
     pending = null;
     camera.src = playing.blob;
+    camera.muted = true;
     camera.hidden = false;
     const download = byId("download-replay");
     download.href = playing.blob;
@@ -94,7 +107,8 @@ function startReplay() {
     setText("replay-stage", stage);
     setText("flight-gates", count(playing.gates) + " / 22");
     setText("replay-result", { 1: "Crash", 2: "Timed out", 3: "Stalled", 4: "Finished two laps" }[playing.status] || "—");
-    pill("video-state", "Student model replay", "live");
+    pill("video-state", playing.archived ? "Saved checkpoint replay" : "Student model replay",
+      playing.archived ? "stale" : "live");
   } else if (playing) {
     camera.currentTime = 0;
   }
@@ -105,7 +119,9 @@ camera.addEventListener("ended", startReplay);
 function renderStatus(info) {
   const connected = info.connection === "connected" && Date.now() / 1000 - info.snapshot_at < 15;
   const speedTraining = info.phase === "SPEED RL";
-  if (connected) {
+  if (info.archived) {
+    pill("connection", "Saved snapshot · Feed unavailable", "stale");
+  } else if (connected) {
     pill("connection", info.active ? "GPU online · Training" : "GPU online · Training idle", info.active ? "live" : "");
   } else {
     pill("connection", info.connection === "connecting" ? "Connecting to GPU" : "GPU feed offline", "stale");
@@ -131,9 +147,8 @@ function renderStatus(info) {
 
 async function fetchStatus() {
   try {
-    const response = await dataFile("status.json");
-    if (!response) throw new Error("Status unavailable");
-    renderStatus(await response.json());
+    const { value } = await readFeed("status.json");
+    renderStatus(value);
   } catch {
     pill("connection", "Waiting for training feed", "stale");
   } finally {
@@ -143,23 +158,29 @@ async function fetchStatus() {
 
 async function fetchReplay() {
   try {
-    const response = await dataFile("replay.json");
-    if (!response) return;
-    const info = await response.json();
-    if (info.version === playing?.version || info.version === pending?.version) return;
-    if (!/^replay-[0-9]+\.mp4$/.test(info.url)) return;
-    const video = await dataFile(info.url, response.url);
-    if (!video) return;
-    const blob = URL.createObjectURL(await video.blob());
-    if (pending) URL.revokeObjectURL(pending.blob);
-    pending = { ...info, blob };
-    if (!playing || camera.ended) startReplay();
-    else pill("video-state", "Next replay ready", "live");
+    const manifest = await readFeed("replay.json");
+    try {
+      await queueReplay(manifest);
+    } catch (error) {
+      if (!hosted || manifest.value.archived) throw error;
+      await queueReplay(await requestData("/snapshot/replay.json"));
+    }
   } catch {
     if (!playing) pill("video-state", "Preparing replay");
   } finally {
     window.setTimeout(fetchReplay, 3000);
   }
+}
+
+async function queueReplay({ url, value: info }) {
+  if (info.version === playing?.version || info.version === pending?.version) return;
+  if (!/^replay-[0-9]+\.mp4$/.test(info.url)) throw new Error("Invalid replay filename");
+  const video = await requestData(new URL(info.url, url), true);
+  const blob = URL.createObjectURL(video.value);
+  if (pending) URL.revokeObjectURL(pending.blob);
+  pending = { ...info, blob };
+  if (!playing || camera.ended) startReplay();
+  else pill("video-state", "Next replay ready", "live");
 }
 
 new ResizeObserver(drawHistory).observe(chart);

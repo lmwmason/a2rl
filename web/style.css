@@ -1,0 +1,45 @@
+:root {
+  color-scheme: dark;
+  font-family: system-ui, sans-serif;
+  background: #0c1013;
+  color: #f0f4f4;
+  --muted: #a6b2b9;
+  --line: #2c363d;
+  --accent: #74e8ac;
+  --amber: #fac981;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; }
+main { max-width: 1220px; margin: auto; padding: 40px 28px; }
+header { display: flex; justify-content: space-between; align-items: end; gap: 18px; margin-bottom: 24px; }
+.series { color: var(--accent); font: 600 0.82rem ui-monospace, monospace; letter-spacing: 0.08em; margin: 0 0 10px; }
+h1 { font-size: clamp(1.9rem, 4vw, 3.1rem); margin: 0; letter-spacing: -0.045em; }
+h2 { margin: 0; font-size: 1rem; }
+.layout { display: grid; grid-template-columns: minmax(0, 2fr) minmax(270px, 1fr); gap: 16px; align-items: start; }
+.panel { border: 1px solid var(--line); border-radius: 12px; background: #151b20; overflow: hidden; }
+.bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 52px; padding: 12px 16px; }
+.pill { margin: 0; white-space: nowrap; padding: 5px 9px; border-radius: 6px; border: 1px solid var(--line); color: var(--muted); font-size: 0.875rem; }
+.pill.live { color: var(--accent); border-color: #32674d; background: #142b22; }
+.pill.stale { color: var(--amber); border-color: #6e573a; }
+.screen { position: relative; aspect-ratio: 4 / 3; display: grid; place-items: center; background: #070b0d; }
+.screen p { color: var(--muted); text-align: center; padding: 0 16px; }
+#fpv { width: 100%; height: 100%; object-fit: contain; image-rendering: pixelated; }
+footer { border-top: 1px solid var(--line); }
+footer span, #history-count { color: var(--muted); font-size: 0.875rem; }
+footer strong { color: #f0f4f4; margin-left: 4px; }
+#phase { color: var(--accent); font-size: 0.875rem; text-align: right; }
+dl { margin: 0; }
+dl div { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 14px 16px; border-top: 1px solid var(--line); }
+dt { color: var(--muted); font-size: 0.9rem; }
+dd { margin: 0; text-align: right; font: 600 0.95rem ui-monospace, monospace; }
+.history { grid-column: 1 / -1; }
+.plot { display: flex; gap: 10px; padding: 4px 16px 16px; }
+.axis { display: flex; flex-direction: column; justify-content: space-between; color: var(--muted); font: 0.8rem ui-monospace, monospace; text-align: right; }
+#history { width: calc(100% - 30px); height: 105px; }
+
+@media (max-width: 720px) {
+  main { padding: 24px 14px; }
+  header { align-items: start; flex-direction: column; }
+  .layout { grid-template-columns: 1fr; }
+}

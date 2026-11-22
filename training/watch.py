@@ -2,8 +2,6 @@
 import argparse
 from io import BytesIO
 from pathlib import Path
-import shlex
-import subprocess
 import sys
 from threading import Lock, Thread
 import time
@@ -24,12 +22,7 @@ class Source:
         self.status = {"connection": "Connecting to GPU"}
         self.live = None
         self.checkpoint = None
-        source = Path(telemetry.__file__).read_text()
-        remote = shlex.join(["python3", "-u", "-c", source, args.remote_root, args.school, args.speed])
-        self.child = subprocess.Popen(
-            ["ssh", "-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=12", args.host, remote],
-            stdout=subprocess.PIPE, stderr=None,
-        )
+        self.child = telemetry.connect(args.host, args.remote_root, args.school, args.speed)
         Thread(target=self.read, daemon=True).start()
 
     def read(self):

@@ -2,11 +2,24 @@
 import json
 import os
 from pathlib import Path
+import shlex
 import struct
+import subprocess
 import sys
 import time
 
 HEADER = struct.Struct("<II")
+
+
+def connect(host, root, school, speed, checkpoints=True):
+    source = Path(__file__).read_text()
+    remote = shlex.join(["python3", "-u", "-c", source, root, school, speed,
+                         "checkpoints" if checkpoints else "frames"])
+    return subprocess.Popen(
+        ["ssh", "-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=12",
+         "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=2", host, remote],
+        stdout=subprocess.PIPE,
+    )
 
 
 def packet(metadata, payload=b""):
@@ -79,7 +92,7 @@ def read_metrics(run):
         return []
 
 
-def stream_run(root, school, speed):
+def stream_run(root, school, speed, checkpoints):
     out = sys.stdout.buffer
     school, speed = root / school, root / speed
     last_image = None
@@ -96,6 +109,8 @@ def stream_run(root, school, speed):
             next_status = time.monotonic() + 2
             metrics = read_metrics(run)
             latest = metrics[-1] if metrics else {}
+            times = [row["official_start_seconds"] for row in metrics
+                     if row.get("official_start_seconds") is not None]
             values = [row.get("gates_mean", sum(row.get("gates", [])) / max(1, len(row.get("gates", []))))
                       for row in metrics]
             out.write(packet({"type": "meta", "active": active,
@@ -105,16 +120,20 @@ def stream_run(root, school, speed):
                               "target_gate": latest.get("target_gate", 0),
                               "recent_gates": values[-60:], "best_gates": max(values, default=0.),
                               "finish_rate": latest.get("two_lap_rate", 0.),
-                              "collision_rate": latest.get("crash_rate", 0.)}))
+                              "collision_rate": latest.get("crash_rate", 0.),
+                              "best_two_lap_seconds": min(times, default=None),
+                              "target_two_lap_seconds": latest.get("target_two_lap_seconds"),
+                              "target_beaten": (speed / "record.json").exists()}))
             checkpoint = run / ("latest.pt" if active else "best.pt")
-            try:
-                key = (checkpoint, checkpoint.stat().st_mtime_ns)
-                if key != last_checkpoint:
-                    out.write(packet({"type": "checkpoint", "best": not active},
-                                     checkpoint.read_bytes()))
-                    last_checkpoint = key
-            except FileNotFoundError:
-                pass
+            if checkpoints:
+                try:
+                    key = (checkpoint, checkpoint.stat().st_mtime_ns)
+                    if key != last_checkpoint:
+                        out.write(packet({"type": "checkpoint", "best": not active},
+                                         checkpoint.read_bytes()))
+                        last_checkpoint = key
+                except FileNotFoundError:
+                    pass
             out.flush()
 
         live_path = run / "live-frame.bin"
@@ -133,6 +152,6 @@ def stream_run(root, school, speed):
 
 if __name__ == "__main__":
     try:
-        stream_run(Path(sys.argv[1]).expanduser(), sys.argv[2], sys.argv[3])
+        stream_run(Path(sys.argv[1]).expanduser(), sys.argv[2], sys.argv[3], sys.argv[4] == "checkpoints")
     except BrokenPipeError:
         pass

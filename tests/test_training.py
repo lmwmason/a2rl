@@ -9,6 +9,7 @@ from training.demonstrations import Clip
 from training.replay import Replay
 from training.sim import Environment, load_sim
 from training.telemetry import FramePublisher, read_packet
+from training.train import beats_record
 
 
 class ReplayTest(unittest.TestCase):
@@ -69,6 +70,16 @@ class TelemetryTest(unittest.TestCase):
             info, pixels = read_packet(BytesIO(publisher.path.read_bytes()))
         self.assertEqual((info["width"], info["height"], info["driver"], info["gates"]), (3, 2, "Student", 2))
         self.assertEqual(pixels, image.tobytes())
+
+
+class RecordTargetTest(unittest.TestCase):
+    def test_strict_time_and_clean_finishes_from_every_start(self):
+        result = {"official_start_seconds": 16.55, "official_finishes": 3, "crash_rate": 0.}
+        self.assertTrue(beats_record(result, 16.56, 3))
+        self.assertFalse(beats_record(result | {"official_start_seconds": 16.56}, 16.56, 3))
+        self.assertFalse(beats_record(result | {"official_finishes": 2}, 16.56, 3))
+        self.assertFalse(beats_record(result | {"crash_rate": 1 / 3}, 16.56, 3))
+        self.assertFalse(beats_record(result | {"official_start_seconds": None}, 16.56, 3))
 
 
 class EnvironmentTest(unittest.TestCase):

@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="A2RL FPV 모방학습 및 강화학습 관전">
+  <title>A2RL FPV 학습 관전</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="dashboard.js" defer></script>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <p class="series">A2RL × DCL / 2025 GRAND CHALLENGE</p>
+        <h1>FPV 학습 관전</h1>
+      </div>
+      <p id="connection" class="pill" role="status">GPU 연결 중</p>
+    </header>
+
+    <div class="layout">
+      <section class="panel flight" aria-labelledby="camera-title">
+        <div class="bar">
+          <h2 id="camera-title">FPV 카메라</h2>
+          <span id="video-state" class="pill">프레임 대기</span>
+        </div>
+        <div class="screen">
+          <canvas id="fpv" hidden aria-label="학습 중인 드론의 FPV 영상"></canvas>
+          <p id="waiting">GPU에서 프레임을 기다리는 중</p>
+        </div>
+        <footer class="bar">
+          <span>조종 <strong id="driver">—</strong></span>
+          <span>현재 비행 <strong id="flight-gates">—</strong></span>
+          <span id="resolution">—</span>
+        </footer>
+      </section>
+
+      <section class="panel status" aria-labelledby="status-title">
+        <div class="bar"><h2 id="status-title">현재 학습</h2><span id="phase">—</span></div>
+        <dl>
+          <div><dt id="progress-label">모방학습 라운드</dt><dd id="progress">—</dd></div>
+          <div><dt>학습 샘플</dt><dd id="steps">—</dd></div>
+          <div><dt>최근 평가 2랩 완주율</dt><dd id="finish-rate">—</dd></div>
+          <div><dt>최근 평가 충돌률</dt><dd id="collision-rate">—</dd></div>
+          <div><dt>최고 2랩 기록</dt><dd id="best-time">—</dd></div>
+          <div><dt>추월 목표</dt><dd id="target">16.56 초 미만</dd></div>
+        </dl>
+      </section>
+
+      <section class="panel history" aria-labelledby="history-title">
+        <div class="bar">
+          <h2 id="history-title">평가당 평균 통과 게이트</h2>
+          <span id="history-count">—</span>
+        </div>
+        <div class="plot">
+          <div class="axis" aria-hidden="true"><span>22</span><span>11</span><span>0</span></div>
+          <canvas id="history" aria-label="최근 평가별 평균 게이트 수, 최대 22개"></canvas>
+        </div>
+      </section>
+    </div>
+  </main>
+</body>
+</html>

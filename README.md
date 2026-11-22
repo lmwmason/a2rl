@@ -144,13 +144,21 @@ python -m training.racing_school --device cuda --rounds 0 --live \
   --consolidation-rounds 6 --out runs/racing-school
 test -s runs/racing-school/qualified.pt &&
   python -m training.train --device cuda --initialize runs/racing-school/qualified.pt \
-    --stack 8 --steps 5000000 --batch 96 --live --official-eval --eval-episodes 3 \
+    --stack 8 --steps 5000000 --target-two-lap-seconds 16.56 --batch 96 --live --official-eval --eval-episodes 3 \
     --eval-every 25000 --checkpoint-every 100000 --run-dir runs/speed-rl
 ```
 
 첫 2랩 평가 통과 이후 최소 6라운드를 더 학습합니다. 이후에도 교사 개입 없이 연속 두 차례 평가에서 출발 위치와 노출이 다른 3회 모두 2랩을 완주해야 `qualified.pt`가 저장됩니다. 커리큘럼은 정규 출발 평가에서 현재 목표 게이트를 안정적으로 통과하면 다음 게이트로 넘어갑니다. `imitation-state.zip`은 옵티마이저, 교사 데이터와 커리큘럼 상태를 보관하며 `--resume`으로 복원합니다.
 
-속도 강화학습에는 교사 행동을 따르는 손실이나 정해진 비행선을 두지 않습니다. 초기 완주 모델을 보존하고, 정책은 완주율, 충돌률, 공식 2랩 평균 시간 순으로 비교합니다.
+속도 강화학습에는 교사 행동을 따르는 손실이나 정해진 비행선을 두지 않습니다. 초기 완주 모델을 보존하고, 정책은 완주율, 충돌률, 공식 2랩 평균 시간 순으로 비교합니다. 기록 목표를 지정하면 500만 스텝은 탐색과 커리큘럼 스케줄에만 쓰입니다. 첫 게이트부터 22번째 게이트까지 잰 시뮬레이션 시간이 [MAVLab의 2025년 실기체 기록](https://arxiv.org/html/2601.15222)인 16.56초보다 짧고 평가 3회 모두 충돌 없이 완주하면 `record.pt`와 `record.json`을 저장합니다. `bash tools/run_race_training.sh`는 체크포인트를 복원해 두 단계를 연결합니다.
+
+### 로컬 웹 학습 관전
+
+```bash
+python3 -m training.web_watch cbgpu-gpu4
+```
+
+[http://127.0.0.1:8765/](http://127.0.0.1:8765/)에서 실시간 FPV와 학습 지표를 봅니다. 화면은 정적 HTML, CSS, JavaScript로 구성됩니다. 로컬 관전 프로세스는 SSH로 받은 최신 스냅샷을 같은 주소에서 제공하고, 프레임 수집이 멈추면 마지막 영상임을 표시합니다.
 
 ### 데스크톱 학습 관전
 

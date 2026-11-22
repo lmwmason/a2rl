@@ -12,6 +12,7 @@
     24,
     24,
     24,
+    24,
     24
   ],
   "recent_finish_times": [
@@ -44,13 +45,18 @@
       "at": 6,
       "standard_s": null,
       "comparison_s": 32.999
+    },
+    {
+      "at": 7,
+      "standard_s": null,
+      "comparison_s": 31.657000000000004
     }
   ],
-  "best_two_lap_seconds": 32.999,
+  "best_two_lap_seconds": 31.657000000000004,
   "finish_rate": 1.0,
   "collision_rate": 0.0,
-  "mean_gate_crossing_speed_m_s": 6.495545795346867,
-  "mean_flight_speed_m_s": 6.306955164768242,
-  "high_throttle_seconds": 0.06666666666666667,
-  "high_throttle_fraction": 0.00202020202020202
+  "mean_gate_crossing_speed_m_s": 6.921685853697608,
+  "mean_flight_speed_m_s": 6.576738961313713,
+  "high_throttle_seconds": 0.1,
+  "high_throttle_fraction": 0.003157894736842105
 }

@@ -8,6 +8,7 @@ use crate::{Course, Gate, Race, GRAVITY};
 const SAMPLES_PER_LEG: usize = 64;
 const SPEED_ACCEL: f32 = 12.;
 
+#[derive(Clone, Copy)]
 struct Pace {
     max_speed: f32,
     open: LegLimits,
@@ -15,6 +16,7 @@ struct Pace {
     fast: LegLimits,
     split_s_turn_accel: f32,
     split_s_exit: LegLimits,
+    ladder_exit: LegLimits,
     coast_at_open_gates: bool,
 }
 
@@ -38,6 +40,7 @@ const NATIVE_PACE: Pace = Pace {
         turn_accel: 6.5,
         brake_accel: 3.1,
     },
+    ladder_exit: NATIVE_LIMITS,
     coast_at_open_gates: true,
 };
 const FIRMWARE_PACE: Pace = Pace {
@@ -59,6 +62,10 @@ const FIRMWARE_PACE: Pace = Pace {
         turn_accel: 15.,
         brake_accel: 8.,
     },
+    ladder_exit: LegLimits {
+        turn_accel: 14.2,
+        brake_accel: 4.7,
+    },
     coast_at_open_gates: false,
 };
 
@@ -67,12 +74,13 @@ impl Pace {
         match target {
             2 | 3 | 9 => self.fast,
             // Keep the approach limits through the chicane and the Ladder.
-            4 | 5 | 10 | 11 => self.tight,
+            4 | 5 | 10 => self.tight,
             6 | 7 => LegLimits {
                 turn_accel: self.split_s_turn_accel,
                 brake_accel: self.open.brake_accel,
             },
             8 => self.split_s_exit,
+            11 => self.ladder_exit,
             _ => self.open,
         }
     }
@@ -106,11 +114,17 @@ struct Line {
     points: Vec<Point>,
 }
 
+#[derive(Clone, Copy, Default)]
+struct Crossing {
+    side: f32,
+    yaw: f32,
+}
+
 static SEASON2_LINE: OnceLock<Line> = OnceLock::new();
 static SEASON2_FIRMWARE_LINE: OnceLock<Line> = OnceLock::new();
 
 impl Line {
-    fn season2(pace: Pace) -> Self {
+    fn season2(pace: Pace, crossings: &[Crossing; crate::LAYOUT_2026.len()]) -> Self {
         let course = Course::Season2Practice2026;
         let gates: Vec<_> = Gate::on_course(course).collect();
         let (start, yaw) = course.start();
@@ -120,7 +134,11 @@ impl Line {
         let mut direction = start_direction;
         for (leg, gate) in gates.iter().cycle().take(3 * gates.len()).enumerate() {
             let mut start = (begin, direction);
-            let target = (gate.center, gate.normal);
+            let crossing = crossings[leg % gates.len()];
+            let target = (
+                gate.center + crossing.side * gate.side,
+                Quat::from_rotation_z(crossing.yaw) * gate.normal,
+            );
             if leg % gates.len() == gates.len() - 1 {
                 let knots = LADDER_ARC.into_iter().chain([target]);
                 for end in knots {
@@ -130,8 +148,7 @@ impl Line {
             } else {
                 append_curve(&mut points, start, target, SAMPLES_PER_LEG);
             }
-            begin = gate.center;
-            direction = gate.normal;
+            (begin, direction) = target;
         }
         points.push(Point {
             position: begin,
@@ -186,6 +203,67 @@ impl Line {
             );
         }
         Self { points }
+    }
+
+    fn firmware() -> Self {
+        // The measured reference flight passes close to the sides of the
+        // opening at gates 2, 6 and 10. Keep their targets fixed.
+        const MOVABLE_GATES: [(usize, f32); 4] = [(2, 1.), (3, -1.), (4, -1.), (8, 1.)];
+        let mut crossings = [Crossing::default(); crate::LAYOUT_2026.len()];
+        let mut best = Self::season2(FIRMWARE_PACE, &crossings);
+        let mut cost = best.estimated_time(&crossings);
+
+        // Optimize within each opening, allowing oblique crossings. The
+        // launch, Split-S and Ladder guide positions serve as fixed anchors.
+        for (side_step, yaw_step) in [(0.09, 0.10), (0.06, 0.075), (0.03, 0.04)] {
+            for (gate, inward) in MOVABLE_GATES {
+                for (side, yaw) in [
+                    (-side_step, 0.),
+                    (side_step, 0.),
+                    (0., -yaw_step),
+                    (0., yaw_step),
+                ] {
+                    let mut trial = crossings;
+                    // Use the opposite side of the measured tracking error
+                    // to preserve clearance on both laps with the firmware.
+                    trial[gate].side =
+                        inward * ((trial[gate].side + side) * inward).clamp(0., 0.18);
+                    trial[gate].yaw = (trial[gate].yaw + yaw).clamp(-0.22, 0.22);
+                    let line = Self::season2(FIRMWARE_PACE, &trial);
+                    let time = line.estimated_time(&trial);
+                    if time < cost && line.clears_frames() {
+                        crossings = trial;
+                        best = line;
+                        cost = time;
+                    }
+                }
+            }
+        }
+        best
+    }
+
+    fn estimated_time(&self, crossings: &[Crossing]) -> f32 {
+        let finish = 2 * crossings.len() * SAMPLES_PER_LEG;
+        let time: f32 = self.points[SAMPLES_PER_LEG..=finish]
+            .windows(2)
+            .map(|pair| {
+                2. * pair[0].position.distance(pair[1].position) / (pair[0].speed + pair[1].speed)
+            })
+            .sum();
+        // Prefer extra clearance where off-center paths gain little time.
+        time + 0.25 * crossings.iter().map(|gate| gate.side.powi(2)).sum::<f32>()
+    }
+
+    fn clears_frames(&self) -> bool {
+        let course = Course::Season2Practice2026;
+        let gates: Vec<_> = Gate::on_course(course)
+            .chain(course.extra_frames().iter().copied())
+            .collect();
+        self.points.windows(2).all(|pair| {
+            !gates
+                .iter()
+                .any(|gate| gate.progress(pair[0].position, pair[1].position, course).0)
+        })
     }
 
     fn closest(&self, gate_index: usize, position: Vec3) -> (usize, f32) {
@@ -287,9 +365,14 @@ pub(super) fn track(race: &Race, firmware: bool) -> Option<(Vec3, Vec3)> {
     let target = race.gates[race.next_gate()];
     let position = race.drone.position;
     let line = if firmware {
-        SEASON2_FIRMWARE_LINE.get_or_init(|| Line::season2(FIRMWARE_PACE))
+        SEASON2_FIRMWARE_LINE.get_or_init(Line::firmware)
     } else {
-        SEASON2_LINE.get_or_init(|| Line::season2(NATIVE_PACE))
+        SEASON2_LINE.get_or_init(|| {
+            Line::season2(
+                NATIVE_PACE,
+                &[Crossing::default(); crate::LAYOUT_2026.len()],
+            )
+        })
     };
     let (index, fraction) = line.closest(race.passed, position);
     if index + 5 >= (race.passed + 1) * SAMPLES_PER_LEG
@@ -331,6 +414,24 @@ pub(super) fn track(race: &Race, firmware: bool) -> Option<(Vec3, Vec3)> {
     // limits entry speed before the gate according to the upcoming curvature.
     let minimum_forward = (GRAVITY + accel.z.clamp(-5.5, 8.)) * 0.065;
     accel += heading * (level_approach(race) * (minimum_forward - accel.dot(heading)).max(0.));
+    if firmware {
+        let offset = position - target.center;
+        let depth = -offset.dot(target.normal);
+        let closing = race.drone.velocity.dot(target.normal);
+        let minimum_closing = if race.next_gate() == 11 { 1.8 } else { 3. };
+        if (0.85..3.2).contains(&depth) && closing > minimum_closing {
+            // Reserve room inside the opening based on the predicted crossing
+            // position, allowing time for the attitude and motor response.
+            let until_plane = depth / closing;
+            let response_time = (until_plane - 0.1).max(0.08);
+            let lateral = offset.dot(target.side)
+                + race.drone.velocity.dot(target.side) * until_plane
+                + 0.5 * accel.dot(target.side) * response_time.powi(2);
+            let outside = lateral - lateral.clamp(-0.28, 0.28);
+            let correction = (2. * outside / response_time.powi(2)).clamp(-6., 6.);
+            accel -= target.side * correction;
+        }
+    }
     Some((accel, heading))
 }
 
@@ -346,4 +447,25 @@ pub(super) fn level_approach(race: &Race) -> f32 {
     let depth = offset.dot(gate.normal);
     let lateral = (offset - gate.normal * depth).length();
     ((3.2 - depth.abs()) / 1.4).clamp(0., 1.) * ((2.4 - lateral) / 0.7).clamp(0., 1.)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn firmware_line_reduces_estimated_time_and_clears_frames() {
+        let centers = [Crossing::default(); crate::LAYOUT_2026.len()];
+        let centered_line = Line::season2(FIRMWARE_PACE, &centers);
+        let optimized = Line::firmware();
+        assert!(optimized.estimated_time(&centers) < centered_line.estimated_time(&centers));
+        assert!(optimized.clears_frames());
+        for (index, gate) in Gate::on_course(Course::Season2Practice2026).enumerate() {
+            let point = optimized.points[(index + 1) * SAMPLES_PER_LEG];
+            let crossing = gate.basis(point.position - gate.center);
+            assert!(crossing.x.abs() < 1.0e-4);
+            assert!(crossing.y.abs() <= 0.1801);
+            assert!(point.tangent.dot(gate.normal) >= 0.22_f32.cos() - 1.0e-5);
+        }
+    }
 }

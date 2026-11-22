@@ -48,6 +48,21 @@
         </dl>
       </section>
 
+      <section class="panel history" aria-labelledby="finish-history-title">
+        <div class="bar">
+          <h2 id="finish-history-title">Two-lap finish time</h2>
+          <span id="finish-history-latest" class="chart-caption">Awaiting evaluation</span>
+        </div>
+        <p class="chart-key" id="finish-history-key">
+          <span id="finish-history-standard">Standard start</span>
+          <span id="finish-history-comparison">Mean of completed runs</span>
+        </p>
+        <p id="finish-history-empty" class="chart-empty">No completed runs in these evaluations.</p>
+        <div id="finish-history-plot" class="finish-plot" hidden>
+          <canvas id="finish-history" role="img" aria-label="Two-lap finish time in seconds. Missing finishes leave gaps."></canvas>
+        </div>
+      </section>
+
       <section class="panel history" aria-labelledby="history-title">
         <div class="bar">
           <h2 id="history-title">Average gates per evaluation</h2>

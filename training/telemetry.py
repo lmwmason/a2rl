@@ -99,6 +99,20 @@ def read_metrics(run):
         return []
 
 
+def finish_time_history(metrics, speed):
+    history = []
+    for row in metrics[-60:]:
+        index = row.get("steps" if speed else "round")
+        if index is None:
+            continue
+        history.append({
+            "at": index,
+            "standard_s": row.get("official_start_seconds") if speed else None,
+            "comparison_s": row.get("official_mean_seconds" if speed else "best_two_lap_s"),
+        })
+    return history
+
+
 def stream_run(root, school, speed, mode):
     out = sys.stdout.buffer
     school, speed = root / school, root / speed
@@ -126,6 +140,7 @@ def stream_run(root, school, speed, mode):
                               "steps": latest.get("steps", latest.get("transitions", 0)),
                               "target_gate": latest.get("target_gate", 0),
                               "recent_gates": values[-60:], "best_gates": max(values, default=0.),
+                              "recent_finish_times": finish_time_history(metrics, run == speed),
                               "finish_rate": latest.get("two_lap_rate", 0.),
                               "collision_rate": latest.get("crash_rate", 0.),
                               "best_two_lap_seconds": min(times, default=None),

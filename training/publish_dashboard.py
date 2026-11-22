@@ -1,6 +1,7 @@
 """Publish summaries and rendered policy replays from the training container."""
 import argparse
 import base64
+from contextlib import nullcontext
 import hashlib
 import json
 from functools import partial
@@ -89,7 +90,7 @@ def publish_replays(args, pending, directory):
     lib = load_sim()
     path = None
     replay = None
-    versions = []
+    versions = sorted(directory.glob("replay-*.mp4"))
     while True:
         try:
             info, weights = pending.get(timeout=15)
@@ -113,7 +114,8 @@ def publish_replays(args, pending, directory):
                 candidate.replace(path)
                 if args.serve_port:
                     write_json(directory / "replay.json", replay)
-                versions.append(path)
+                if path not in versions:
+                    versions.append(path)
                 if len(versions) > 3:
                     versions.pop(0).unlink(missing_ok=True)
                 print(f"Replay ready for round {replay['round']} ({replay['gates']} gates)", flush=True)
@@ -136,6 +138,7 @@ def main():
     parser.add_argument("--speed", default="runs/speed-rl-v2")
     parser.add_argument("--ffmpeg")
     parser.add_argument("--serve-port", type=int, help="Also serve the public read-only feed on loopback.")
+    parser.add_argument("--cache-dir", type=Path, help="Keep published replays available across publisher restarts.")
     args = parser.parse_args()
     args.endpoint = args.endpoint.rstrip("/")
     if args.ffmpeg is None:
@@ -145,8 +148,10 @@ def main():
             args.ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
     torch.set_num_threads(2)
     statuses, replays = Queue(maxsize=1), Queue(maxsize=1)
-    with TemporaryDirectory(prefix="a2rl-feed-") as folder:
+    cache = nullcontext(args.cache_dir) if args.cache_dir else TemporaryDirectory(prefix="a2rl-feed-")
+    with cache as folder:
         directory = Path(folder)
+        directory.mkdir(parents=True, exist_ok=True)
         if args.serve_port:
             handler = partial(ReadOnlyFeed, directory=directory)
             server = ThreadingHTTPServer(("127.0.0.1", args.serve_port), handler)

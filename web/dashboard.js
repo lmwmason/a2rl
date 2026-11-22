@@ -12,6 +12,8 @@ const camera = byId("fpv");
 const chart = byId("history");
 const chartContext = chart.getContext("2d");
 const trend = { values: [], key: "" };
+const finishChart = byId("finish-history");
+const finishTrend = { values: [], key: "", speed: false };
 let playing = null;
 let pending = null;
 const hosted = !["127.0.0.1", "localhost", "[::1]"].includes(window.location.hostname);
@@ -88,6 +90,71 @@ function drawHistory() {
   }
 }
 
+function drawFinishHistory() {
+  const { values, speed } = finishTrend;
+  const times = values.flatMap((point) => [point.standard_s, point.comparison_s]).filter(Number.isFinite);
+  byId("finish-history-plot").hidden = !times.length;
+  byId("finish-history-empty").hidden = Boolean(times.length);
+  byId("finish-history-key").hidden = !times.length;
+  if (!times.length) return;
+
+  const width = finishChart.clientWidth;
+  const height = finishChart.clientHeight;
+  if (!width || !height) return;
+  const scale = window.devicePixelRatio || 1;
+  finishChart.width = Math.round(width * scale);
+  finishChart.height = Math.round(height * scale);
+  const context = finishChart.getContext("2d");
+  context.scale(scale, scale);
+  context.font = "12px ui-monospace, monospace";
+  context.fillStyle = "#a6b2b9";
+  const left = 68, right = width - 5, top = 12, bottom = height - 28;
+  const min = Math.min(...times);
+  const max = Math.max(...times);
+  const padding = Math.max(.08, (max - min) * .12);
+  const low = Math.max(0, min - padding);
+  const high = max + padding;
+  const y = (seconds) => bottom - (bottom - top) * (seconds - low) / (high - low);
+  const first = values[0].at;
+  const last = values[values.length - 1].at;
+  const x = (index) => first === last ? (left + right) / 2
+    : left + (right - left) * (index - first) / (last - first);
+
+  context.strokeStyle = "#37454e";
+  context.textAlign = "right";
+  for (const seconds of [high, (high + low) / 2, low]) {
+    context.beginPath();
+    context.moveTo(left, y(seconds));
+    context.lineTo(right, y(seconds));
+    context.stroke();
+    context.fillText(seconds.toFixed(2) + " s", left - 6, y(seconds) + 4);
+  }
+  const axisLabel = (index) => speed ? count(index) + " steps" : "Round " + count(index);
+  context.textAlign = first === last ? "center" : "left";
+  context.fillText(axisLabel(first), x(first), height - 5);
+  if (first !== last) {
+    context.textAlign = "right";
+    context.fillText(axisLabel(last), right, height - 5);
+  }
+
+  for (const [field, color] of [["comparison_s", "#92a7ed"], ["standard_s", "#74e8ac"]]) {
+    let previous = false;
+    context.strokeStyle = context.fillStyle = color;
+    context.lineWidth = 2;
+    context.beginPath();
+    for (const point of values) {
+      const seconds = point[field];
+      if (Number.isFinite(seconds)) {
+        if (previous) context.lineTo(x(point.at), y(seconds));
+        else context.moveTo(x(point.at), y(seconds));
+        context.fillRect(x(point.at) - 2, y(seconds) - 2, 4, 4);
+      }
+      previous = Number.isFinite(seconds);
+    }
+    context.stroke();
+  }
+}
+
 function startReplay() {
   if (pending) {
     if (playing) URL.revokeObjectURL(playing.blob);
@@ -143,6 +210,21 @@ function renderStatus(info) {
     drawHistory();
   }
   setText("history-count", values.length ? "Last " + count(values.length) + " evaluations" : "Awaiting evaluation");
+
+  const finishTimes = Array.isArray(info.recent_finish_times) ? info.recent_finish_times : [];
+  const finishKey = JSON.stringify([speedTraining, finishTimes]);
+  if (finishKey !== finishTrend.key) {
+    finishTrend.key = finishKey;
+    finishTrend.values = finishTimes;
+    finishTrend.speed = speedTraining;
+    byId("finish-history-standard").hidden = !speedTraining;
+    setText("finish-history-comparison", speedTraining ? "Mean of completed runs" : "Fastest completed run");
+    const latest = finishTimes[finishTimes.length - 1];
+    const seconds = latest?.standard_s ?? latest?.comparison_s;
+    setText("finish-history-latest", Number.isFinite(seconds) ? "Latest · " + seconds.toFixed(2) + " s"
+      : latest ? "Latest evaluation · No finish" : "Awaiting evaluation");
+    drawFinishHistory();
+  }
 }
 
 async function fetchStatus() {
@@ -184,5 +266,6 @@ async function queueReplay({ url, value: info }) {
 }
 
 new ResizeObserver(drawHistory).observe(chart);
+new ResizeObserver(drawFinishHistory).observe(finishChart);
 fetchStatus();
 fetchReplay();

@@ -26,7 +26,8 @@ h2 { margin: 0; font-size: 1rem; }
 .screen p { color: var(--muted); text-align: center; padding: 0 16px; }
 #fpv { width: 100%; height: 100%; object-fit: contain; }
 footer { border-top: 1px solid var(--line); flex-wrap: wrap; }
-footer span, #history-count { color: var(--muted); font-size: 0.875rem; }
+footer span, #history-count, .chart-caption { color: var(--muted); font-size: 0.875rem; }
+.chart-caption { text-align: right; }
 footer strong { color: #f0f4f4; margin-left: 4px; }
 .download { color: var(--accent); font-size: 0.875rem; font-weight: 600; text-decoration: none; }
 .download:hover { text-decoration: underline; }
@@ -37,8 +38,14 @@ dt { color: var(--muted); font-size: 0.9rem; }
 dd { margin: 0; text-align: right; font: 600 0.95rem ui-monospace, monospace; }
 .history { grid-column: 1 / -1; }
 .chart-key { display: flex; flex-wrap: wrap; gap: 16px; color: var(--muted); font-size: 0.85rem; margin: 0 16px 12px; }
+.chart-key[hidden] { display: none; }
 .chart-key span::before { content: ""; display: inline-block; width: 16px; height: 2px; margin-right: 6px; vertical-align: middle; background: #4c8871; }
 .chart-key span:last-child::before { background: var(--accent); }
+#finish-history-standard::before { background: var(--accent); }
+#finish-history-comparison::before { background: #92a7ed; }
+.chart-empty { color: var(--muted); margin: 12px 16px 20px; }
+.finish-plot { padding: 0 16px 12px; }
+#finish-history { display: block; width: 100%; height: 170px; }
 .plot { display: flex; gap: 10px; padding: 4px 16px 16px; }
 .axis { display: flex; flex-direction: column; justify-content: space-between; color: var(--muted); font: 0.8rem ui-monospace, monospace; text-align: right; }
 #history { width: calc(100% - 30px); height: 105px; }

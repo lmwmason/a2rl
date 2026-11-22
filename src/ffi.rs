@@ -316,7 +316,7 @@ pub unsafe extern "C" fn sim_external_expert_action(
         return false;
     }
     env.race.passed = passed;
-    *output = env.teacher.action(&env.race);
+    *output = env.teacher.external_action(&env.race);
     true
 }
 

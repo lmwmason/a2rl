@@ -62,10 +62,19 @@ impl Teacher {
         self
     }
 
+    pub fn external_action(&mut self, race: &Race) -> [f32; 4] {
+        self.control(race, true)
+    }
+
     pub fn action(&mut self, race: &Race) -> [f32; 4] {
+        self.control(race, false)
+    }
+
+    fn control(&mut self, race: &Race, firmware: bool) -> [f32; 4] {
         if self.flow && race.grand_challenge && race.course == Course::Season2Practice2026 {
-            if let Some((accel, heading)) = line::track(race) {
-                let accel = accel.with_z(0.).clamp_length_max(17.)
+            if let Some((accel, heading)) = line::track(race, firmware) {
+                let horizontal_limit = if firmware { 23. } else { 17. };
+                let accel = accel.with_z(0.).clamp_length_max(horizontal_limit)
                     + Vec3::Z * (GRAVITY + accel.z.clamp(-5.5, 8.));
                 let mut command = rate_action(race, accel, heading);
                 protect_level_pitch(race, &mut command);

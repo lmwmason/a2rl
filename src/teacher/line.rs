@@ -6,11 +6,27 @@ use glam::{Quat, Vec3};
 use crate::{Course, Gate, Race, GRAVITY};
 
 const SAMPLES_PER_LEG: usize = 64;
-const MAX_SPEED: f32 = 11.5;
-const TURN_ACCEL: f32 = 9.;
-const SPLIT_S_TURN_ACCEL: f32 = 6.5;
 const SPEED_ACCEL: f32 = 12.;
-const BRAKE_ACCEL: f32 = 3.1;
+
+struct Pace {
+    max_speed: f32,
+    turn_accel: f32,
+    split_s_turn_accel: f32,
+    brake_accel: f32,
+}
+
+const NATIVE_PACE: Pace = Pace {
+    max_speed: 11.5,
+    turn_accel: 9.,
+    split_s_turn_accel: 6.5,
+    brake_accel: 3.1,
+};
+const FIRMWARE_PACE: Pace = Pace {
+    max_speed: 14.5,
+    turn_accel: 11.5,
+    split_s_turn_accel: 7.5,
+    brake_accel: 3.8,
+};
 // Horizontal guide positions from FlyBy Fig. 5. Heights interpolate between
 // the two estimated opening centers and keep the loop clear of the frame.
 const LADDER_ARC: [(Vec3, Vec3); 3] = [
@@ -32,9 +48,10 @@ struct Line {
 }
 
 static SEASON2_LINE: OnceLock<Line> = OnceLock::new();
+static SEASON2_FIRMWARE_LINE: OnceLock<Line> = OnceLock::new();
 
 impl Line {
-    fn season2() -> Self {
+    fn season2(pace: Pace) -> Self {
         let course = Course::Season2Practice2026;
         let gates: Vec<_> = Gate::on_course(course).collect();
         let (start, yaw) = course.start();
@@ -61,7 +78,7 @@ impl Line {
             position: begin,
             tangent: direction,
             curvature: Vec3::ZERO,
-            speed: MAX_SPEED,
+            speed: pace.max_speed,
         });
         for index in 1..points.len() - 1 {
             let before = points[index - 1];
@@ -73,13 +90,13 @@ impl Line {
             point.curvature = curvature;
             let leg = index / SAMPLES_PER_LEG % gates.len();
             let turn_accel = if (6..=8).contains(&leg) {
-                SPLIT_S_TURN_ACCEL
+                pace.split_s_turn_accel
             } else {
-                TURN_ACCEL
+                pace.turn_accel
             };
             point.speed = (turn_accel / curvature.length().max(0.001))
                 .sqrt()
-                .min(MAX_SPEED);
+                .min(pace.max_speed);
         }
         for gate in (SAMPLES_PER_LEG..points.len() - SAMPLES_PER_LEG).step_by(SAMPLES_PER_LEG) {
             coast_through_gate(&mut points, gate);
@@ -102,7 +119,7 @@ impl Line {
             let distance = point.position.distance(next.position);
             point.speed = point.speed.min(
                 next.speed
-                    .mul_add(next.speed, 2. * BRAKE_ACCEL * distance)
+                    .mul_add(next.speed, 2. * pace.brake_accel * distance)
                     .sqrt(),
             );
         }
@@ -157,7 +174,7 @@ fn coast_through_gate(points: &mut [Point], gate: usize) {
     let limit = points[first..=last]
         .iter()
         .map(|point| point.speed)
-        .fold(MAX_SPEED, f32::min);
+        .fold(f32::INFINITY, f32::min);
     for point in &mut points[first..=last] {
         point.speed = limit;
     }
@@ -191,7 +208,7 @@ fn hermite(a: Vec3, da: Vec3, b: Vec3, db: Vec3, t: f32) -> Point {
         position: a + t * (da + t * (quadratic + t * cubic)),
         tangent: (da + t * (2. * quadratic + 3. * t * cubic)).normalize(),
         curvature: Vec3::ZERO,
-        speed: MAX_SPEED,
+        speed: f32::INFINITY,
     }
 }
 
@@ -204,10 +221,14 @@ fn blend(a: Point, b: Point, t: f32) -> Point {
     }
 }
 
-pub(super) fn track(race: &Race) -> Option<(Vec3, Vec3)> {
+pub(super) fn track(race: &Race, firmware: bool) -> Option<(Vec3, Vec3)> {
     let target = race.gates[race.next_gate()];
     let position = race.drone.position;
-    let line = SEASON2_LINE.get_or_init(Line::season2);
+    let line = if firmware {
+        SEASON2_FIRMWARE_LINE.get_or_init(|| Line::season2(FIRMWARE_PACE))
+    } else {
+        SEASON2_LINE.get_or_init(|| Line::season2(NATIVE_PACE))
+    };
     let (index, fraction) = line.closest(race.passed, position);
     if index + 5 >= (race.passed + 1) * SAMPLES_PER_LEG
         && (position - target.center).dot(target.normal) > 0.60

@@ -7,6 +7,7 @@
   "active": false,
   "connection": "disconnected",
   "recent_gates": [
+    24,
     24
   ],
   "recent_finish_times": [
@@ -14,10 +15,15 @@
       "at": 1,
       "standard_s": null,
       "comparison_s": 40.445
+    },
+    {
+      "at": 2,
+      "standard_s": null,
+      "comparison_s": 36.836
     }
   ],
-  "best_two_lap_seconds": 40.445,
+  "best_two_lap_seconds": 36.836,
   "finish_rate": 1.0,
   "collision_rate": 0.0,
-  "mean_gate_crossing_speed_m_s": 4.663945537147779
+  "mean_gate_crossing_speed_m_s": 5.278349107240966
 }

@@ -158,9 +158,28 @@ def convert(archive, csv_path, output):
                       "path": str(destination)}), flush=True)
 
 
+def export_imu(archive, csv_path, output):
+    """Join sensor readings to the previously exported RGB timestamps without fetching images again."""
+    destination = output / (PurePosixPath(csv_path).parent.name + ".npz")
+    with np.load(destination, allow_pickle=False) as demo:
+        timestamps = demo["timestamps"]
+    columns = [f"{sensor}_{axis}" for sensor in ("gyro", "accel") for axis in "xyz"]
+    needed = set(timestamps)
+    with archive.open(csv_path) as raw, io.TextIOWrapper(raw, encoding="utf-8-sig") as stream:
+        samples = {stamp: [float(row[column]) for column in columns]
+                   for row in csv.DictReader(stream)
+                   if (stamp := float(row["elapsed_time"])) in needed}
+    imu = np.asarray([samples[stamp] for stamp in timestamps], dtype=np.float32)
+    if not np.isfinite(imu).all():
+        raise ValueError(f"Nonfinite IMU samples for {destination}")
+    np.save(destination.with_suffix(".imu.npy"), imu, allow_pickle=False)
+    print(f"{destination.stem}: {len(imu)} gyro and accelerometer samples", flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--list", action="store_true", help="List camera-synchronized piloted flights.")
+    parser.add_argument("--imu-only", action="store_true", help="Add synchronized IMU samples to existing demonstrations.")
     parser.add_argument("--out", type=Path, default=Path("runs/mck"))
     parser.add_argument("--flight", action="append", default=[], help="Exact flight directory name from --list.")
     args = parser.parse_args()
@@ -176,7 +195,9 @@ def main():
         for name in args.flight:
             if name not in clips:
                 parser.error(f"Unknown flight directory {name}")
-            convert(archive, clips[name], args.out)
+            if not args.imu_only:
+                convert(archive, clips[name], args.out)
+            export_imu(archive, clips[name], args.out)
 
 
 if __name__ == "__main__":

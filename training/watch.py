@@ -19,13 +19,13 @@ VIDEO_WIDTH, VIDEO_HEIGHT = 480, 360
 def replay_agent(weights, lib):
     params = torch.load(BytesIO(weights), map_location="cpu", weights_only=True)
     stack = params["encoder"]["0.weight"].shape[1] // 3
-    agent = Agent(stack, "cpu", lib.sim_hover_stick())
+    agent = Agent(stack, "cpu", lib.sim_hover_stick(), with_imu="imu_encoder" in params)
     agent.set_weights(params)
     return agent, stack
 
 
 def replay_step(agent, obs, small, camera):
-    command = agent.action(obs[None])[0]
+    command = agent.command(obs, small)
     rgb, _, status = small.advance(command)
     image, _, recording_status = camera.advance(command)
     if recording_status != status:

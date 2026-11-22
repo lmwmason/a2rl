@@ -17,8 +17,8 @@ def held_out_mae(agent, clips, batch_size):
     errors = []
     for clip in clips:
         for first in range(0, len(clip), batch_size):
-            frames, actions, _ = clip.batch(np.arange(first, min(len(clip), first + batch_size)))
-            errors.append(np.abs(agent.action(frames) - actions))
+            frames, actions, _, *imu = clip.batch(np.arange(first, min(len(clip), first + batch_size)))
+            errors.append(np.abs(agent.action(frames, imu=imu[0] if imu else None) - actions))
     return np.concatenate(errors).mean(axis=0).tolist() if errors else None
 
 
@@ -34,6 +34,7 @@ def main():
     parser.add_argument("--seed", type=int, default=21)
     parser.add_argument("--stack", type=int, default=4, help="Number of consecutive RGB frames per observation.")
     parser.add_argument("--official-eval", action="store_true")
+    parser.add_argument("--imu", action="store_true", help="Fuse synchronized gyro and accelerometer samples with RGB.")
     parser.add_argument("--eval-every", type=int, default=200)
     parser.add_argument("--eval-episodes", type=int, default=3)
     args = parser.parse_args()
@@ -48,28 +49,31 @@ def main():
 
     stack, height, width = args.stack, 72, 96
     lib = load_sim()
-    agent = Agent(stack, args.device, lib.sim_hover_stick())
-    demos = Demonstrations(args.real, args.sim, stack, height, width, args.seed)
+    agent = Agent(stack, args.device, lib.sim_hover_stick(), with_imu=args.imu)
+    demos = Demonstrations(args.real, args.sim, stack, height, width, args.seed, with_imu=args.imu)
     if {path.resolve() for path in args.real} & {path.resolve() for path in args.held_out}:
         parser.error("Hold out complete flights from training.")
-    held_out = [Clip(path, stack, height, width) for path in args.held_out]
-    optimizer = torch.optim.AdamW([*agent.encoder.parameters(), *agent.actor.parameters()], lr=3e-4)
+    held_out = [Clip(path, stack, height, width, args.imu) for path in args.held_out]
+    parameters = [*agent.encoder.parameters(), *agent.actor.parameters()]
+    if agent.imu_encoder is not None:
+        parameters.extend(agent.imu_encoder.parameters())
+    optimizer = torch.optim.AdamW(parameters, lr=3e-4)
     run = Environment(lib, width, height)
     args.out.mkdir(parents=True, exist_ok=True)
     best_rank = None
     try:
         with (args.out / "metrics.jsonl").open("w", encoding="utf-8", buffering=1) as log:
             for step in range(1, args.updates + 1):
-                frames, labels, weight = demos.sample(args.batch)
+                frames, labels, weight, *imu = demos.sample(args.batch)
                 obs = random_shift(pixel_tensor(frames, args.device).float() / 255. - 0.5, pad=3)
                 scale = torch.empty((len(frames), 1, 1, 1), device=args.device).uniform_(.85, 1.15)
                 offset = torch.empty_like(scale).uniform_(-.07, .07)
-                features = agent.encoder((obs * scale + offset).clamp(-.5, .5))
+                features = agent.policy_features((obs * scale + offset).clamp(-.5, .5), imu[0] if imu else None)
                 action = agent.actor(features).tanh()
                 loss = stick_loss(action, labels, weight)
                 optimizer.zero_grad(set_to_none=True)
                 loss.backward()
-                torch.nn.utils.clip_grad_norm_([*agent.encoder.parameters(), *agent.actor.parameters()], 5.)
+                torch.nn.utils.clip_grad_norm_(parameters, 5.)
                 optimizer.step()
                 if step % args.eval_every and step != args.updates:
                     continue

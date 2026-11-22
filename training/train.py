@@ -90,7 +90,7 @@ def evaluate(agent, env, stack, episodes, official=False):
         obs = fresh_stack(frame, stack)
         reward_total = 0.
         while True:
-            frame, reward, status = env.advance(agent.action(obs[None])[0])
+            frame, reward, status = env.advance(agent.command(obs, env))
             reward_total += reward
             obs[:-1] = obs[1:]
             obs[-1] = frame

@@ -108,11 +108,13 @@ class Environment:
         lib.sim_set_flow_teacher(self.handle, teacher == "flow")
         self.image = np.empty((height, width, 3), dtype=np.uint8)
         self.reward = ct.c_float()
+        self._imu = None
 
     def reset(self, gate=-1, side=0., height=0., exposure=1., breakup=0., video_seed=1):
         if self.body is not None:
             self.body.reset()
         self.lib.sim_reset(self.handle, gate, side, height, exposure, breakup, video_seed, self.image.ctypes.data)
+        self._imu = None
         return self.image
 
     def ground_start(self, side=0., exposure=1., breakup=0., video_seed=1):
@@ -130,6 +132,7 @@ class Environment:
             self.body.reset()
         self.lib.sim_reset_after_gate(self.handle, gate, side, height, speed, exposure,
                                       breakup, video_seed, self.image.ctypes.data)
+        self._imu = None
         return self.image
 
     def expert_action(self):
@@ -153,6 +156,7 @@ class Environment:
         native = np.ascontiguousarray(action, dtype=np.float32)
         if native.shape != (4,):
             raise ValueError("Expected four policy action values.")
+        previous = self.rigid_state() if self._imu is not None else None
         args = self.handle, native.ctypes.data, self.image.ctypes.data, ct.byref(self.reward)
         if self.body is None:
             status = self.lib.sim_step(*args)
@@ -162,7 +166,27 @@ class Environment:
                 raise RuntimeError("MuJoCo integration failed") from self.body.error
         if status < 0:
             raise ValueError("Non-finite action or step after episode end.")
+        if previous is not None:
+            state = self.rigid_state()
+            specific_force = (state[3:6] - previous[3:6]) * 30.
+            specific_force[2] += 9.80665
+            self._imu[:-1] = self._imu[1:]
+            self._imu[-1] = self._body_imu(state, specific_force)
         return self.image, self.reward.value, status
+
+    @staticmethod
+    def _body_imu(state, specific_force):
+        # Undo the body-to-world quaternion to express specific force in sensor axes.
+        axis, scalar = -state[6:9], state[9]
+        twice_cross = 2. * np.cross(axis, specific_force)
+        force = specific_force + scalar * twice_cross + np.cross(axis, twice_cross)
+        return np.concatenate((state[10:13], force))
+
+    def imu_window(self, stack):
+        if self._imu is None or len(self._imu) != stack:
+            initial = self._body_imu(self.rigid_state(), np.array([0., 0., 9.80665], dtype=np.float32))
+            self._imu = np.repeat(initial[None], stack, axis=0)
+        return self._imu
 
     def rigid_state(self):
         state = (ct.c_float * 13)()

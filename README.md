@@ -115,13 +115,15 @@ python -m tools.prepare_mck_demos --flight flight-13p-trackRATM --flight flight-
 python -m tools.prepare_mck_demos --flight flight-15p-trackRATM --out runs/mck/holdout
 ```
 
-To train a fresh end-to-end policy on MCK alone, use the two synchronized flights for training and reserve the third for evaluation of stick prediction. The policy starts with fresh weights and learns its RGB encoder and Mode 2 actor jointly. The simulator evaluates transfer to A2RL without providing training samples.
+To train a fresh end-to-end policy on MCK alone, use the two synchronized flights for training and reserve the third for evaluation of stick prediction. The policy trains the RGB encoder, IMU encoder, and Mode 2 actor jointly from scratch. Gyroscope and accelerometer samples use rad/s and m/s² and are aligned at the RGB timestamps. For older RGB exports, rerun the preparation commands with `--imu-only` to add the IMU sidecars. The simulator evaluates transfer to A2RL without providing training samples.
 
 ```bash
-A2RL_PHYSICS_ENGINE=mujoco python -m training.imitate --device cuda --stack 8 \
+A2RL_PHYSICS_ENGINE=mujoco python -m training.imitate --device cuda --stack 8 --imu \
   --real runs/mck/train/*.npz --held-out runs/mck/holdout/flight-15p-trackRATM.npz \
   --official-eval --out runs/mck-e2e-v1
 ```
+
+Evaluation and replay send the fused policy's four commands through the Betaflight-style MSP v1 RC boundary. The adapter encodes roll, pitch, throttle, and yaw in AETR order with `MSP_SET_RAW_RC`. The simulator decodes the frame, then uses its existing Acro controller, mixer, and MuJoCo rigid-body integration. This tests the command interface. Firmware timing, PID behavior, and hardware remain separate validation work. [Betaflight MSP documentation](https://betaflight.com/docs/wiki/guides/current/MSP-Companion-Computer-Control)
 
 Pass these using `A2RL_HUMAN_DEMO_DIR` and `A2RL_HUMAN_HOLDOUT`. During speed RL, `A2RL_SPRINT_EXPLORATION_STEPS` enables full-throttle bursts of up to three control ticks on aligned straights with room before the next gate. The frequency fades to zero by the selected step. The evaluated RGB policy chooses all four sticks on its own.
 

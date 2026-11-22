@@ -6,6 +6,8 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
+from .betaflight_link import decode_rc, encode_rc
+
 
 def pixel_tensor(frames, device):
     # Stack shares one spatial crop so augmentation cannot create fake optical flow.
@@ -63,10 +65,14 @@ class Critic(nn.Module):
 
 
 class Agent:
-    def __init__(self, stack, device, hover_stick):
+    def __init__(self, stack, device, hover_stick, with_imu=False):
         self.device = device
+        self.stack = stack
         self.encoder = Encoder(stack).to(device, memory_format=torch.channels_last)
-        self.actor = mlp(128, 4).to(device)
+        self.imu_encoder = (nn.Sequential(nn.Flatten(), nn.Linear(stack * 6, 64), nn.ReLU(),
+                                          nn.Linear(64, 32), nn.LayerNorm(32)).to(device)
+                            if with_imu else None)
+        self.actor = mlp(160 if with_imu else 128, 4).to(device)
         with torch.no_grad():
             self.actor[-1].bias[1] = atanh(hover_stick)
         self.critic = Critic().to(device)
@@ -75,14 +81,30 @@ class Agent:
         self.actor_opt = torch.optim.Adam(self.actor.parameters(), lr=1e-4)
         self.reference_actor = None
 
+    def policy_features(self, pixels, imu=None):
+        image = self.encoder(pixels)
+        if self.imu_encoder is None:
+            return image
+        if imu is None:
+            raise ValueError("This policy requires synchronized gyro and acceleration history.")
+        sensor = torch.as_tensor(imu, dtype=torch.float32, device=self.device)
+        scale = sensor.new_tensor([10., 10., 10., 30., 30., 30.])
+        return torch.cat((image, self.imu_encoder((sensor / scale).clamp(-4., 4.))), dim=1)
+
     @torch.no_grad()
-    def action(self, frames, noise=0., *, reference=False):
+    def action(self, frames, noise=0., *, reference=False, imu=None):
         obs = pixel_tensor(frames, self.device).float() / 255. - 0.5
         actor = self.reference_actor if reference else self.actor
-        action = actor(self.encoder(obs)).tanh()
+        action = actor(self.policy_features(obs, imu)).tanh()
         if noise:
             action = (action + torch.randn_like(action) * noise).clamp(-1., 1.)
         return action.cpu().numpy()
+
+    def command(self, frames, env):
+        if self.imu_encoder is None:
+            return self.action(frames[None])[0]
+        sticks = self.action(frames[None], imu=env.imu_window(self.stack)[None])[0]
+        return decode_rc(encode_rc(sticks))
 
     def update(self, batch, noise, *, update_actor=True, demonstration=None, imitation_weight=0.):
         obs, action, reward, discount, next_obs = batch
@@ -133,14 +155,21 @@ class Agent:
         return critic_loss.detach(), actor_loss.detach()
 
     def weights(self):
-        return {"action_layout": "mode2-acro-v1", "encoder": self.encoder.state_dict(),
-                "actor": self.actor.state_dict(), "critic": self.critic.state_dict(),
-                "target": self.target.state_dict()}
+        params = {"action_layout": "mode2-acro-v1", "encoder": self.encoder.state_dict(),
+                  "actor": self.actor.state_dict(), "critic": self.critic.state_dict(),
+                  "target": self.target.state_dict()}
+        if self.imu_encoder is not None:
+            params["imu_encoder"] = self.imu_encoder.state_dict()
+        return params
 
     def set_weights(self, params):
         if params.get("action_layout") != "mode2-acro-v1":
             raise ValueError("Checkpoint action layout does not match Mode 2 Acro.")
         self.encoder.load_state_dict(params["encoder"])
+        if ("imu_encoder" in params) != (self.imu_encoder is not None):
+            raise ValueError("Checkpoint sensor layout does not match this policy.")
+        if self.imu_encoder is not None:
+            self.imu_encoder.load_state_dict(params["imu_encoder"])
         self.actor.load_state_dict(params["actor"])
         self.critic.load_state_dict(params["critic"])
         self.target.load_state_dict(params["target"])

@@ -5,7 +5,7 @@ import numpy as np
 
 
 class Clip:
-    def __init__(self, path, stack, height, width):
+    def __init__(self, path, stack, height, width, with_imu=False):
         path = Path(path)
         shape = (height, width, 3)
         if path.is_dir():
@@ -27,6 +27,11 @@ class Clip:
                 or np.any(self.weights <= 0)):
             raise ValueError(f"Malformed Mode 2 labels or weights in {path}.")
         self.actions = actions
+        self.imu = None
+        if with_imu:
+            self.imu = np.load(path.with_suffix(".imu.npy"), allow_pickle=False)
+            if self.imu.shape != (len(actions), 6) or not np.isfinite(self.imu).all():
+                raise ValueError(f"Malformed synchronized IMU samples for {path}.")
         self.offsets = np.arange(1 - stack, 1)
         self.start = np.maximum.accumulate(np.where(gaps, np.arange(len(gaps)), 0))
 
@@ -35,13 +40,14 @@ class Clip:
 
     def batch(self, rows):
         indices = np.maximum(rows[:, None] + self.offsets, self.start[rows, None])
-        return self.frames[indices], self.actions[rows], self.weights[rows]
+        batch = self.frames[indices], self.actions[rows], self.weights[rows]
+        return (*batch, self.imu[indices]) if self.imu is not None else batch
 
 
 class Demonstrations:
-    def __init__(self, real_paths, sim_paths, stack, height, width, seed):
-        self.real = [Clip(path, stack, height, width) for path in real_paths]
-        self.sim = [Clip(path, stack, height, width) for path in sim_paths]
+    def __init__(self, real_paths, sim_paths, stack, height, width, seed, with_imu=False):
+        self.real = [Clip(path, stack, height, width, with_imu) for path in real_paths]
+        self.sim = [Clip(path, stack, height, width, with_imu) for path in sim_paths]
         self.rng = np.random.default_rng(seed)
         if not self.real and not self.sim:
             raise ValueError("At least one demonstration is required.")

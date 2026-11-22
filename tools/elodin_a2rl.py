@@ -146,6 +146,10 @@ def configure_course(course, lib, season2, asset, camera_feed, report_path):
             if finished and not contact:
                 camera_feed.save_demonstration()
         if report_path:
+            from training.betaflight_link import timed_mean_throttle
+
+            mean_throttle = timed_mean_throttle(camera_feed.actions, camera_feed.fps, times[0], times[last]) \
+                if finished and camera_feed else None
             report_path.write_text(json.dumps({
                 "physics_engine": "elodin",
                 "course": "2026-practice" if season2 else "2025",
@@ -154,6 +158,7 @@ def configure_course(course, lib, season2, asset, camera_feed, report_path):
                 "contact": contact,
                 "finished": finished,
                 "official_seconds": official,
+                "mean_throttle_fraction": mean_throttle,
                 "gate_times": times[:last + 1],
             }, indent=2) + "\n")
 

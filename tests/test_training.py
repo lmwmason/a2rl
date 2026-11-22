@@ -8,12 +8,20 @@ import numpy as np
 import torch
 
 from training.agent import Agent
+from training.betaflight_link import timed_mean_throttle
 from training.demonstrations import Clip
 from training.racing_school import matches_teacher_pace
 from training.replay import Replay
 from training.sim import Environment, gate_count, load_sim
 from training.telemetry import FramePublisher, finish_time_history, read_packet
 from training.train import beats_record
+
+
+class ThrottleTimingTest(unittest.TestCase):
+    def test_weights_partial_frames_between_first_and_final_gates(self):
+        actions = [[0., -1., 0., 0.], [0., 1., 0., 0.], [0., 0., 0., 0.]]
+        self.assertAlmostEqual(timed_mean_throttle(actions, 10, 0.025, 0.25), 0.125 / 0.225)
+        self.assertIsNone(timed_mean_throttle(actions, 10, 0.025, 0.31))
 
 
 class ReplayTest(unittest.TestCase):

@@ -27,6 +27,10 @@ The dashboard run covered 208.20 m at a mean speed of 6.58 m/s. The first full c
 
 The new controller optimizes crossing positions and tangents on four open approaches, checks the resulting line against gate frames, and corrects predicted lateral error before the gate plane. The first geometry-only search made contact at gate two, so the accepted search fixes the gates with the least clearance in the measured reference flight. The selected setting improved the two-lap time from 32.999 to 31.657 s. Mean throttle from gate one to the finish was 23.5%. Throttle at or above 90% lasted 0.100 s (0.3% of the timed run).
 
+### 80% mean throttle experiment
+
+In a deterministic Rust screening sweep, 169 of 1,201 variants completed the course. The highest time-sampled mean throttle among those finishers was 25.38%. Two coupled attitude-and-throttle candidates then completed all 24 crossings in Elodin + Betaflight SITL. Their measured means were 23.62% in 31.700 s and 23.63% in 31.483 s. Holding the receiver at 80% after the first crossing caused contact before the second gate. The 80% target remains unmet. The Elodin result sidecar calculates the time-weighted receiver throttle from the first crossing through the finish, including the portions of the first and last recorded control samples that lie inside that interval.
+
 The simulator runs an MSP-compatible receiver boundary, then the project's Acro rate controller and mixer. The published measurements cover propulsion and drag under the recorded inputs. To establish controller fidelity on the intended airframe, compare firmware-in-the-loop command timing and body-rate response, then compare RPM, full trajectories, and gate clearances on held-out runs from that airframe. Report the learned pilot's completion rate separately from the state-driven teacher.
 
 ## Reproduce the measurements

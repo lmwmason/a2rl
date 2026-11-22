@@ -10,6 +10,16 @@ SET_RAW_RC = 200
 CHANNELS = Struct("<4H")
 
 
+def timed_mean_throttle(actions, sample_rate, start, end):
+    """Average the held Mode 2 throttle over the timed race interval."""
+    if not sample_rate > 0 or not 0 <= start < end <= len(actions) / sample_rate:
+        return None
+    boundaries = np.arange(len(actions) + 1) / sample_rate
+    weights = np.diff(np.clip(boundaries, start, end))
+    throttle = (np.asarray(actions)[:, 1] + 1.) / 2.
+    return float(np.dot(weights, throttle) / (end - start))
+
+
 def encode_rc(sticks):
     """Convert Mode 2 [yaw, throttle, roll, pitch] to a four-channel AETR frame."""
     sticks = np.asarray(sticks)

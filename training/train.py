@@ -72,6 +72,8 @@ def evaluate(agent, env, stack, episodes, official=False):
     official_times = []
     official_start_seconds = None
     stalls = 0
+    approach_delay = 0.
+    gate_speed_sum = 0.
     gates_per_lap = env.lib.sim_gate_count()
     rng = np.random.default_rng(71)
     for index in range(episodes):
@@ -90,6 +92,9 @@ def evaluate(agent, env, stack, episodes, official=False):
                 stalls += int(status == 3)
                 break
         gates, best = env.lap_stats()
+        delay, speed_sum = env.flow_stats()
+        approach_delay += delay
+        gate_speed_sum += speed_sum
         if official and status == 4 and gates == 2 * gates_per_lap:
             seconds = env.official_seconds()
             if seconds is not None and math.isfinite(seconds) and seconds > 0:
@@ -107,6 +112,8 @@ def evaluate(agent, env, stack, episodes, official=False):
             "official_start_seconds": official_start_seconds,
             "official_best_seconds": min(official_times, default=None),
             "official_finishes": len(official_times),
+            "mean_gate_approach_delay_seconds": approach_delay / episodes,
+            "mean_gate_crossing_speed_m_s": gate_speed_sum / sum(passes) if any(passes) else None,
             "stall_rate": stalls / episodes,
             "launch_to_gate_one_rate": sum(gate >= 1 for gate in passes) / episodes,
             "gate_two_rate": sum(gate >= 2 for gate in passes) / episodes,
@@ -159,6 +166,7 @@ def initial_exploration(rng, previous):
 def train(args, agent, lib):
     rng = np.random.default_rng(args.seed)
     physics = physics_identity(lib)
+    reward_version = lib.sim_reward_model_version()
     args.run_dir.mkdir(parents=True, exist_ok=True)
     shape = (args.height, args.width, 3)
     replay = Replay(args.replay, args.envs, shape, args.stack, args.n_step, args.gamma, rng)
@@ -184,13 +192,16 @@ def train(args, agent, lib):
         progress = checkpoint.load(args.resume, agent, replay, demonstrations)
         if progress.get("physics", LEGACY_PHYSICS) != physics:
             raise ValueError("Use the original physics to resume, or initialize a new run from weights.")
+        if progress.get("reward_version", 1) != reward_version:
+            raise ValueError("Use the original reward to resume, or initialize a new run from weights.")
         steps, updates = progress["steps"], progress["updates"]
         last_eval, best_rank = progress["last_eval"], progress["best_rank"]
         warm_started = progress["warm_started"]
         print(json.dumps({"restored_steps": steps, "restored_updates": updates,
                           "restored_replay_rows": min(replay.count, replay.rows)}), flush=True)
     (args.run_dir / "config.json").write_text(
-        json.dumps(vars(args) | {"physics": physics}, default=str, indent=2) + "\n", encoding="utf-8")
+        json.dumps(vars(args) | {"physics": physics, "reward_version": reward_version},
+                   default=str, indent=2) + "\n", encoding="utf-8")
     last_report_steps = initial_steps = last_save = steps
     envs = [Environment(lib, args.width, args.height) for _ in range(args.envs)]
     test_env = Environment(lib, args.width, args.height)
@@ -303,7 +314,8 @@ def train(args, agent, lib):
                     path = args.run_dir / "training-state.zip"
                     checkpoint.save(path, agent, replay,
                                     {"steps": steps, "updates": updates, "last_eval": last_eval,
-                                     "best_rank": best_rank, "warm_started": warm_started, "physics": physics},
+                                     "best_rank": best_rank, "warm_started": warm_started, "physics": physics,
+                                     "reward_version": reward_version},
                                     starts[:, -1], demonstrations)
                     last_save = steps
                     print(json.dumps({"saved_training_state": str(path), "steps": steps}), flush=True)

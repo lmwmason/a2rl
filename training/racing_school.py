@@ -53,6 +53,7 @@ class ExpertReplay:
 
 
 REPLAY_FIELDS = ("frames", "sticks", "features", "weights", "starts")
+EVALUATION_SEED = 9127
 
 
 def save_school(path, agent, aux, optimizer, buffer, rng, progress):
@@ -91,11 +92,11 @@ def restore_school(path, agent, aux, optimizer, buffer, rng, physics):
     return payload["progress"]
 
 
-def evaluate_student(agent, env, stack, round_no, episodes, teacher=False):
+def evaluate_student(agent, env, stack, seed, episodes, teacher=False):
     """Use held-out ground starts. No intervention is permitted in student evaluations."""
     n_gates = env.lib.sim_gate_count() * 2
     passes, crashes, times = [], 0, []
-    rng = np.random.default_rng(9127 + round_no)
+    rng = np.random.default_rng(seed)
     for i in range(episodes):
         if i == 0:
             frame = env.official_start()
@@ -123,6 +124,11 @@ def evaluate_student(agent, env, stack, round_no, episodes, teacher=False):
         "crash_rate": crashes / episodes,
         "best_two_lap_s": min(times, default=None),
     }
+
+
+def evaluation_rank(result):
+    return (result["two_lap_rate"], min(result["gates"]),
+            float(np.mean(result["gates"])), -result["crash_rate"])
 
 
 def training_reset(env, index, rng, target):
@@ -221,7 +227,7 @@ def main():
     test_env = Environment(lib, width, height)
     args.out.mkdir(parents=True, exist_ok=True)
     try:
-        expert = evaluate_student(None, test_env, args.stack, 0, args.eval_episodes, teacher=True)
+        expert = evaluate_student(None, test_env, args.stack, EVALUATION_SEED, args.eval_episodes, teacher=True)
         print(json.dumps({"expert_validation": expert}), flush=True)
         if expert["two_lap_rate"] < 1.:
             raise RuntimeError("The demonstration teacher failed the two-lap acceptance test.")
@@ -244,6 +250,17 @@ def main():
             progress = restore_school(args.resume, agent, auxiliary, optimizer, buffer, rng, physics)
             best, first_full = progress["best"], progress["first_full"]
             qualified, first_round, target = progress["qualified"], progress["round"], progress["target"]
+            if progress.get("evaluation_seed") != EVALUATION_SEED:
+                first_full, qualified = None, 0
+                saved_best = args.out / "best.pt"
+                if saved_best.is_file():
+                    previous = Agent(args.stack, args.device, lib.sim_hover_stick())
+                    previous.load(saved_best)
+                    best = evaluation_rank(evaluate_student(previous, test_env, args.stack,
+                                                            EVALUATION_SEED, args.eval_episodes))
+                    del previous
+                else:
+                    best = None
         envs = [Environment(lib, width, height) for _ in range(args.envs)]
         obs = np.asarray([fresh_stack(training_reset(env, i, rng, target), args.stack) for i, env in enumerate(envs)])
         publisher = FramePublisher(args.out) if args.live else None
@@ -273,20 +290,27 @@ def main():
                         torch.nn.utils.clip_grad_norm_([*agent.encoder.parameters(), *agent.actor.parameters()], 5.)
                         optimizer.step()
 
-                    result = evaluate_student(agent, test_env, args.stack, round_no, args.eval_episodes)
+                    result = evaluate_student(agent, test_env, args.stack, EVALUATION_SEED, args.eval_episodes)
+                    robustness = None
+                    if result["two_lap_rate"] == 1.:
+                        robustness = evaluate_student(agent, test_env, args.stack,
+                                                      EVALUATION_SEED + round_no, args.eval_episodes)
+                    ready = robustness is not None and robustness["two_lap_rate"] == 1.
                     result.update(round=round_no, transitions=buffer.count * args.envs,
                                   target_gate=target,
+                                  evaluation_seed=EVALUATION_SEED,
+                                  holdout_two_lap_rate=robustness["two_lap_rate"] if robustness else None,
                                   teacher_probability=teacher_probability, collection_crashes=accidents,
                                   imitation_loss=float(loss.detach()), seconds=round(time.monotonic() - started, 1))
                     print(json.dumps(result), flush=True)
                     log.write(json.dumps(result) + "\n")
                     agent.save(args.out / "latest.pt")
-                    rank = (result["two_lap_rate"], min(result["gates"]), float(np.mean(result["gates"])), -result["crash_rate"])
+                    rank = evaluation_rank(result)
                     if best is None or rank > best:
                         agent.save(args.out / "best.pt")
                         best = rank
-                    qualified = qualified + 1 if result["two_lap_rate"] == 1. else 0
-                    if result["two_lap_rate"] == 1. and first_full is None:
+                    qualified = qualified + 1 if ready else 0
+                    if ready and first_full is None:
                         first_full = round_no
                         print(json.dumps({"first_full_round": first_full,
                                           "consolidation_rounds": args.consolidation_rounds}), flush=True)
@@ -298,10 +322,11 @@ def main():
                     if round_no == 1 or round_no % args.save_every == 0 or round_no == args.rounds:
                         save_school(args.out / "imitation-state.zip", agent, auxiliary, optimizer, buffer, rng,
                                     {"round": round_no, "target": target, "best": best,
-                                     "first_full": first_full, "qualified": qualified, "physics": physics})
+                                     "first_full": first_full, "qualified": qualified, "physics": physics,
+                                     "evaluation_seed": EVALUATION_SEED})
                     if qualified >= 2 and round_no - first_full >= args.consolidation_rounds:
                         agent.save(args.out / "qualified.pt")
-                        print(json.dumps({"qualified": True, "verified_two_lap_evaluations": 2 * args.eval_episodes}), flush=True)
+                        print(json.dumps({"qualified": True, "verified_two_lap_evaluations": 4 * args.eval_episodes}), flush=True)
                         break
         finally:
             for env in envs:

@@ -11,6 +11,7 @@ use parry3d::{
 
 pub const PHYSICS_HZ: usize = 240;
 pub const PHYSICS_MODEL_VERSION: u32 = 2;
+pub const REWARD_MODEL_VERSION: u32 = 2;
 pub const CONTROL_HZ: usize = 30;
 pub const GRAND_CHALLENGE_LAPS: usize = 2;
 const DT: f32 = 1.0 / PHYSICS_HZ as f32;
@@ -94,6 +95,12 @@ pub const BARS: [(Vec3, Vec3); 4] = [
     (Vec3::new(-DEPTH, W, -H), Vec3::new(DEPTH, W + BEAM, H)),
 ];
 
+const FLOW_APPROACH_METERS: f32 = 4.;
+const FLOW_SLOW_METERS_PER_SECOND: f32 = 1.5;
+const FLOW_APPROACH_COST_PER_SECOND: f32 = 0.45;
+const FLOW_CROSSING_SPEED_CAP: f32 = 10.;
+const FLOW_CROSSING_BONUS: f32 = 0.60;
+
 #[derive(Clone, Copy)]
 pub struct Gate {
     pub center: Vec3,
@@ -136,6 +143,23 @@ impl Gate {
         let hit = a + delta * (-a.x / delta.x);
         (false, hit.y.abs() < W - RADIUS && hit.z.abs() < H - RADIUS)
     }
+}
+
+fn flow_alignment(direction: Vec3, normal: Vec3) -> f32 {
+    ((direction.normalize_or_zero().dot(normal) - 0.25) / 0.75).clamp(0., 1.)
+}
+
+fn approach_delay(gate: Gate, incoming: Vec3, outgoing: Vec3, offset: Vec3, velocity: Vec3) -> f32 {
+    let distance = offset.length();
+    if distance >= FLOW_APPROACH_METERS || offset.dot(gate.normal) <= 0. {
+        return 0.;
+    }
+    let closing_speed = velocity.dot(offset) / distance;
+    let slow_fraction = (1. - closing_speed / FLOW_SLOW_METERS_PER_SECOND).clamp(0., 1.);
+    let proximity = 1. - distance / FLOW_APPROACH_METERS;
+    let turn_weight =
+        flow_alignment(incoming, gate.normal).min(flow_alignment(outgoing, gate.normal));
+    DT * slow_fraction * proximity * turn_weight
 }
 
 fn frame_contact(origin: Vec3, travel: Vec3, min: Vec3, max: Vec3) -> bool {
@@ -288,6 +312,8 @@ pub struct Race {
     pub exposure: f32,
     pub video_breakup: f32,
     pub video_seed: u32,
+    pub approach_delay_seconds: f32,
+    pub gate_speed_sum: f32,
     start_gate: usize,
     timed_lap: bool,
     last_gate_tick: usize,
@@ -314,6 +340,8 @@ impl Default for Race {
             exposure: 1.,
             video_breakup: 0.,
             video_seed: 1,
+            approach_delay_seconds: 0.,
+            gate_speed_sum: 0.,
             start_gate: 0,
             timed_lap: true,
             last_gate_tick: 0,
@@ -484,7 +512,10 @@ impl Race {
                 break;
             }
 
-            let distance = self.gates[target].center.distance(current);
+            let gate = self.gates[target];
+            let offset = gate.center - current;
+            let distance = offset.length();
+            let next = (target + 1) % self.gates.len();
             let progress = if passed {
                 1.
             } else {
@@ -493,6 +524,12 @@ impl Race {
             reward += 0.8 * (progress - self.progress);
             self.progress = progress;
             if passed {
+                let crossing_speed = ((current - previous).dot(gate.normal) / DT).max(0.);
+                self.gate_speed_sum += crossing_speed;
+                let outgoing = self.gates[next].center - gate.center;
+                let speed_fraction = (crossing_speed / FLOW_CROSSING_SPEED_CAP).min(1.);
+                reward +=
+                    FLOW_CROSSING_BONUS * speed_fraction * flow_alignment(outgoing, gate.normal);
                 if self.passed == 0 && self.grand_challenge {
                     self.first_gate_tick = Some(self.ticks);
                     self.lap_start = self.ticks;
@@ -521,6 +558,13 @@ impl Race {
                         break;
                     }
                 }
+            } else if !self.on_launch_pad && distance < FLOW_APPROACH_METERS {
+                let previous_gate = (target + self.gates.len() - 1) % self.gates.len();
+                let incoming = gate.center - self.gates[previous_gate].center;
+                let outgoing = self.gates[next].center - gate.center;
+                let delay = approach_delay(gate, incoming, outgoing, offset, self.drone.velocity);
+                self.approach_delay_seconds += delay;
+                reward -= FLOW_APPROACH_COST_PER_SECOND * delay;
             }
             if self.ticks - self.last_gate_tick >= 14 * PHYSICS_HZ {
                 self.status = Status::Stalled;
@@ -606,6 +650,63 @@ mod tests {
         let travel = Vec3::new(0., 0., 0.09);
         assert!(!frame_contact(Vec3::new(-0.55, 0.60, 0.), travel, min, max));
         assert!(frame_contact(Vec3::new(-0.53, 0.61, 0.), travel, min, max));
+    }
+
+    #[test]
+    fn gate_dwell_cost_applies_to_aligned_stops_and_lateral_drift() {
+        let gates = Gate::all();
+        let gate = gates[1];
+        let incoming = gate.center - gates[0].center;
+        let outgoing = gates[2].center - gate.center;
+        let offset = gate.normal * 2.;
+        let delay = |speed| approach_delay(gate, incoming, outgoing, offset, speed);
+        assert!(delay(Vec3::ZERO) > 0.);
+        assert_eq!(delay(gate.side), delay(Vec3::ZERO));
+        assert_eq!(delay(gate.normal * 2.), 0.);
+        assert_eq!(
+            approach_delay(gate, incoming, outgoing, -offset, Vec3::ZERO),
+            0.
+        );
+        let split = gates[4];
+        assert_eq!(
+            approach_delay(
+                split,
+                split.center - gates[3].center,
+                gates[5].center - split.center,
+                split.normal * 2.,
+                Vec3::ZERO
+            ),
+            0.
+        );
+    }
+
+    #[test]
+    fn forward_speed_bonus_requires_a_valid_crossing() {
+        let run = |speed: f32, side: f32| {
+            let mut race = Race::default();
+            let gate = race.gates[0];
+            let travel = gate.normal * (speed * DT);
+            race.drone.position = gate.center - travel * 0.5 + gate.side * side;
+            race.progress = 1.;
+            let mut first = true;
+            let reward = race
+                .step_with([HOVER, 0., 0., 0.], |drone, _| {
+                    if first {
+                        drone.position += travel;
+                        first = false;
+                    }
+                    true
+                })
+                .unwrap();
+            (reward, race.passed, race.status)
+        };
+        let (slow, _, _) = run(1., 0.);
+        let (fast, passed, status) = run(10., 0.);
+        assert_eq!((passed, status), (1, Status::Racing));
+        assert!(fast > slow + 0.3);
+        let (crash, passed, status) = run(10., W);
+        assert_eq!((passed, status), (0, Status::GateCollision));
+        assert!(crash < 0.);
     }
 
     #[test]

@@ -82,6 +82,7 @@ A custom three-layer PyTorch CNN maps a stack of RGB frames to a 128-dimensional
 
 - Gate progress is positive toward the next gate and negative for retreat. Each segment's progress contribution is bounded.
 - Passing a gate earns +2. Completing a lap earns +20, with up to +8 relative to a 24-second baseline. A session-best improvement earns up to +3.
+- A valid crossing can earn up to +0.60 for forward crossing speed. On an aligned approach, spending time within 4 m of a gate while closing at under 1.5 m/s also costs reward. Both terms are reduced for sharp transitions, and the Split-S allows braking. Speed evaluation logs approach delay and mean crossing speed.
 - Time costs 0.20 per second. A collision costs 18. Fourteen seconds without gate progress incurs a cost of 10 and ends the episode. Practice races can continue for up to 180 seconds.
 - Camera observations, lap time, collision rate, and completion are evaluated through the same simulator interface. Evaluation logs retain individual round results and the dashboard also shows an eight-evaluation moving average.
 
@@ -102,7 +103,7 @@ Use `--device cpu` for local checks. Match frame size and stack depth when evalu
 
 ### Imitation and speed optimization
 
-The teacher follows an inter-gate racing line derived from MAVLab Log 5 and labels Mode 2 actions from its own runs and states visited by the student. The student observes RGB only. The full-race progression runs without a round limit, trains for at least six more rounds after the first 3/3 full-completion evaluation, then requires two consecutive 3/3 evaluations without teacher control. Gate progression and optimizer state are saved in `imitation-state.zip`.
+The teacher follows an inter-gate racing line derived from MAVLab Log 5 and labels Mode 2 actions from its own runs and states visited by the student. The student observes RGB only. Each round uses the same three evaluation starts for comparison. A separate randomized panel checks candidate policies. The full-race progression runs without a round limit, trains for at least six more rounds after the first round that completes both panels, then requires two consecutive rounds of clean qualification without teacher control. Gate progression and optimizer state are saved in `imitation-state.zip`.
 
 ```bash
 bash tools/run_race_training.sh

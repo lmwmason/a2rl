@@ -1,7 +1,7 @@
 // Python owns the image buffer and one exclusive handle per environment.
 use crate::{
     axial_specific_force, camera::Camera, mode2_acro, teacher::Teacher, Race, Status, DT, GRAVITY,
-    HOVER_STICK, INERTIA, LAYOUT, MASS_KG, PHYSICS_MODEL_VERSION,
+    HOVER_STICK, INERTIA, LAYOUT, MASS_KG, PHYSICS_MODEL_VERSION, REWARD_MODEL_VERSION,
 };
 
 pub struct Environment {
@@ -23,6 +23,17 @@ pub extern "C" fn sim_hover_stick() -> f32 {
 #[no_mangle]
 pub extern "C" fn sim_physics_model_version() -> u32 {
     PHYSICS_MODEL_VERSION
+}
+
+#[no_mangle]
+pub extern "C" fn sim_reward_model_version() -> u32 {
+    REWARD_MODEL_VERSION
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn sim_flow_stats(env: *const Environment, output: *mut [f32; 2]) {
+    let race = &(&*env).race;
+    *output = [race.approach_delay_seconds, race.gate_speed_sum];
 }
 
 #[no_mangle]

@@ -34,6 +34,10 @@ def load_sim():
     lib.sim_hover_stick.restype = ct.c_float
     lib.sim_physics_model_version.argtypes = []
     lib.sim_physics_model_version.restype = ct.c_uint32
+    lib.sim_reward_model_version.argtypes = []
+    lib.sim_reward_model_version.restype = ct.c_uint32
+    lib.sim_flow_stats.argtypes = [ct.c_void_p, FLOAT_POINTER]
+    lib.sim_flow_stats.restype = None
     lib.sim_create.argtypes = [ct.c_size_t, ct.c_size_t]
     lib.sim_create.restype = ct.c_void_p
     lib.sim_destroy.argtypes = [ct.c_void_p]
@@ -141,6 +145,11 @@ class Environment:
         gates, best = ct.c_uint32(), ct.c_float()
         self.lib.sim_lap_stats(self.handle, ct.byref(gates), ct.byref(best))
         return gates.value, None if np.isnan(best.value) else best.value
+
+    def flow_stats(self):
+        values = (ct.c_float * 2)()
+        self.lib.sim_flow_stats(self.handle, values)
+        return values[0], values[1]
 
     def close(self):
         if self.handle:

@@ -9,11 +9,11 @@ const number = new Intl.NumberFormat("ko-KR");
 const count = (value) => Number.isFinite(value) ? number.format(value) : "—";
 const percent = (value) => Number.isFinite(value) ? count(Math.round(value * 100)) + "%" : "—";
 const camera = byId("fpv");
-const videoContext = camera.getContext("2d");
 const chart = byId("history");
 const chartContext = chart.getContext("2d");
 const trend = { values: [], key: "" };
-let lastFrame = null;
+let playing = null;
+let pending = null;
 
 function pill(id, label, state = "") {
   setText(id, label);
@@ -50,44 +50,34 @@ function drawHistory() {
   chartContext.stroke();
 }
 
-function drawFrame(info, pixels) {
-  if (!info.width || !info.height || pixels.length !== info.width * info.height * 3) return;
-  if (info.frame_at === lastFrame) return;
-  lastFrame = info.frame_at;
-  if (camera.width !== info.width || camera.height !== info.height) {
-    camera.width = info.width;
-    camera.height = info.height;
+function startReplay() {
+  if (pending) {
+    if (playing) URL.revokeObjectURL(playing.blob);
+    playing = pending;
+    pending = null;
+    camera.src = playing.blob;
+    camera.hidden = false;
+    byId("waiting").hidden = true;
+    const stage = playing.phase === "SPEED RL" ? "강화학습 · " + count(playing.steps) + " 스텝"
+      : playing.round ? "모방학습 · " + count(playing.round) + " 라운드" : "모방학습 체크포인트";
+    setText("replay-stage", stage);
+    setText("flight-gates", count(playing.gates) + " / 22");
+    setText("replay-result", { 1: "충돌", 2: "시간 초과", 3: "진행 정체", 4: "2랩 완주" }[playing.status] || "—");
+    pill("video-state", "학생 모델 리플레이", "live");
+  } else if (playing) {
+    camera.currentTime = 0;
   }
-  const image = videoContext.createImageData(info.width, info.height);
-  for (let i = 0, j = 0; i < pixels.length; i += 3, j += 4) {
-    image.data[j] = pixels[i];
-    image.data[j + 1] = pixels[i + 1];
-    image.data[j + 2] = pixels[i + 2];
-    image.data[j + 3] = 255;
-  }
-  videoContext.putImageData(image, 0, 0);
-  camera.hidden = false;
-  byId("waiting").hidden = true;
-  setText("driver", { Teacher: "교사", Student: "학생", Policy: "정책" }[info.driver] || "—");
-  setText("flight-gates", count(info.gates) + " 게이트");
-  setText("resolution", info.width + " × " + info.height);
+  if (playing) camera.play().catch(() => {});
 }
+camera.addEventListener("ended", startReplay);
 
-function render(info, pixels) {
+function renderStatus(info) {
   const connected = info.connection === "connected" && Date.now() / 1000 - info.snapshot_at < 6;
-  const age = info.frame_at ? Date.now() / 1000 - info.frame_at : Infinity;
   const speedTraining = info.phase === "SPEED RL";
   if (connected) {
     pill("connection", info.active ? "GPU 연결 · 학습 중" : "GPU 연결 · 학습 종료", info.active ? "live" : "");
   } else {
     pill("connection", info.connection === "connecting" ? "GPU 연결 중" : "GPU 연결 끊김", "stale");
-  }
-  if (connected && info.active && age < 2) {
-    pill("video-state", "실시간", "live");
-  } else if (lastFrame !== null || pixels.length) {
-    pill("video-state", "마지막 수신 프레임", "stale");
-  } else {
-    pill("video-state", "프레임 대기");
   }
   setText("phase", info.target_beaten ? "목표 달성" : speedTraining ? "강화학습" : info.phase ? "모방학습" : "—");
   setText("progress-label", speedTraining ? "강화학습 스텝" : "모방학습 라운드");
@@ -97,7 +87,6 @@ function render(info, pixels) {
   setText("collision-rate", percent(info.collision_rate));
   setText("best-time", Number.isFinite(info.best_two_lap_seconds) ? info.best_two_lap_seconds.toFixed(2) + " 초" : "—");
   setText("target", (info.target_two_lap_seconds ?? 16.56).toFixed(2) + " 초 미만");
-  drawFrame(info, pixels);
 
   const values = Array.isArray(info.recent_gates) ? info.recent_gates : [];
   const key = values.join(",");
@@ -109,24 +98,38 @@ function render(info, pixels) {
   setText("history-count", values.length ? "최근 " + count(values.length) + "회" : "평가 대기");
 }
 
-async function fetchSnapshot() {
+async function fetchStatus() {
   try {
-    const response = await fetch("snapshot.bin", { cache: "no-store" });
-    if (!response.ok) throw new Error("Snapshot unavailable");
-    const buffer = await response.arrayBuffer();
-    const header = new DataView(buffer);
-    const metaLength = header.getUint32(0, true);
-    const pixelLength = header.getUint32(4, true);
-    if (8 + metaLength + pixelLength !== buffer.byteLength) throw new Error("Invalid snapshot");
-    const info = JSON.parse(new TextDecoder().decode(new Uint8Array(buffer, 8, metaLength)));
-    render(info, new Uint8Array(buffer, 8 + metaLength, pixelLength));
+    const response = await fetch("status.json", { cache: "no-store" });
+    if (!response.ok) throw new Error("Status unavailable");
+    renderStatus(await response.json());
   } catch {
     pill("connection", "로컬 데이터 연결 대기", "stale");
-    if (lastFrame !== null) pill("video-state", "마지막 수신 프레임", "stale");
   } finally {
-    window.setTimeout(fetchSnapshot, 120);
+    window.setTimeout(fetchStatus, 1000);
+  }
+}
+
+async function fetchReplay() {
+  try {
+    const response = await fetch("replay.json", { cache: "no-store" });
+    if (!response.ok) return;
+    const info = await response.json();
+    if (info.version === playing?.version || info.version === pending?.version) return;
+    const video = await fetch(info.url);
+    if (!video.ok) return;
+    const blob = URL.createObjectURL(await video.blob());
+    if (pending) URL.revokeObjectURL(pending.blob);
+    pending = { ...info, blob };
+    if (!playing || camera.ended) startReplay();
+    else pill("video-state", "다음 리플레이 준비됨", "live");
+  } catch {
+    if (!playing) pill("video-state", "리플레이 준비 중");
+  } finally {
+    window.setTimeout(fetchReplay, 1000);
   }
 }
 
 new ResizeObserver(drawHistory).observe(chart);
-fetchSnapshot();
+fetchStatus();
+fetchReplay();

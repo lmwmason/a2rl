@@ -16,6 +16,25 @@ from .train import fresh_stack
 VIDEO_WIDTH, VIDEO_HEIGHT = 480, 360
 
 
+def replay_agent(weights, lib):
+    params = torch.load(BytesIO(weights), map_location="cpu", weights_only=True)
+    stack = params["encoder"]["0.weight"].shape[1] // 3
+    agent = Agent(stack, "cpu", lib.sim_hover_stick())
+    agent.set_weights(params)
+    return agent, stack
+
+
+def replay_step(agent, obs, small, camera):
+    command = agent.action(obs[None])[0]
+    rgb, _, status = small.advance(command)
+    image, _, recording_status = camera.advance(command)
+    if recording_status != status:
+        raise RuntimeError("The recording diverged from the canonical evaluation.")
+    obs[:-1] = obs[1:]
+    obs[-1] = rgb
+    return image, status
+
+
 class Source:
     def __init__(self, args):
         self.lock = Lock()
@@ -74,10 +93,7 @@ def watch(source):
                     pending = newest
                 if pending is not None and (agent is None or (status and begin >= restart) or frame == 0):
                     metadata, weights = pending
-                    params = torch.load(BytesIO(weights), map_location="cpu", weights_only=True)
-                    stack = params["encoder"]["0.weight"].shape[1] // 3
-                    agent = Agent(stack, "cpu", lib.sim_hover_stick())
-                    agent.set_weights(params)
+                    agent, stack = replay_agent(weights, lib)
                     loaded, pending = pending, None
                     obs = fresh_stack(small.official_start(), stack)
                     image = camera.official_start()
@@ -94,13 +110,7 @@ def watch(source):
                                                          "height": VIDEO_HEIGHT, "gates": gates,
                                                          "step": frame, "status": status}, image.tobytes()))
                     if not status:
-                        command = agent.action(obs[None])[0]
-                        rgb, _, status = small.advance(command)
-                        image, _, recording_status = camera.advance(command)
-                        if recording_status != status:
-                            raise RuntimeError("The recording diverged from the canonical evaluation.")
-                        obs[:-1] = obs[1:]
-                        obs[-1] = rgb
+                        image, status = replay_step(agent, obs, small, camera)
                         frame += 1
                         gates, _ = small.lap_stats()
                         if status:

@@ -21,17 +21,17 @@
     <div class="layout">
       <section class="panel flight" aria-labelledby="camera-title">
         <div class="bar">
-          <h2 id="camera-title">FPV 카메라</h2>
-          <span id="video-state" class="pill">프레임 대기</span>
+          <h2 id="camera-title">최신 모델 FPV 리플레이</h2>
+          <span id="video-state" class="pill">리플레이 준비 중</span>
         </div>
         <div class="screen">
-          <canvas id="fpv" hidden aria-label="학습 중인 드론의 FPV 영상"></canvas>
-          <p id="waiting">GPU에서 프레임을 기다리는 중</p>
+          <video id="fpv" muted playsinline controls hidden aria-label="최신 학생 모델의 FPV 리플레이"></video>
+          <p id="waiting">최신 체크포인트의 비행을 렌더링하는 중</p>
         </div>
         <footer class="bar">
-          <span>조종 <strong id="driver">—</strong></span>
-          <span>현재 비행 <strong id="flight-gates">—</strong></span>
-          <span id="resolution">—</span>
+          <span id="replay-stage">—</span>
+          <span>통과 <strong id="flight-gates">—</strong></span>
+          <span id="replay-result">—</span>
         </footer>
       </section>
 

@@ -11,10 +11,9 @@ import time
 HEADER = struct.Struct("<II")
 
 
-def connect(host, root, school, speed, checkpoints=True):
+def connect(host, root, school, speed, mode="checkpoints"):
     source = Path(__file__).read_text()
-    remote = shlex.join(["python3", "-u", "-c", source, root, school, speed,
-                         "checkpoints" if checkpoints else "frames"])
+    remote = shlex.join(["python3", "-u", "-c", source, root, school, speed, mode])
     return subprocess.Popen(
         ["ssh", "-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=12",
          "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=2", host, remote],
@@ -92,7 +91,7 @@ def read_metrics(run):
         return []
 
 
-def stream_run(root, school, speed, checkpoints):
+def stream_run(root, school, speed, mode):
     out = sys.stdout.buffer
     school, speed = root / school, root / speed
     last_image = None
@@ -124,20 +123,27 @@ def stream_run(root, school, speed, checkpoints):
                               "best_two_lap_seconds": min(times, default=None),
                               "target_two_lap_seconds": latest.get("target_two_lap_seconds"),
                               "target_beaten": (speed / "record.json").exists()}))
-            checkpoint = run / ("latest.pt" if active else "best.pt")
-            if checkpoints:
-                try:
-                    key = (checkpoint, checkpoint.stat().st_mtime_ns)
+            latest_checkpoint = run / "latest.pt"
+            checkpoint = latest_checkpoint if active else run / "best.pt"
+            if mode == "replay":
+                checkpoint = next((file for file in (run / "record.pt", latest_checkpoint) if file.is_file()),
+                                  run / "best.pt")
+            try:
+                with checkpoint.open("rb") as stream:
+                    key = (checkpoint, os.fstat(stream.fileno()).st_mtime_ns)
                     if key != last_checkpoint:
-                        out.write(packet({"type": "checkpoint", "best": not active},
-                                         checkpoint.read_bytes()))
+                        out.write(packet({"type": "checkpoint", "best": checkpoint.name == "best.pt",
+                                          "phase": "SPEED RL" if run == speed else "IMITATION",
+                                          "round": latest.get("round", 0),
+                                          "steps": latest.get("steps", latest.get("transitions", 0)),
+                                          "version": str(key[1])}, stream.read()))
                         last_checkpoint = key
-                except FileNotFoundError:
-                    pass
+            except FileNotFoundError:
+                pass
             out.flush()
 
         live_path = run / "live-frame.bin"
-        if active:
+        if active and mode != "replay":
             try:
                 stamp = live_path.stat()
                 key = (live_path, stamp.st_mtime_ns)
@@ -152,6 +158,6 @@ def stream_run(root, school, speed, checkpoints):
 
 if __name__ == "__main__":
     try:
-        stream_run(Path(sys.argv[1]).expanduser(), sys.argv[2], sys.argv[3], sys.argv[4] == "checkpoints")
+        stream_run(Path(sys.argv[1]).expanduser(), sys.argv[2], sys.argv[3], sys.argv[4])
     except BrokenPipeError:
         pass

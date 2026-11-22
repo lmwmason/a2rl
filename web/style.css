@@ -36,6 +36,9 @@ dl div { display: flex; align-items: baseline; justify-content: space-between; g
 dt { color: var(--muted); font-size: 0.9rem; }
 dd { margin: 0; text-align: right; font: 600 0.95rem ui-monospace, monospace; }
 .history { grid-column: 1 / -1; }
+.chart-key { display: flex; flex-wrap: wrap; gap: 16px; color: var(--muted); font-size: 0.85rem; margin: 0 16px 12px; }
+.chart-key span::before { content: ""; display: inline-block; width: 16px; height: 2px; margin-right: 6px; vertical-align: middle; background: #4c8871; }
+.chart-key span:last-child::before { background: var(--accent); }
 .plot { display: flex; gap: 10px; padding: 4px 16px 16px; }
 .axis { display: flex; flex-direction: column; justify-content: space-between; color: var(--muted); font: 0.8rem ui-monospace, monospace; text-align: right; }
 #history { width: calc(100% - 30px); height: 105px; }

@@ -43,20 +43,27 @@ function drawHistory() {
     chartContext.lineTo(width, y);
     chartContext.stroke();
   }
-  chartContext.strokeStyle = chartContext.fillStyle = "#74e8ac";
-  chartContext.lineWidth = 2;
-  chartContext.beginPath();
-  trend.values.forEach((value, index) => {
-    const x = 3 + (width - 6) * index / Math.max(1, trend.values.length - 1);
-    const y = height - 3 - (height - 6) * Math.max(0, Math.min(value, 22)) / 22;
-    if (index === 0) {
-      chartContext.moveTo(x, y);
-      if (trend.values.length === 1) chartContext.fillRect(x - 2, y - 2, 4, 4);
-    } else {
-      chartContext.lineTo(x, y);
-    }
+  const values = trend.values;
+  const averages = values.map((_, index) => {
+    const window = values.slice(Math.max(0, index - 7), index + 1);
+    return window.reduce((sum, value) => sum + value, 0) / window.length;
   });
-  chartContext.stroke();
+  for (const [series, color, weight] of [[values, "#4c8871", 1.5], [averages, "#74e8ac", 2.5]]) {
+    chartContext.strokeStyle = chartContext.fillStyle = color;
+    chartContext.lineWidth = weight;
+    chartContext.beginPath();
+    series.forEach((value, index) => {
+      const x = 3 + (width - 6) * index / Math.max(1, series.length - 1);
+      const y = height - 3 - (height - 6) * Math.max(0, Math.min(value, 22)) / 22;
+      if (index === 0) {
+        chartContext.moveTo(x, y);
+        if (series.length === 1) chartContext.fillRect(x - 2, y - 2, 4, 4);
+      } else {
+        chartContext.lineTo(x, y);
+      }
+    });
+    chartContext.stroke();
+  }
 }
 
 function startReplay() {

@@ -108,8 +108,8 @@ def stream_run(root, school, speed, mode):
             next_status = time.monotonic() + 2
             metrics = read_metrics(run)
             latest = metrics[-1] if metrics else {}
-            times = [row["official_start_seconds"] for row in metrics
-                     if row.get("official_start_seconds") is not None]
+            time_key = "official_start_seconds" if run == speed else "best_two_lap_s"
+            times = [row[time_key] for row in metrics if row.get(time_key) is not None]
             values = [row.get("gates_mean", sum(row.get("gates", [])) / max(1, len(row.get("gates", []))))
                       for row in metrics]
             out.write(packet({"type": "meta", "active": active,

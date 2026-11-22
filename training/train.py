@@ -13,6 +13,7 @@ from .agent import Agent
 from .demonstrations import Demonstrations
 from .replay import Replay
 from .sim import Environment, load_sim
+from .telemetry import FramePublisher
 
 def options():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -39,6 +40,7 @@ def options():
     parser.add_argument("--checkpoint-every", type=int, default=0, help="Training steps between resumable snapshots.")
     parser.add_argument("--focus-gate-two", action="store_true", help="Practice the turn from gate 1 to gate 2.")
     parser.add_argument("--official-eval", action="store_true", help="Rank speed by the official two-lap time.")
+    parser.add_argument("--live", action="store_true", help="Publish sampled live training FPV frames.")
     parser.add_argument("--demo-sim", type=Path, nargs="*", default=[],
                         help="Simulator demonstrations used as a decaying actor regularizer.")
     args = parser.parse_args()
@@ -167,6 +169,7 @@ def train(args, agent, lib):
     last_report_steps = initial_steps = last_save = steps
     envs = [Environment(lib, args.width, args.height) for _ in range(args.envs)]
     test_env = Environment(lib, args.width, args.height)
+    publisher = FramePublisher(args.run_dir) if args.live else None
 
     def reset(env, step):
         breakup = rng.uniform(0.05 * args.hdzero_max, args.hdzero_max) if rng.random() < 0.4 else 0.
@@ -211,6 +214,9 @@ def train(args, agent, lib):
                     frame, reward, crash, timeout = task.result()
                     next_frames[idx] = frame
                     rewards[idx], flags[idx] = reward, 1 if crash else 2 if timeout else 0
+                    if idx == 0 and publisher is not None:
+                        publisher.show(frame, gates=envs[idx].lap_stats()[0], step=steps,
+                                       phase="SPEED RL", status=1 if crash else 2 if timeout else 0)
                 replay.append(starts[:, -1], actions, rewards, flags, next_frames)
                 for idx in np.flatnonzero(flags):
                     next_frames[idx] = reset(envs[idx], steps)

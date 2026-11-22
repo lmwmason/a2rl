@@ -1,0 +1,138 @@
+"""Small binary telemetry packets and an optional nonblocking training frame publisher."""
+import json
+import os
+from pathlib import Path
+import struct
+import sys
+import time
+
+HEADER = struct.Struct("<II")
+
+
+def packet(metadata, payload=b""):
+    encoded = json.dumps(metadata, separators=(",", ":")).encode()
+    return HEADER.pack(len(encoded), len(payload)) + encoded + payload
+
+
+def read_packet(stream):
+    header = stream.read(HEADER.size)
+    if not header:
+        return None
+    if len(header) != HEADER.size:
+        raise EOFError("Short telemetry header")
+    meta_size, payload_size = HEADER.unpack(header)
+    if meta_size > 128_000 or payload_size > 32_000_000:
+        raise ValueError("Invalid telemetry packet size")
+    meta, payload = stream.read(meta_size), stream.read(payload_size)
+    if len(meta) != meta_size or len(payload) != payload_size:
+        raise EOFError("Short telemetry packet")
+    return json.loads(meta), payload
+
+
+class FramePublisher:
+    def __init__(self, folder):
+        self.path = Path(folder) / "live-frame.bin"
+        self.temp = self.path.with_suffix(".tmp")
+        self.next_frame = 0.
+
+    def show(self, image, *, gates, step, phase, status, driver="Policy"):
+        now = time.monotonic()
+        if now < self.next_frame:
+            return
+        self.next_frame = now + .085
+        height, width, _ = image.shape
+        metadata = {"type": "live", "width": width, "height": height,
+                    "gates": gates, "step": step, "phase": phase, "status": status, "driver": driver}
+        try:
+            self.temp.write_bytes(packet(metadata, image.tobytes()))
+            os.replace(self.temp, self.path)
+        except OSError:
+            # A spectator should never interrupt training.
+            pass
+
+
+def alive(root):
+    try:
+        pid = int((root / "run.pid").read_text())
+        state = Path(f"/proc/{pid}/stat").read_text().split(") ", 1)[1][0]
+        return state not in ("Z", "T", "X")
+    except (OSError, ValueError, IndexError):
+        return False
+
+
+def read_metrics(run):
+    try:
+        with (run / "metrics.jsonl").open("rb") as stream:
+            stream.seek(0, os.SEEK_END)
+            size = stream.tell()
+            stream.seek(max(0, size - 350_000))
+            if size > 350_000:
+                stream.readline()
+            rows = []
+            for line in stream:
+                try:
+                    rows.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+        return rows
+    except OSError:
+        return []
+
+
+def stream_run(root, school, speed):
+    out = sys.stdout.buffer
+    school, speed = root / school, root / speed
+    last_image = None
+    last_checkpoint = None
+    next_status = 0.
+    while True:
+        active = alive(root)
+        run = speed if (speed / "config.json").exists() else school
+        if run == school and not (run / "metrics.jsonl").exists():
+            previous = school.with_name("racing-school-v1")
+            if (previous / "best.pt").exists() and not (run / "live-frame.bin").exists():
+                run, active = previous, False
+        if time.monotonic() >= next_status:
+            next_status = time.monotonic() + 2
+            metrics = read_metrics(run)
+            latest = metrics[-1] if metrics else {}
+            values = [row.get("gates_mean", sum(row.get("gates", [])) / max(1, len(row.get("gates", []))))
+                      for row in metrics]
+            out.write(packet({"type": "meta", "active": active,
+                              "phase": "SPEED RL" if run == speed else "IMITATION",
+                              "round": latest.get("round", 0),
+                              "steps": latest.get("steps", latest.get("transitions", 0)),
+                              "target_gate": latest.get("target_gate", 0),
+                              "recent_gates": values[-60:], "best_gates": max(values, default=0.),
+                              "finish_rate": latest.get("two_lap_rate", 0.),
+                              "collision_rate": latest.get("crash_rate", 0.)}))
+            checkpoint = run / ("latest.pt" if active else "best.pt")
+            try:
+                key = (checkpoint, checkpoint.stat().st_mtime_ns)
+                if key != last_checkpoint:
+                    out.write(packet({"type": "checkpoint", "best": not active},
+                                     checkpoint.read_bytes()))
+                    last_checkpoint = key
+            except FileNotFoundError:
+                pass
+            out.flush()
+
+        live_path = run / "live-frame.bin"
+        if active:
+            try:
+                stamp = live_path.stat()
+                key = (live_path, stamp.st_mtime_ns)
+                if key != last_image and time.time() - stamp.st_mtime < 2.:
+                    out.write(live_path.read_bytes())
+                    out.flush()
+                    last_image = key
+            except FileNotFoundError:
+                pass
+        time.sleep(.065)
+
+
+if __name__ == "__main__":
+    try:
+        stream_run(Path(sys.argv[1]).expanduser(), sys.argv[2], sys.argv[3])
+    except BrokenPipeError:
+        pass

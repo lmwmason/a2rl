@@ -1,3 +1,5 @@
+mod viewer;
+
 use std::time::{Duration, Instant};
 
 use a2rl_sim::{
@@ -337,6 +339,10 @@ impl eframe::App for Fpv {
 }
 
 fn main() -> eframe::Result {
+    let mut args = std::env::args_os().skip(1);
+    if args.next().as_deref() == Some(std::ffi::OsStr::new("--watch")) {
+        return viewer::launch(args.next().unwrap_or_else(|| "cbgpu-gpu4".into()));
+    }
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1024., 768.])

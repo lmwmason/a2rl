@@ -37,6 +37,8 @@ def load_sim():
     lib.sim_reset_after_gate.restype = None
     lib.sim_expert_action.argtypes = [ct.c_void_p, ct.c_void_p]
     lib.sim_expert_action.restype = None
+    lib.sim_expert_features.argtypes = [ct.c_void_p, ct.c_void_p]
+    lib.sim_expert_features.restype = None
     lib.sim_step.argtypes = [ct.c_void_p, ct.c_void_p, ct.c_void_p, ct.POINTER(ct.c_float)]
     lib.sim_step.restype = ct.c_int
     lib.sim_lap_stats.argtypes = [ct.c_void_p, ct.POINTER(ct.c_uint32), ct.POINTER(ct.c_float)]
@@ -78,6 +80,11 @@ class Environment:
         action = np.empty(4, dtype=np.float32)
         self.lib.sim_expert_action(self.handle, action.ctypes.data)
         return action
+
+    def expert_features(self):
+        targets = np.empty(12, dtype=np.float32)
+        self.lib.sim_expert_features(self.handle, targets.ctypes.data)
+        return targets
 
     def step(self, action):
         image, reward, status = self.advance(action)

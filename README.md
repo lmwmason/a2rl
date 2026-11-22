@@ -140,14 +140,25 @@ MonoRace Log 5의 EKF 위치에서 연속 게이트 간 비행선을 추출했�
 
 ```bash
 cargo build --release --lib --no-default-features
-python -m training.racing_school --device cuda --out runs/racing-school
+python -m training.racing_school --device cuda --rounds 0 --live \
+  --consolidation-rounds 6 --out runs/racing-school
 test -s runs/racing-school/qualified.pt &&
   python -m training.train --device cuda --initialize runs/racing-school/qualified.pt \
-    --stack 8 --steps 5000000 --batch 96 --official-eval --eval-episodes 3 \
+    --stack 8 --steps 5000000 --batch 96 --live --official-eval --eval-episodes 3 \
     --eval-every 25000 --checkpoint-every 100000 --run-dir runs/speed-rl
 ```
 
-교사 개입 없이 연속 두 차례 평가에서 출발 위치와 노출이 다른 3회 모두 2랩을 완주해야 `qualified.pt`가 저장됩니다. 속도 강화학습에는 교사 행동을 따르는 손실이나 정해진 비행선을 두지 않습니다. 초기 완주 모델을 보존하고, 정책은 완주율, 충돌률, 공식 2랩 평균 시간 순으로 비교합니다.
+첫 2랩 평가 통과 이후 최소 6라운드를 더 학습합니다. 이후에도 교사 개입 없이 연속 두 차례 평가에서 출발 위치와 노출이 다른 3회 모두 2랩을 완주해야 `qualified.pt`가 저장됩니다. 커리큘럼은 정규 출발 평가에서 현재 목표 게이트를 안정적으로 통과하면 다음 게이트로 넘어갑니다. `imitation-state.zip`은 옵티마이저, 교사 데이터와 커리큘럼 상태를 보관하며 `--resume`으로 복원합니다.
+
+속도 강화학습에는 교사 행동을 따르는 손실이나 정해진 비행선을 두지 않습니다. 초기 완주 모델을 보존하고, 정책은 완주율, 충돌률, 공식 2랩 평균 시간 순으로 비교합니다.
+
+### 데스크톱 학습 관전
+
+```bash
+cargo run --release -- --watch cbgpu-gpu4
+```
+
+`--live`로 시작한 GPU 학습의 FPV 샘플과 최근 평가 기록을 SSH로 읽습니다. 화면의 **Teacher** 또는 **Student** 표시는 해당 수집 프레임에서 실제로 조종한 쪽입니다. 라이브 프레임이 없거나 작업이 종료된 경우에는 체크포인트 재생임을 화면에 표시합니다. 창을 닫아도 GPU 학습은 계속됩니다.
 
 ## CBGPU GPU 4에서 실행
 

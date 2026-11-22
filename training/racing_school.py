@@ -1,15 +1,20 @@
 """Train an RGB-only pilot with exact simulator expert corrections before speed RL."""
 import argparse
 from concurrent.futures import ThreadPoolExecutor
+from io import BytesIO
+from itertools import count
 import json
 from pathlib import Path
 import time
+from zipfile import ZipFile
 
 import numpy as np
 import torch
 
+from . import checkpoint
 from .agent import Agent, pixel_tensor, random_shift, stick_loss
 from .sim import Environment, load_sim
+from .telemetry import FramePublisher
 from .train import fresh_stack
 
 
@@ -19,16 +24,18 @@ class ExpertReplay:
     def __init__(self, rows, envs, height, width, stack):
         self.frames = np.empty((rows, envs, height, width, 3), np.uint8)
         self.sticks = np.empty((rows, envs, 4), np.float32)
+        self.features = np.empty((rows, envs, 12), np.float32)
         self.weights = np.empty((rows, envs), np.float32)
         self.starts = np.empty((rows, envs), np.int64)
         self.rows, self.envs, self.stack = rows, envs, stack
         self.next_start = np.zeros(envs, np.int64)
         self.count = 0
 
-    def append(self, frame, labels, confidence, ended):
+    def append(self, frame, labels, features, confidence, ended):
         index = self.count % self.rows
         self.frames[index] = frame
         self.sticks[index] = labels
+        self.features[index] = features
         self.weights[index] = confidence
         self.starts[index] = self.next_start
         self.count += 1
@@ -41,7 +48,45 @@ class ExpertReplay:
         indexes = row[:, None] + np.arange(1 - self.stack, 1)
         indexes = np.maximum(indexes, np.maximum(first, self.starts[row % self.rows, env])[:, None])
         return (self.frames[indexes % self.rows, env[:, None]],
-                self.sticks[row % self.rows, env], self.weights[row % self.rows, env])
+                self.sticks[row % self.rows, env], self.features[row % self.rows, env],
+                self.weights[row % self.rows, env])
+
+
+REPLAY_FIELDS = ("frames", "sticks", "features", "weights", "starts")
+
+
+def save_school(path, agent, aux, optimizer, buffer, rng, progress):
+    payload = {
+        "agent": agent.weights(), "aux": aux.state_dict(), "optimizer": optimizer.state_dict(),
+        "progress": progress, "count": buffer.count, "layout": (tuple(buffer.frames.shape), buffer.stack),
+        "numpy_rng": rng.bit_generator.state, "torch_rng": torch.get_rng_state(),
+        "cuda_rng": torch.cuda.get_rng_state_all() if agent.device == "cuda" else [],
+    }
+    with checkpoint.atomic_archive(path) as archive:
+        data = BytesIO()
+        torch.save(payload, data)
+        archive.writestr("school.pt", data.getbuffer())
+        for field in REPLAY_FIELDS:
+            checkpoint.write_array(archive, field, getattr(buffer, field)[:min(buffer.count, buffer.rows)])
+
+
+def restore_school(path, agent, aux, optimizer, buffer, rng):
+    with ZipFile(path) as archive:
+        payload = torch.load(BytesIO(archive.read("school.pt")), map_location="cpu", weights_only=True)
+        if payload["layout"] != (tuple(buffer.frames.shape), buffer.stack):
+            raise ValueError("Use the original environment, replay and frame-stack settings to resume.")
+        buffer.count = payload["count"]
+        for field in REPLAY_FIELDS:
+            getattr(buffer, field)[:min(buffer.count, buffer.rows)] = checkpoint.read_array(archive, field)
+        buffer.next_start.fill(buffer.count)
+    agent.set_weights(payload["agent"])
+    aux.load_state_dict(payload["aux"])
+    optimizer.load_state_dict(payload["optimizer"])
+    rng.bit_generator.state = payload["numpy_rng"]
+    torch.set_rng_state(payload["torch_rng"])
+    if agent.device == "cuda" and payload["cuda_rng"]:
+        torch.cuda.set_rng_state_all(payload["cuda_rng"])
+    return payload["progress"]
 
 
 def evaluate_student(agent, env, stack, round_no, episodes, teacher=False):
@@ -78,37 +123,40 @@ def evaluate_student(agent, env, stack, round_no, episodes, teacher=False):
     }
 
 
-def training_reset(env, index, rng):
+def training_reset(env, index, rng, target):
     breakup = .18 if rng.random() < .25 else 0.
     video_seed = int(rng.integers(1 << 32))
     exposure = float(rng.uniform(.82, 1.18))
-    if index == 0 or rng.random() < .25:
+    if index % 4 < 2:
         return env.ground_start(side=rng.uniform(-.25, .25), exposure=exposure,
                                 breakup=breakup, video_seed=video_seed)
-    if rng.random() < .45:
-        gate = int(rng.choice([0, 3, 4, 5, 6, 7, 8, 9, 10]))
+    gate = (target - 1) % env.lib.sim_gate_count()
+    if index % 4 == 2 and target > 1:
+        gate = (gate - 1) % env.lib.sim_gate_count()
         return env.after_gate(gate, side=rng.uniform(-.20, .20), height=rng.uniform(-.17, .17),
                               speed=rng.uniform(.5, 3.), exposure=exposure, breakup=breakup, video_seed=video_seed)
-    return env.reset(int(rng.integers(env.lib.sim_gate_count())), side=rng.uniform(-.38, .38),
+    return env.reset(gate, side=rng.uniform(-.38, .38),
                      height=rng.uniform(-.26, .26), exposure=exposure, breakup=breakup, video_seed=video_seed)
 
 
-def collect(envs, workers, agent, buffer, obs, rng, ticks, teacher_probability):
-    n_gates = envs[0].lib.sim_gate_count() * 2
+def collect(envs, workers, agent, buffer, obs, rng, ticks, teacher_probability, target, publisher=None):
     ended = np.zeros(len(envs), dtype=bool)
     authority = np.ones(len(envs), dtype=bool)
     accidents = 0
     for tick in range(ticks):
         labels = np.asarray([env.expert_action() for env in envs], dtype=np.float32)
+        features = np.asarray([env.expert_features() for env in envs], dtype=np.float32)
         if teacher_probability >= 1.:
+            assisted = np.ones(len(envs), dtype=bool)
             action = labels.copy()
         else:
             if tick % 6 == 0:
                 authority = rng.random(len(envs)) < teacher_probability
             student = agent.action(obs)
             errors = np.abs(student - labels).max(axis=1)
-            intervene = (errors > .48) & (rng.random(len(envs)) < .72)
-            action = np.where((authority | intervene)[:, None], labels, student)
+            intervene = (errors > .48) & (rng.random(len(envs)) < .55)
+            assisted = authority | intervene
+            action = np.where(assisted[:, None], labels, student)
         # Small disturbances create new camera states for exact corrective labels.
         if tick % 7 in (0, 1):
             action = (action + rng.normal(0., [.025, .014, .04, .04], action.shape)).clip(-1, 1).astype(np.float32)
@@ -117,11 +165,15 @@ def collect(envs, workers, agent, buffer, obs, rng, ticks, teacher_probability):
         for i, task in enumerate(tasks):
             image, _, status = task.result()
             gates, _ = envs[i].lap_stats()
-            ended[i] = bool(status) or gates >= n_gates
+            threshold = target if i % 4 < 2 else 2
+            ended[i] = bool(status) or gates >= threshold
             accidents += int(status == 1)
-            following[i] = training_reset(envs[i], i, rng) if ended[i] else image
-        emphasis = 1. + .65 * np.abs(labels[:, [0, 2, 3]]).max(axis=1)
-        buffer.append(obs[:, -1], labels, emphasis, ended)
+            if i == 0 and publisher is not None:
+                publisher.show(image, gates=gates, step=buffer.count * len(envs),
+                               phase="IMITATION", status=status, driver="Teacher" if assisted[0] else "Student")
+            following[i] = training_reset(envs[i], i, rng, target) if ended[i] else image
+        emphasis = 1. + 1.25 * np.abs(labels[:, [0, 2, 3]]).max(axis=1)
+        buffer.append(obs[:, -1], labels, features, emphasis, ended)
         obs[:, :-1] = obs[:, 1:]
         obs[:, -1] = following
         obs[ended] = following[ended, None]
@@ -132,7 +184,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--device", choices=("cuda", "cpu"), default="cuda")
-    parser.add_argument("--rounds", type=int, default=48)
+    parser.add_argument("--rounds", type=int, default=0, help="Limit rounds for a smoke test. Zero runs until qualified.")
     parser.add_argument("--envs", type=int, default=8)
     parser.add_argument("--collect-ticks", type=int, default=600)
     parser.add_argument("--updates", type=int, default=360)
@@ -140,10 +192,18 @@ def main():
     parser.add_argument("--capacity", type=int, default=56_000)
     parser.add_argument("--stack", type=int, default=8)
     parser.add_argument("--eval-episodes", type=int, default=3)
+    parser.add_argument("--initialize", type=Path)
+    parser.add_argument("--resume", type=Path)
+    parser.add_argument("--live", action="store_true")
+    parser.add_argument("--save-every", type=int, default=10)
+    parser.add_argument("--consolidation-rounds", type=int, default=6)
     parser.add_argument("--teacher-only", action="store_true")
     args = parser.parse_args()
-    if min(args.rounds, args.envs, args.collect_ticks, args.updates, args.batch, args.stack, args.eval_episodes) <= 0:
+    if min(args.envs, args.collect_ticks, args.updates, args.batch, args.stack, args.eval_episodes,
+           args.save_every) <= 0 or min(args.rounds, args.consolidation_rounds) < 0:
         parser.error("Training counts must be positive.")
+    if args.initialize and args.resume:
+        parser.error("Choose initialization or resumption.")
     if args.capacity < args.envs * args.stack:
         parser.error("Replay capacity must fit one observation stack per environment.")
     if args.device == "cuda" and not torch.cuda.is_available():
@@ -166,26 +226,45 @@ def main():
             return
 
         agent = Agent(args.stack, args.device, lib.sim_hover_stick())
-        optimizer = torch.optim.AdamW([*agent.encoder.parameters(), *agent.actor.parameters()], lr=1.5e-4)
+        auxiliary = torch.nn.Linear(128, 12).to(args.device)
+        optimizer = torch.optim.AdamW(
+            [*agent.encoder.parameters(), *agent.actor.parameters(), *auxiliary.parameters()],
+            lr=1.0e-4 if args.initialize else 1.5e-4,
+        )
         buffer = ExpertReplay(args.capacity // args.envs, args.envs, height, width, args.stack)
+        best = first_full = None
+        qualified = first_round = 0
+        target = 1
+        if args.initialize:
+            agent.load(args.initialize)
+        if args.resume:
+            progress = restore_school(args.resume, agent, auxiliary, optimizer, buffer, rng)
+            best, first_full = progress["best"], progress["first_full"]
+            qualified, first_round, target = progress["qualified"], progress["round"], progress["target"]
         envs = [Environment(lib, width, height) for _ in range(args.envs)]
-        obs = np.asarray([fresh_stack(training_reset(env, i, rng), args.stack) for i, env in enumerate(envs)])
-        best = None
-        qualified = 0
+        obs = np.asarray([fresh_stack(training_reset(env, i, rng, target), args.stack) for i, env in enumerate(envs)])
+        publisher = FramePublisher(args.out) if args.live else None
+        n_gates = lib.sim_gate_count() * 2
         started = time.monotonic()
         try:
             with ThreadPoolExecutor(max_workers=args.envs) as workers, (
                 args.out / "metrics.jsonl"
             ).open("a", encoding="utf-8", buffering=1) as log:
-                for round_no in range(1, args.rounds + 1):
-                    teacher_probability = 1. if round_no <= 2 else max(.24, .96 - .022 * (round_no - 2))
-                    accidents = collect(envs, workers, agent, buffer, obs, rng, args.collect_ticks, teacher_probability)
+                for round_no in count(first_round + 1):
+                    if args.rounds and round_no > args.rounds:
+                        break
+                    teacher_probability = max(.19, .57 - .012 * (round_no - 1))
+                    accidents = collect(envs, workers, agent, buffer, obs, rng, args.collect_ticks,
+                                        teacher_probability, target, publisher)
                     for _ in range(args.updates):
-                        frames, labels, weights = buffer.sample(rng, args.batch)
+                        frames, labels, features, weights = buffer.sample(rng, args.batch)
                         pixels = random_shift(pixel_tensor(frames, args.device).float() / 255. - .5, pad=1)
                         exposure = torch.empty((args.batch, 1, 1, 1), device=args.device).uniform_(.92, 1.08)
-                        action = agent.actor(agent.encoder((pixels * exposure).clamp(-.5, .5))).tanh()
-                        loss = stick_loss(action, labels, weights)
+                        embedding = agent.encoder((pixels * exposure).clamp(-.5, .5))
+                        action = agent.actor(embedding).tanh()
+                        pose_loss = torch.nn.functional.smooth_l1_loss(
+                            auxiliary(embedding), torch.from_numpy(features).to(args.device))
+                        loss = stick_loss(action, labels, weights) + .4 * pose_loss
                         optimizer.zero_grad(set_to_none=True)
                         loss.backward()
                         torch.nn.utils.clip_grad_norm_([*agent.encoder.parameters(), *agent.actor.parameters()], 5.)
@@ -193,17 +272,31 @@ def main():
 
                     result = evaluate_student(agent, test_env, args.stack, round_no, args.eval_episodes)
                     result.update(round=round_no, transitions=buffer.count * args.envs,
+                                  target_gate=target,
                                   teacher_probability=teacher_probability, collection_crashes=accidents,
                                   imitation_loss=float(loss.detach()), seconds=round(time.monotonic() - started, 1))
                     print(json.dumps(result), flush=True)
                     log.write(json.dumps(result) + "\n")
                     agent.save(args.out / "latest.pt")
-                    rank = (result["two_lap_rate"], min(result["gates"]), np.mean(result["gates"]), -result["crash_rate"])
+                    rank = (result["two_lap_rate"], min(result["gates"]), float(np.mean(result["gates"])), -result["crash_rate"])
                     if best is None or rank > best:
                         agent.save(args.out / "best.pt")
                         best = rank
                     qualified = qualified + 1 if result["two_lap_rate"] == 1. else 0
-                    if qualified >= 2:
+                    if result["two_lap_rate"] == 1. and first_full is None:
+                        first_full = round_no
+                        print(json.dumps({"first_full_round": first_full,
+                                          "consolidation_rounds": args.consolidation_rounds}), flush=True)
+                    if min(result["gates"]) >= target and target < n_gates:
+                        target = min(n_gates, min(result["gates"]) + 1)
+                        for i, env in enumerate(envs):
+                            obs[i] = fresh_stack(training_reset(env, i, rng, target), args.stack)
+                        buffer.next_start.fill(buffer.count)
+                    if round_no == 1 or round_no % args.save_every == 0 or round_no == args.rounds:
+                        save_school(args.out / "imitation-state.zip", agent, auxiliary, optimizer, buffer, rng,
+                                    {"round": round_no, "target": target, "best": best,
+                                     "first_full": first_full, "qualified": qualified})
+                    if qualified >= 2 and round_no - first_full >= args.consolidation_rounds:
                         agent.save(args.out / "qualified.pt")
                         print(json.dumps({"qualified": True, "verified_two_lap_evaluations": 2 * args.eval_episodes}), flush=True)
                         break

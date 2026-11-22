@@ -1,4 +1,5 @@
 """Atomic resumable checkpoints for the optimizer, RNGs and transition replay."""
+from contextlib import contextmanager
 from io import BytesIO
 import os
 from tempfile import NamedTemporaryFile
@@ -24,6 +25,22 @@ def read_array(archive, name):
         return np.load(stream, allow_pickle=False)
 
 
+@contextmanager
+def atomic_archive(path):
+    with NamedTemporaryFile(dir=path.parent, prefix=path.name, suffix=".tmp", delete=False) as temp:
+        temporary = temp.name
+        try:
+            with zipfile.ZipFile(temp, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=1) as archive:
+                yield archive
+            temp.flush()
+            os.fsync(temp.fileno())
+            os.replace(temporary, path)
+        finally:
+            if os.path.exists(temporary):
+                os.unlink(temporary)
+
+
+
 def save(path, agent, replay, state, last_frames, demonstrations):
     payload = {
         "version": 1,
@@ -40,26 +57,17 @@ def save(path, agent, replay, state, last_frames, demonstrations):
     }
     occupied = min(replay.count, replay.rows)
     keys = list(replay.truncated_frames)
-    with NamedTemporaryFile(dir=path.parent, prefix=path.name, suffix=".tmp", delete=False) as temp:
-        temporary = temp.name
-        try:
-            with zipfile.ZipFile(temp, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=1) as archive:
-                weights = BytesIO()
-                torch.save(payload, weights)
-                archive.writestr("training.pt", weights.getbuffer())
-                for name in ROW_ARRAYS:
-                    write_array(archive, name, getattr(replay, name)[:occupied])
-                write_array(archive, "next_start", replay.next_start)
-                write_array(archive, "last_frames", last_frames)
-                write_array(archive, "truncated_keys", np.array(keys, np.int64).reshape(-1, 2))
-                if keys:
-                    write_array(archive, "truncated_frames", np.stack([replay.truncated_frames[key] for key in keys]))
-            temp.flush()
-            os.fsync(temp.fileno())
-            os.replace(temporary, path)
-        finally:
-            if os.path.exists(temporary):
-                os.unlink(temporary)
+    with atomic_archive(path) as archive:
+        weights = BytesIO()
+        torch.save(payload, weights)
+        archive.writestr("training.pt", weights.getbuffer())
+        for name in ROW_ARRAYS:
+            write_array(archive, name, getattr(replay, name)[:occupied])
+        write_array(archive, "next_start", replay.next_start)
+        write_array(archive, "last_frames", last_frames)
+        write_array(archive, "truncated_keys", np.array(keys, np.int64).reshape(-1, 2))
+        if keys:
+            write_array(archive, "truncated_frames", np.stack([replay.truncated_frames[key] for key in keys]))
 
 
 def load(path, agent, replay, demonstrations):

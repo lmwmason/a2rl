@@ -114,6 +114,23 @@ pub unsafe extern "C" fn sim_expert_action(env: *mut Environment, out: *mut [f32
 }
 
 #[no_mangle]
+pub unsafe extern "C" fn sim_expert_features(env: *const Environment, out: *mut [f32; 12]) {
+    let env = &*env;
+    let drone = &env.race.drone;
+    let inverse = drone.rotation.conjugate();
+    let target = env.race.gates[env.race.next_gate()].center - drone.position;
+    let vectors = [
+        (inverse * target).normalize_or_zero(),
+        inverse * glam::Vec3::Z,
+        (inverse * drone.velocity / 10.).clamp_length_max(2.),
+        (drone.omega / 5.).clamp_length_max(2.),
+    ];
+    for (i, value) in vectors.into_iter().enumerate() {
+        (&mut *out)[i * 3..i * 3 + 3].copy_from_slice(&value.to_array());
+    }
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn sim_step(
     env: *mut Environment,
     action: *const [f32; 4],

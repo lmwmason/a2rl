@@ -1,4 +1,5 @@
 import unittest
+from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -7,6 +8,7 @@ import numpy as np
 from training.demonstrations import Clip
 from training.replay import Replay
 from training.sim import Environment, load_sim
+from training.telemetry import FramePublisher, read_packet
 
 
 class ReplayTest(unittest.TestCase):
@@ -56,6 +58,17 @@ class DemonstrationTest(unittest.TestCase):
         image, label, _ = clip.batch(np.array([1, 2, 3]))
         np.testing.assert_array_equal(image[:, :, 0, 0, 0], [[0, 1], [2, 2], [2, 3]])
         np.testing.assert_array_equal(label, actions[1:])
+
+
+class TelemetryTest(unittest.TestCase):
+    def test_live_frame_preserves_driver_and_rgb(self):
+        with TemporaryDirectory() as directory:
+            publisher = FramePublisher(directory)
+            image = np.arange(18, dtype=np.uint8).reshape(2, 3, 3)
+            publisher.show(image, gates=2, step=96, phase="IMITATION", status=0, driver="Student")
+            info, pixels = read_packet(BytesIO(publisher.path.read_bytes()))
+        self.assertEqual((info["width"], info["height"], info["driver"], info["gates"]), (3, 2, "Student", 2))
+        self.assertEqual(pixels, image.tobytes())
 
 
 class EnvironmentTest(unittest.TestCase):

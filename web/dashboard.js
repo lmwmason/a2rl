@@ -24,7 +24,8 @@ async function dataFile(name, manifestUrl) {
   const urls = manifestUrl ? [new URL(name, manifestUrl)] : feeds.map((feed) => feed + name);
   for (const url of urls) {
     try {
-      const response = await fetch(url, { cache: "no-store", credentials: "omit", signal: AbortSignal.timeout(5000) });
+      const timeout = manifestUrl ? 90_000 : 5_000;
+      const response = await fetch(url, { cache: "no-store", credentials: "omit", signal: AbortSignal.timeout(timeout) });
       if (response.ok) return response;
     } catch {
       // Try the GPU-hosted feed if the managed feed is unavailable.
@@ -105,7 +106,7 @@ function renderStatus(info) {
   const connected = info.connection === "connected" && Date.now() / 1000 - info.snapshot_at < 15;
   const speedTraining = info.phase === "SPEED RL";
   if (connected) {
-    pill("connection", info.active ? "GPU online · Training" : "GPU online · Training stopped", info.active ? "live" : "");
+    pill("connection", info.active ? "GPU online · Training" : "GPU online · Training idle", info.active ? "live" : "");
   } else {
     pill("connection", info.connection === "connecting" ? "Connecting to GPU" : "GPU feed offline", "stale");
   }

@@ -6,7 +6,7 @@ An indoor FPV racing research project with a Rust simulator for batch experiment
 
 ![Rust FPV frame rendered from an Elodin takeoff on the 2026 race reconstruction](docs/screenshots/elodin-2026-fpv.png)
 
-The public dashboard shows the replay, its simulator, and evaluation histories. The saved **Flow teacher evaluation** shows one complete Rust simulation race and the results of the teacher's validation batch. Its Mode 2 overlay follows the replay timestamp, with yaw and throttle on the left and roll and pitch on the right. The overlay is a dashboard control display sourced from the recorded stick commands. The status panel shows **No live training** when no live run is connected.
+The public dashboard shows the replay, its simulator, and evaluation histories. The saved **Flow teacher evaluation** shows a complete 2026 practice race flown in Elodin with Betaflight SITL. Its Mode 2 overlay follows the RC channels sent to Betaflight, with yaw and throttle on the left and roll and pitch on the right. The status panel shows **No live training** when no live run is connected.
 
 ## Fly the course
 
@@ -74,7 +74,7 @@ Use a new run directory when changing courses or the vehicle model. Existing pol
 
 ### Elodin and Betaflight flight validation
 
-The Elodin runner uses the A2RL 2025 reference airframe and supports the 2025 and 2026 practice layouts. Betaflight SITL runs its rate controller and mixer at 1 kHz in lockstep with the plant. The policy reads 30 Hz FPV and synchronized body-frame gyro and acceleration. It emits Mode 2 channels in AETR order. Elodin passes these channels to the firmware's SITL receiver via UDP. Batch training currently uses the Rust learner. An Elodin rollout is a separate validation run.
+The Elodin runner uses the A2RL 2025 reference airframe and supports the 2025 and 2026 practice layouts. Betaflight SITL runs its rate controller and mixer at 1 kHz in lockstep with the plant. The policy reads 30 Hz FPV and synchronized body-frame gyro and acceleration. It emits Mode 2 channels in AETR order. Elodin passes these channels to the firmware's SITL receiver via UDP. The 2026 teacher produces demonstration files for offline imitation, and learned pilots can be evaluated in the same Elodin runner. The existing batch RL environment still uses the native Rust simulator.
 
 Set `A2RL_COURSE=2026-practice` to use the 2026 race reconstruction. The horizontal gate centers and headings come from Figure 5 in FlyBy's competition flight report. Figure 2 shows the two double apertures used for the Split-S and Ladder. The simulated sequence scores 12 apertures per lap. The organizer describes a 14-gate arena. The model uses estimated gate heights, start location, LED dimensions, and hall bounds. [FlyBy flight data and figures](https://www.imavs.org/pdf/imav.2026.1) · [Organizer race page](https://a2rl.io/autonomous-drone-race) · [Organizer fixtures photo](https://a2rl.io/news/45/a2rl-drone-championship-sets-the-pace-for-ai-in-autonomous-fligh)
 
@@ -98,19 +98,29 @@ export ELODIN_ASSETS_DIR="$A2RL_ELODIN_ROOT/assets"
 export UV_NO_SYNC=1
 ```
 
-Install the Elodin 0.17.3 CLI, then run a short takeoff check or evaluate an RGB+IMU checkpoint:
+Install the Elodin 0.17.3 CLI, then record a complete teacher rollout or evaluate an RGB+IMU checkpoint:
 
 ```bash
 a2rl_root="$PWD"
 cd "$A2RL_ELODIN_ROOT"
-A2RL_COURSE=2026-practice A2RL_ELODIN_SECONDS=1.4 A2RL_ELODIN_DB="$(mktemp -d)/flight" \
-  A2RL_ELODIN_FPV="$a2rl_root/runs/validation/elodin-takeoff.mp4" \
+A2RL_COURSE=2026-practice A2RL_ELODIN_SECONDS=45 A2RL_ELODIN_DB="$(mktemp -d)/flight" \
+  A2RL_ELODIN_FLOW_TEACHER=1 \
+  A2RL_ELODIN_FPV="$a2rl_root/runs/elodin/teacher.mp4" \
+  A2RL_ELODIN_DEMONSTRATION="$a2rl_root/runs/elodin/teacher.npz" \
   elodin run "$a2rl_root/tools/elodin_a2rl.py"
 A2RL_COURSE=2026-practice A2RL_ELODIN_POLICY="$a2rl_root/runs/mck-imu-racing-v1/best.pt" \
   A2RL_ELODIN_DB="$(mktemp -d)/flight" elodin editor "$a2rl_root/tools/elodin_a2rl.py"
 ```
 
-Use a fresh `A2RL_ELODIN_DB` for each rollout. FFmpeg records the shared camera when `A2RL_ELODIN_FPV` is set. `A2RL_FPV_EXPOSURE`, `A2RL_FPV_BREAKUP`, and `A2RL_FPV_SEED` set the camera effect parameters. The runner reports contacts and ordered passes. A sustained two-lap flight in Elodin and full flight-log agreement for the target airframe remain unverified. [Elodin release](https://github.com/elodin-sys/elodin/releases/tag/v0.17.3) · [Upstream lockstep bridge](https://github.com/elodin-sys/ai-grand-prix/blob/13f9f9e3d5a3130f0ce0b65500d9f309cc1e11b2/ARCHITECTURE.md)
+Use a fresh `A2RL_ELODIN_DB` for each rollout. The runner loads the checked-in [Betaflight SITL preset](assets/a2rl-betaflight-sitl.cli) into a fresh firmware working directory. FFmpeg records the shared camera when `A2RL_ELODIN_FPV` is set. The replay has synchronized RC and race-result JSON sidecars. The demonstration and its IMU sidecar are saved only after two clean laps. `A2RL_ELODIN_START_SIDE` sets the lateral start offset in meters. `A2RL_FPV_EXPOSURE`, `A2RL_FPV_BREAKUP`, and `A2RL_FPV_SEED` set the camera effect parameters. Full flight-log agreement for the target airframe remains unverified. [Elodin release](https://github.com/elodin-sys/elodin/releases/tag/v0.17.3) · [Upstream lockstep bridge](https://github.com/elodin-sys/ai-grand-prix/blob/13f9f9e3d5a3130f0ce0b65500d9f309cc1e11b2/ARCHITECTURE.md)
+
+To train from the recorded Elodin teacher and real pilot data without using a Rust rollout for model selection:
+
+```bash
+python -m training.imitate --device cuda --offline --imu --stack 8 \
+  --real runs/mck/train/*.npz --held-out runs/mck/holdout/flight-15p-trackRATM.npz \
+  --sim runs/elodin/teacher.npz --out runs/elodin-imitation
+```
 
 ## Policy and rewards
 

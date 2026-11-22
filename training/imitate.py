@@ -1,4 +1,4 @@
-"""Pretrain the RGB-only Mode 2 actor on actual and simulator FPV demonstrations."""
+"""Pretrain the Mode 2 actor on recorded FPV demonstrations."""
 import argparse
 import json
 from pathlib import Path
@@ -34,6 +34,8 @@ def main():
     parser.add_argument("--seed", type=int, default=21)
     parser.add_argument("--stack", type=int, default=4, help="Number of consecutive RGB frames per observation.")
     parser.add_argument("--official-eval", action="store_true")
+    parser.add_argument("--offline", action="store_true",
+                        help="Select checkpoints by held-out stick error or loss, without a Rust rollout.")
     parser.add_argument("--imu", action="store_true", help="Fuse synchronized gyro and accelerometer samples with RGB.")
     parser.add_argument("--backbone", choices=("cnn", "mobilenet-v3-small"), default="cnn")
     parser.add_argument("--eval-every", type=int, default=200)
@@ -41,6 +43,8 @@ def main():
     args = parser.parse_args()
     if min(args.updates, args.batch, args.stack, args.eval_every, args.eval_episodes) <= 0:
         parser.error("Counts must be positive.")
+    if args.offline and args.official_eval:
+        parser.error("Official Rust evaluation is unavailable in offline mode.")
     if args.device == "cuda" and not torch.cuda.is_available():
         raise SystemExit("CUDA is unavailable in this Python environment.")
     torch.manual_seed(args.seed)
@@ -53,14 +57,14 @@ def main():
     agent = Agent(stack, args.device, lib.sim_hover_stick(), with_imu=args.imu,
                   backbone=args.backbone, pretrained=args.backbone != "cnn")
     demos = Demonstrations(args.real, args.sim, stack, height, width, args.seed, with_imu=args.imu)
-    if {path.resolve() for path in args.real} & {path.resolve() for path in args.held_out}:
+    if {path.resolve() for path in args.real + args.sim} & {path.resolve() for path in args.held_out}:
         parser.error("Hold out complete flights from training.")
     held_out = [Clip(path, stack, height, width, args.imu) for path in args.held_out]
     parameters = [*agent.encoder.parameters(), *agent.actor.parameters()]
     if agent.imu_encoder is not None:
         parameters.extend(agent.imu_encoder.parameters())
     optimizer = torch.optim.AdamW(parameters, lr=3e-4)
-    run = Environment(lib, width, height)
+    run = None if args.offline else Environment(lib, width, height)
     args.out.mkdir(parents=True, exist_ok=True)
     best_rank = None
     try:
@@ -79,24 +83,29 @@ def main():
                 optimizer.step()
                 if step % args.eval_every and step != args.updates:
                     continue
-                metrics = evaluate(agent, run, stack, args.eval_episodes, official=args.official_eval)
                 real_error = held_out_mae(agent, held_out, args.batch)
+                if run is None:
+                    metrics = {}
+                    rank = (-float(np.mean(real_error)) if real_error is not None else -float(loss.detach()),)
+                else:
+                    metrics = evaluate(agent, run, stack, args.eval_episodes, official=args.official_eval)
+                    metrics["best_two_lap_s"] = metrics["official_best_seconds"]
+                    record = metrics["best_lap_seconds"]
+                    rank = (metrics["two_lap_rate"], metrics["lap_rate"], metrics["gates_mean"],
+                            -metrics["crash_rate"], -record if record else 0., metrics["return"])
+                    if not args.sim and real_error is not None:
+                        rank = (-float(np.mean(real_error)),)
                 metrics.update(update=step, steps=step, round=(step + args.eval_every - 1) // args.eval_every,
-                               bc_loss=float(loss.detach()), real_holdout_mae=real_error,
-                               best_two_lap_s=metrics["official_best_seconds"])
+                               bc_loss=float(loss.detach()), real_holdout_mae=real_error)
                 print(json.dumps(metrics), flush=True)
                 log.write(json.dumps(metrics) + "\n")
                 agent.save(args.out / "latest.pt")
-                record = metrics["best_lap_seconds"]
-                rank = (metrics["two_lap_rate"], metrics["lap_rate"], metrics["gates_mean"],
-                        -metrics["crash_rate"], -record if record else 0., metrics["return"])
-                if not args.sim and real_error is not None:
-                    rank = (-float(np.mean(real_error)),)
                 if best_rank is None or rank > best_rank:
                     agent.save(args.out / "best.pt")
                     best_rank = rank
     finally:
-        run.close()
+        if run is not None:
+            run.close()
 
 
 if __name__ == "__main__":

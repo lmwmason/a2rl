@@ -2,12 +2,12 @@
   "archived": true,
   "phase": "TEACHER",
   "course": "2026-practice",
-  "physics_engine": "rust",
+  "physics_engine": "elodin",
   "gates_per_race": 24,
   "kind": "teacher-evaluation",
   "gates": 24,
   "status": 4,
-  "version": "1795353677398029507",
-  "url": "replay-1795353677398029507.mp4",
-  "controls_url": "controls-1795353677398029507.json"
+  "version": "1795354387977036793",
+  "url": "replay-1795354387977036793.mp4",
+  "controls_url": "controls-1795354387977036793.json"
 }

@@ -1,6 +1,7 @@
 """Run the A2RL reference course and airframe in the pinned Elodin/Betaflight harness."""
 from dataclasses import replace
 import ctypes as ct
+import json
 from math import cos, radians, sin
 import os
 from pathlib import Path
@@ -83,7 +84,7 @@ def configure_plant(physics, profile):
     physics.create_apply_forces_system = forces_system
 
 
-def configure_course(course, lib, season2, asset, finish_capture):
+def configure_course(course, lib, season2, asset, camera_feed, report_path):
     import numpy as np
 
     pointer = ct.POINTER(ct.c_float)
@@ -140,7 +141,21 @@ def configure_course(course, lib, season2, asset, finish_capture):
         finished = last + 1 == len(path)
         official = times[last] - times[0] if finished else None
         print(f"[A2RL] gates={last + 1}/{len(path)} contact={contact} official_seconds={official}", flush=True)
-        finish_capture()
+        if camera_feed:
+            camera_feed.close()
+            if finished and not contact:
+                camera_feed.save_demonstration()
+        if report_path:
+            report_path.write_text(json.dumps({
+                "physics_engine": "elodin",
+                "course": "2026-practice" if season2 else "2025",
+                "gates": last + 1,
+                "gates_per_race": len(path),
+                "contact": contact,
+                "finished": finished,
+                "official_seconds": official,
+                "gate_times": times[:last + 1],
+            }, indent=2) + "\n")
 
     course.detect_gate_pass = detect
     course.print_summary = summary
@@ -179,7 +194,11 @@ def main():
         lib.sim_course_gate_half_depth.restype = ct.c_float
         write_gate(assets / asset, lib.sim_course_gate_half_depth(season2))
     path = os.environ.get("A2RL_ELODIN_FPV")
-    if path or os.environ.get("A2RL_ELODIN_POLICY"):
+    teacher = os.environ.get("A2RL_ELODIN_FLOW_TEACHER") == "1"
+    dataset = os.environ.get("A2RL_ELODIN_DEMONSTRATION")
+    if dataset and (not teacher or Path(dataset).suffix != ".npz"):
+        raise ValueError("A2RL_ELODIN_DEMONSTRATION requires the flow teacher and a .npz path.")
+    if path or dataset or os.environ.get("A2RL_ELODIN_POLICY"):
         if not hasattr(lib, "sim_render_pose"):
             raise RuntimeError("Rebuild the simulator library for the shared FPV camera.")
         elodin_policy.camera = elodin_policy.CameraFeed(
@@ -187,10 +206,13 @@ def main():
             float(os.environ.get("A2RL_FPV_BREAKUP", "0")),
             float(os.environ.get("A2RL_FPV_EXPOSURE", "1")),
             int(os.environ.get("A2RL_FPV_SEED", "1")),
+            Path(dataset).expanduser().resolve() if dataset else None,
         )
-    finish_capture = elodin_policy.camera.close if elodin_policy.camera else lambda: None
-    elodin_policy.contact, start, heading = configure_course(course, lib, season2, asset, finish_capture)
-    if os.environ.get("A2RL_ELODIN_FLOW_TEACHER") == "1":
+    report = Path(path).expanduser().resolve().with_suffix(".result.json") if path else None
+    elodin_policy.contact, start, heading = configure_course(
+        course, lib, season2, asset, elodin_policy.camera, report,
+    )
+    if teacher:
         if os.environ.get("A2RL_ELODIN_POLICY"):
             raise ValueError("Select one pilot for Elodin validation.")
         elodin_policy.configure_expert(lib, season2)
@@ -205,6 +227,10 @@ def main():
     cfg.angular_drag = np.array(profile["angular_drag"])
     cfg.gravity = 9.80665
     cfg.initial_position = np.array([*start[:2], .205])
+    side = float(os.environ.get("A2RL_ELODIN_START_SIDE", "0"))
+    if not np.isfinite(side):
+        raise ValueError("A2RL_ELODIN_START_SIDE must be finite.")
+    cfg.initial_position += side * np.array([-sin(heading), cos(heading), 0.])
     cfg.initial_quaternion = np.array([0., 0., sin(heading / 2), cos(heading / 2)])
     cfg.ground_level = .205
     cfg.simulation_time = float(os.environ.get("A2RL_ELODIN_SECONDS", "120"))
@@ -212,6 +238,7 @@ def main():
         raise ValueError("A2RL_ELODIN_SECONDS must be at least 1 second.")
     configure_plant(physics, profile)
     elodin_policy.hover = cfg.hover_throttle
+    elodin_policy.control_rate = cfg.fpv_rate
     camera.CAM_WIDTH, camera.CAM_HEIGHT = profile["camera_width"], profile["camera_height"]
     tilt = profile["camera_up_tilt_deg"]
     if season2:
@@ -242,6 +269,28 @@ def main():
     # Upstream still owns its SITL recipe. Skip only its broad process cleanup.
     world_run = el.World.run
     world_schematic = el.World.schematic
+    world_recipe = el.World.recipe
+
+    def recipe(world, _original):
+        firmware = root / "betaflight/obj/main/betaflight_SITL.elf"
+        cli = ROOT / "assets/a2rl-betaflight-sitl.cli"
+        work = Path(os.environ.get("A2RL_ELODIN_DB", ROOT / "runs/elodin/flight")).expanduser().resolve().parent
+        work.mkdir(parents=True, exist_ok=True)
+        launch = """dir=$(mktemp -d "$3/.betaflight-XXXXXX")
+cd "$dir"
+if ! "$1" --config "$2" > configuration.log 2>&1 ||
+   grep -q '###ERROR IN' configuration.log ||
+   ! test -s eeprom.bin; then
+    cat configuration.log >&2
+    exit 1
+fi
+exec "$1"
+"""
+        return world_recipe(world, el.s10.PyRecipe.process(
+            name="Betaflight SITL", cmd="sh",
+            args=["-eu", "-c", launch, "a2rl-sitl", str(firmware), str(cli), str(work)],
+            cwd=str(work),
+        ))
 
     def schematic(world, content, name):
         # The upstream Crazyflie preview mesh would block this aircraft's FPV image.
@@ -261,6 +310,7 @@ def main():
 
     el.World.run = run
     el.World.schematic = schematic
+    el.World.recipe = recipe
     sys.argv.append("--no-s10")
     os.chdir(root)
     runpy.run_path(str(source), run_name="__main__")

@@ -201,8 +201,10 @@ function startReplay() {
     const firmwareCheck = playing.kind === "takeoff-check";
     const teacher = playing.kind === "teacher-evaluation";
     const season = playing.course === "2026-practice" ? "2026-practice" : "2025";
+    const progress = playing.phase === "SPEED RL" ? playing.steps : playing.round;
     download.download = teacher ? `a2rl-${season}-flow-teacher.mp4`
       : firmwareCheck ? `a2rl-${season}-elodin-takeoff.mp4`
+      : !Number.isFinite(progress) ? `a2rl-${season}-student-${playing.version}.mp4`
       : playing.phase === "SPEED RL" ? `a2rl-${season}-rl-${playing.steps}.mp4`
       : `a2rl-${season}-imitation-round-${playing.round}.mp4`;
     download.hidden = false;

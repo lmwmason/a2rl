@@ -14,6 +14,10 @@
       <section class="panel flight" aria-labelledby="camera-title">
         <div class="bar">
           <h2 id="camera-title">FPV replay</h2>
+          <div class="pilot-switch" role="group" aria-label="Replay pilot">
+            <button type="button" id="show-teacher" aria-pressed="true">Teacher</button>
+            <button type="button" id="show-student" aria-pressed="false">Student</button>
+          </div>
         </div>
         <div class="screen">
           <video id="fpv" muted playsinline controls hidden aria-label="FPV replay"></video>

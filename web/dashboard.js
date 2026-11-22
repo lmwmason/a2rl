@@ -19,6 +19,8 @@ const finishTrend = { values: [], key: "", speed: false };
 let playing = null;
 let pending = null;
 let displayedControl = -1;
+let pilot = "teacher";
+let selection = 0;
 const hosted = !["127.0.0.1", "localhost", "[::1]"].includes(window.location.hostname);
 const feeds = hosted ? [
   "https://beam-snapshot-down-museums.trycloudflare.com/",
@@ -37,10 +39,15 @@ async function requestData(url, video = false) {
   }
 }
 
-async function readFeed(name) {
+async function readFeed(name, view) {
+  if (view === "teacher") return requestData("/snapshot/" + name);
   const requests = feeds.map(async (feed) => {
     const response = await requestData(feed + name);
-    if (hosted && response.value.physics_engine !== "elodin") throw new Error("Elodin feed unavailable");
+    const { course, physics_engine: physics, phase, kind } = response.value;
+    if (hosted && (course !== "2026-practice" || physics !== "elodin"
+        || !["IMITATION", "SPEED RL"].includes(phase) || kind === "teacher-evaluation")) {
+      throw new Error("Student evaluation feed unavailable");
+    }
     return response;
   });
   try {
@@ -51,7 +58,7 @@ async function readFeed(name) {
     throw new Error("Training feed unavailable");
   } catch (error) {
     if (!hosted) throw error;
-    return requestData("/snapshot/" + name);
+    return requestData("/student/" + name);
   }
 }
 
@@ -248,8 +255,10 @@ function renderStatus(info) {
     row.hidden = info.phase === "VALIDATION" || (teacher && row.classList.contains("training-counter"));
   }
   setText("course", season2 ? "2026 race reconstruction" : info.course === "2025" ? "2025 baseline" : "—");
-  if (info.archived) {
-    pill("connection", "No live training", "stale");
+  if (info.pending) {
+    pill("connection", teacher ? "Loading teacher evaluation" : "Awaiting student evaluation", "stale");
+  } else if (info.archived) {
+    pill("connection", "Recorded evaluation", "stale");
   } else if (connected) {
     pill("connection", info.active ? "GPU online · Training" : "GPU online · Training idle", info.active ? "live" : "");
   } else {
@@ -311,34 +320,68 @@ function renderStatus(info) {
   }
 }
 
-async function fetchStatus() {
+async function fetchStatus(poll = true) {
+  const selected = selection;
   try {
-    const { value } = await readFeed("status.json");
-    renderStatus(value);
+    const { value } = await readFeed("status.json", pilot);
+    if (selected === selection) renderStatus(value);
   } catch {
-    pill("connection", "Waiting for training feed", "stale");
+    if (selected === selection) pill("connection", pilot === "student" ? "Awaiting student evaluation" : "Teacher unavailable", "stale");
   } finally {
-    window.setTimeout(fetchStatus, 2000);
+    if (poll) window.setTimeout(fetchStatus, 2000);
   }
 }
 
-async function fetchReplay() {
+async function fetchReplay(poll = true) {
+  const selected = selection;
+  const view = pilot;
   try {
-    const manifest = await readFeed("replay.json");
+    const manifest = await readFeed("replay.json", view);
+    if (selected !== selection) return;
     try {
-      await queueReplay(manifest);
+      await queueReplay(manifest, selected);
     } catch (error) {
-      if (!hosted || manifest.value.archived) throw error;
-      await queueReplay(await requestData("/snapshot/replay.json"));
+      if (!hosted || view !== "student" || manifest.value.archived) throw error;
+      if (selected === selection) await queueReplay(await requestData("/student/replay.json"), selected);
     }
   } catch {
-    if (!playing) setText("waiting", "Waiting for replay");
+    if (selected === selection && !playing) {
+      setText("waiting", view === "student" ? "Waiting for a student replay" : "Teacher replay unavailable");
+    }
   } finally {
-    window.setTimeout(fetchReplay, 3000);
+    if (poll) window.setTimeout(fetchReplay, 3000);
   }
 }
 
-async function queueReplay({ url, value: info }) {
+function selectPilot(view) {
+  if (pilot === view) return;
+  pilot = view;
+  selection++;
+  byId("show-teacher").setAttribute("aria-pressed", String(view === "teacher"));
+  byId("show-student").setAttribute("aria-pressed", String(view === "student"));
+  camera.pause();
+  camera.hidden = true;
+  camera.removeAttribute("src");
+  camera.load();
+  if (playing) URL.revokeObjectURL(playing.blob);
+  if (pending) URL.revokeObjectURL(pending.blob);
+  playing = pending = null;
+  byId("download-replay").hidden = true;
+  byId("mode2-sticks").hidden = true;
+  byId("replay-recorded").closest("div").hidden = true;
+  byId("waiting").hidden = false;
+  setText("waiting", "Loading replay");
+  for (const id of ["replay-stage", "flight-gates", "replay-result", "replay-physics"]) setText(id, "—");
+  renderStatus({ course: "2026-practice", pending: true, phase: view === "teacher" ? "TEACHER" : "IMITATION", gates_per_race: 24 });
+  fetchStatus(false);
+  fetchReplay(false);
+}
+
+byId("show-teacher").addEventListener("click", () => selectPilot("teacher"));
+byId("show-student").addEventListener("click", () => selectPilot("student"));
+
+async function queueReplay({ url, value: info }, selected) {
+  if (selected !== selection) return;
   if (info.version === playing?.version || info.version === pending?.version) return;
   if (!/^replay-[0-9]+\.mp4$/.test(info.url)) throw new Error("Invalid replay filename");
   const controlsRequest = /^controls-[0-9]+\.json$/.test(info.controls_url)
@@ -349,6 +392,7 @@ async function queueReplay({ url, value: info }) {
           && axes.every((axis) => Number.isFinite(axis) && Math.abs(axis) <= 1)) ? value : null
     )).catch(() => null) : null;
   const [video, controls] = await Promise.all([requestData(new URL(info.url, url), true), controlsRequest]);
+  if (selected !== selection || info.version === playing?.version || info.version === pending?.version) return;
   const blob = URL.createObjectURL(video.value.slice(0, video.value.size, "video/mp4"));
   if (pending) URL.revokeObjectURL(pending.blob);
   pending = { ...info, blob, controls };

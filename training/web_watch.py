@@ -5,11 +5,13 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 import json
 from pathlib import Path
 from queue import Empty, Full, Queue
+import re
 from shutil import copyfile, which
 import subprocess
 from tempfile import TemporaryDirectory
 from threading import Thread
 import time
+from urllib.parse import urlsplit
 
 import torch
 
@@ -18,14 +20,27 @@ from .sim import Environment, load_sim
 from .train import fresh_stack
 from .watch import VIDEO_HEIGHT, VIDEO_WIDTH, replay_agent, replay_step
 
+FRONTEND_ORIGIN = "https://a2rl-fpv-dashboard.front.cbgpu.com"
+
 
 class DashboardHandler(SimpleHTTPRequestHandler):
+    def send_head(self):
+        if self.headers.get("Host", "").partition(":")[0] not in ("127.0.0.1", "localhost"):
+            self.send_error(400, "Use a loopback address")
+            return None
+        return super().send_head()
+
     def end_headers(self):
         self.send_header("Cache-Control", "no-store")
+        path = urlsplit(self.path).path
+        if path in ("/status.json", "/replay.json") or re.fullmatch(r"/replay-[0-9]+\.mp4", path):
+            self.send_header("Vary", "Origin")
+            if self.headers.get("Origin") == FRONTEND_ORIGIN:
+                self.send_header("Access-Control-Allow-Origin", FRONTEND_ORIGIN)
         super().end_headers()
 
     def log_message(self, format, *args):
-        if self.path != "/status.json":
+        if self.path not in ("/status.json", "/replay.json"):
             super().log_message(format, *args)
 
 

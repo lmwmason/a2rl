@@ -15,8 +15,12 @@
         <p class="series">A2RL × DCL / 2025 GRAND CHALLENGE</p>
         <h1>FPV 학습 관전</h1>
       </div>
-      <p id="connection" class="pill" role="status">GPU 연결 중</p>
+      <div class="connection-tools">
+        <p id="connection" class="pill" role="status">GPU 연결 대기</p>
+        <button id="connect-local" type="button" hidden>이 PC의 학습 연결</button>
+      </div>
     </header>
+    <p id="connection-help" class="connection-help" hidden>이 PC의 관전 프로세스를 실행하고 브라우저에서 로컬 연결을 허용하면 학습 상태와 영상이 갱신됩니다.</p>
 
     <div class="layout">
       <section class="panel flight" aria-labelledby="camera-title">

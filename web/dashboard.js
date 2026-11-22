@@ -14,6 +14,18 @@ const chartContext = chart.getContext("2d");
 const trend = { values: [], key: "" };
 let playing = null;
 let pending = null;
+let polling = false;
+let statusTimer;
+const hosted = !["127.0.0.1", "localhost", "[::1]"].includes(window.location.hostname);
+const dataRoot = hosted ? "http://127.0.0.1:8765/" : "/";
+
+function dataFile(name) {
+  return fetch(dataRoot + name, {
+    cache: "no-store",
+    credentials: "omit",
+    ...(hosted && { targetAddressSpace: "loopback" }),
+  });
+}
 
 function pill(id, label, state = "") {
   setText(id, label);
@@ -100,23 +112,30 @@ function renderStatus(info) {
 
 async function fetchStatus() {
   try {
-    const response = await fetch("status.json", { cache: "no-store" });
+    const response = await dataFile("status.json");
     if (!response.ok) throw new Error("Status unavailable");
     renderStatus(await response.json());
+    byId("connect-local").hidden = true;
+    byId("connection-help").hidden = true;
   } catch {
     pill("connection", "로컬 데이터 연결 대기", "stale");
+    if (hosted) {
+      byId("connect-local").hidden = false;
+      byId("connection-help").hidden = false;
+    }
   } finally {
-    window.setTimeout(fetchStatus, 1000);
+    statusTimer = window.setTimeout(fetchStatus, 1000);
   }
 }
 
 async function fetchReplay() {
   try {
-    const response = await fetch("replay.json", { cache: "no-store" });
+    const response = await dataFile("replay.json");
     if (!response.ok) return;
     const info = await response.json();
     if (info.version === playing?.version || info.version === pending?.version) return;
-    const video = await fetch(info.url);
+    if (!/^replay-[0-9]+\.mp4$/.test(info.url)) return;
+    const video = await dataFile(info.url);
     if (!video.ok) return;
     const blob = URL.createObjectURL(await video.blob());
     if (pending) URL.revokeObjectURL(pending.blob);
@@ -131,5 +150,19 @@ async function fetchReplay() {
 }
 
 new ResizeObserver(drawHistory).observe(chart);
-fetchStatus();
-fetchReplay();
+function startPolling() {
+  byId("connect-local").hidden = true;
+  window.clearTimeout(statusTimer);
+  fetchStatus();
+  if (!polling) {
+    polling = true;
+    fetchReplay();
+  }
+}
+if (hosted) {
+  byId("connect-local").hidden = false;
+  byId("connection-help").hidden = false;
+  byId("connect-local").addEventListener("click", startPolling);
+} else {
+  startPolling();
+}

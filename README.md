@@ -160,6 +160,8 @@ python3 -m training.web_watch cbgpu-gpu4
 
 [http://127.0.0.1:8765/](http://127.0.0.1:8765/)에서는 학습 지표가 갱신되고 최신 학생 모델의 FPV 영상이 반복됩니다. 로컬 관전 프로세스는 SSH로 받은 체크포인트로 같은 출발 조건에서 다시 비행하고, FFmpeg로 480×360 MP4를 렌더링합니다. 새 영상은 현재 재생이 끝났을 때 전환됩니다. 화면은 정적 HTML, CSS, JavaScript로 구성됩니다.
 
+CBGPU 프론트에서는 [A2RL FPV 관전 화면](https://a2rl-fpv-dashboard.front.cbgpu.com/)을 열고 **이 PC의 학습 연결**을 누릅니다. 관전 프로세스가 실행 중인 PC에서 브라우저의 루프백 연결을 허용하면 영상과 지표가 갱신됩니다.
+
 ### 데스크톱 학습 관전
 
 ```bash

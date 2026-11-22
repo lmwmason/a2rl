@@ -98,6 +98,7 @@ def evaluate_student(agent, env, stack, seed, episodes, teacher=False):
     """Use held-out ground starts. No intervention is permitted in student evaluations."""
     n_gates = env.lib.sim_gate_count() * 2
     passes, crashes, times = [], 0, []
+    approach_delay, crossing_speed = 0., 0.
     rng = np.random.default_rng(seed)
     for i in range(episodes):
         if i == 0:
@@ -112,6 +113,9 @@ def evaluate_student(agent, env, stack, seed, episodes, teacher=False):
             gates, _ = env.lap_stats()
             if status or gates >= n_gates:
                 passes.append(gates)
+                delay, speed_sum = env.flow_stats()
+                approach_delay += delay
+                crossing_speed += speed_sum
                 if status == 4 and gates == n_gates:
                     times.append(env.official_seconds())
                 crashes += int(status == 1)
@@ -125,6 +129,8 @@ def evaluate_student(agent, env, stack, seed, episodes, teacher=False):
         "two_lap_rate": len(times) / episodes,
         "crash_rate": crashes / episodes,
         "best_two_lap_s": min(times, default=None),
+        "mean_gate_approach_delay_seconds": approach_delay / episodes,
+        "mean_gate_crossing_speed_m_s": crossing_speed / sum(passes) if sum(passes) else None,
     }
 
 
@@ -141,10 +147,12 @@ def demonstration_loss(agent, demonstrations, batch):
     return stick_loss(agent.actor(agent.encoder(pixels)).tanh(), controls, confidence)
 
 
-def training_reset(env, index, rng, target):
+def training_reset(env, index, rng, target, continuous=False):
     breakup = .18 if rng.random() < .25 else 0.
     video_seed = int(rng.integers(1 << 32))
     exposure = float(rng.uniform(.82, 1.18))
+    if continuous:
+        return env.official_start(side=rng.uniform(-.22, .22), exposure=exposure)
     if index % 4 < 2:
         return env.ground_start(side=rng.uniform(-.25, .25), exposure=exposure,
                                 breakup=breakup, video_seed=video_seed)
@@ -157,7 +165,8 @@ def training_reset(env, index, rng, target):
                      height=rng.uniform(-.26, .26), exposure=exposure, breakup=breakup, video_seed=video_seed)
 
 
-def collect(envs, workers, agent, buffer, obs, rng, ticks, teacher_probability, target, publisher=None):
+def collect(envs, workers, agent, buffer, obs, rng, ticks, teacher_probability, target, publisher=None,
+            continuous_env=None):
     ended = np.zeros(len(envs), dtype=bool)
     authority = np.ones(len(envs), dtype=bool)
     accidents = 0
@@ -178,18 +187,22 @@ def collect(envs, workers, agent, buffer, obs, rng, ticks, teacher_probability, 
         # Small disturbances create new camera states for exact corrective labels.
         if tick % 7 in (0, 1):
             action = (action + rng.normal(0., [.025, .014, .04, .04], action.shape)).clip(-1, 1).astype(np.float32)
+        if continuous_env is not None:
+            assisted[continuous_env] = True
+            action[continuous_env] = labels[continuous_env]
         following = np.empty_like(obs[:, -1])
         tasks = [workers.submit(env.advance, command) for env, command in zip(envs, action)]
         for i, task in enumerate(tasks):
             image, _, status = task.result()
             gates, _ = envs[i].lap_stats()
             threshold = target if i % 4 < 2 else 2
-            ended[i] = bool(status) or gates >= threshold
+            continuous = i == continuous_env
+            ended[i] = bool(status) or (not continuous and gates >= threshold)
             accidents += int(status == 1)
             if i == 0 and publisher is not None:
                 publisher.show(image, gates=gates, step=buffer.count * len(envs),
                                phase="IMITATION", status=status, driver="Teacher" if assisted[0] else "Student")
-            following[i] = training_reset(envs[i], i, rng, target) if ended[i] else image
+            following[i] = training_reset(envs[i], i, rng, target, continuous) if ended[i] else image
         emphasis = 1. + 1.25 * np.abs(labels[:, [0, 2, 3]]).max(axis=1)
         buffer.append(obs[:, -1], labels, features, emphasis, ended)
         obs[:, :-1] = obs[:, 1:]
@@ -308,7 +321,10 @@ def main():
                 else:
                     best = None
         envs = [Environment(lib, width, height) for _ in range(args.envs)]
-        obs = np.asarray([fresh_stack(training_reset(env, i, rng, target), args.stack) for i, env in enumerate(envs)])
+        # Preserve a clean, uninterrupted race alongside student corrections and short gate practice.
+        continuous_env = 1 if teacher == "flow" and len(envs) > 1 else None
+        obs = np.asarray([fresh_stack(training_reset(env, i, rng, target, i == continuous_env), args.stack)
+                          for i, env in enumerate(envs)])
         publisher = FramePublisher(args.out) if args.live else None
         n_gates = lib.sim_gate_count() * 2
         started = time.monotonic()
@@ -321,7 +337,7 @@ def main():
                         break
                     teacher_probability = max(.19, .57 - .012 * (round_no - 1))
                     accidents = collect(envs, workers, agent, buffer, obs, rng, args.collect_ticks,
-                                        teacher_probability, target, publisher)
+                                        teacher_probability, target, publisher, continuous_env)
                     for _ in range(args.updates):
                         frames, labels, features, weights = buffer.sample(rng, args.batch)
                         pixels = random_shift(pixel_tensor(frames, args.device).float() / 255. - .5, pad=1)
@@ -355,6 +371,8 @@ def main():
                                   evaluation_seed=EVALUATION_SEED,
                                   holdout_two_lap_rate=robustness["two_lap_rate"] if robustness else None,
                                   teacher_probability=teacher_probability, collection_crashes=accidents,
+                                  continuous_teacher_gates=envs[continuous_env].lap_stats()[0]
+                                  if continuous_env is not None else None,
                                   imitation_loss=float(loss.detach()), seconds=round(time.monotonic() - started, 1))
                     if human_loss is not None:
                         result["human_training_loss"] = float(human_loss.detach())
@@ -381,8 +399,9 @@ def main():
                     if min(result["gates"]) >= target and target < n_gates:
                         target = min(n_gates, min(result["gates"]) + 1)
                         for i, env in enumerate(envs):
-                            obs[i] = fresh_stack(training_reset(env, i, rng, target), args.stack)
-                        buffer.next_start.fill(buffer.count)
+                            if i != continuous_env:
+                                obs[i] = fresh_stack(training_reset(env, i, rng, target), args.stack)
+                                buffer.next_start[i] = buffer.count
                     if round_no == 1 or round_no % args.save_every == 0 or round_no == args.rounds:
                         save_school(args.out / "imitation-state.zip", agent, auxiliary, optimizer, buffer, rng,
                                     {"round": round_no, "target": target, "best": best,

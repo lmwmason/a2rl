@@ -398,6 +398,7 @@ function updateStudentFeed(origin, info) {
   const changed = liveUrl !== next;
   liveUrl = next;
   liveDriver = info.live_driver || null;
+  setText("live-gates", count(info.live_gates) + " / " + count(info.gates_per_race));
   applyStudentView();
   if (changed && liveUrl) refreshLiveFrame();
 }
@@ -416,6 +417,9 @@ function applyStudentView() {
   byId("waiting").hidden = showLive || Boolean(playing);
   byId("replay-stage").hidden = showLive;
   byId("live-stage").hidden = !showLive;
+  byId("replay-gate-count").hidden = showLive;
+  byId("live-gate-count").hidden = !showLive;
+  byId("replay-result").hidden = showLive;
   if (showLive) {
     camera.pause();
     setText("live-stage", liveDriver ? `Live training · ${liveDriver} · Rust` : "Live training · Rust");

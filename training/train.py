@@ -1,6 +1,7 @@
 """Train or evaluate an RGB-only policy against the Rust race environment."""
 import argparse
 from concurrent.futures import ThreadPoolExecutor
+import hashlib
 import json
 import math
 from pathlib import Path
@@ -39,6 +40,8 @@ def options():
     parser.add_argument("--evaluate", type=Path, help="Evaluate this checkpoint on the official simulator start.")
     parser.add_argument("--initialize", type=Path, help="Initialize online training from a Mode 2 checkpoint.")
     parser.add_argument("--resume", type=Path, help="Restore a saved training state, including optimizer and replay.")
+    parser.add_argument("--protect-qualified", type=Path,
+                        help="Retain a qualified RGB policy as the reference during speed fine-tuning.")
     parser.add_argument("--checkpoint-every", type=int, default=0, help="Training steps between resumable snapshots.")
     parser.add_argument("--focus-gate-two", action="store_true", help="Practice the turn from gate 1 to gate 2.")
     parser.add_argument("--official-eval", action="store_true", help="Rank speed by the official two-lap time.")
@@ -60,6 +63,8 @@ def options():
         or not args.official_eval or args.evaluate
     ):
         parser.error("A positive record target requires training with --official-eval.")
+    if args.protect_qualified is not None and (not args.official_eval or not (args.initialize or args.resume)):
+        parser.error("Qualified-policy protection requires official evaluation and initialization or resume.")
     return args
 
 
@@ -167,6 +172,8 @@ def train(args, agent, lib):
     rng = np.random.default_rng(args.seed)
     physics = physics_identity(lib)
     reward_version = lib.sim_reward_model_version()
+    protected = args.protect_qualified is not None
+    anchor_digest = hashlib.sha256(args.protect_qualified.read_bytes()).hexdigest() if protected else None
     args.run_dir.mkdir(parents=True, exist_ok=True)
     shape = (args.height, args.width, 3)
     replay = Replay(args.replay, args.envs, shape, args.stack, args.n_step, args.gamma, rng)
@@ -179,6 +186,8 @@ def train(args, agent, lib):
     trim = np.array([0., lib.sim_hover_stick(), 0., 0.], dtype=np.float32)
     starts = np.zeros((args.envs, args.stack, *shape), np.uint8)
     gate_practice = np.linspace(0.80, 0.25, 101)
+    if protected:
+        gate_practice = np.linspace(0.20, 0.35, 101)
     gate_weights = np.ones(lib.sim_gate_count())
     gate_weights[[4, 6, 10]] = 2.  # Split-S, slalom and hairpin.
     gate_weights /= gate_weights.sum()
@@ -194,6 +203,8 @@ def train(args, agent, lib):
             raise ValueError("Use the original physics to resume, or initialize a new run from weights.")
         if progress.get("reward_version", 1) != reward_version:
             raise ValueError("Use the original reward to resume, or initialize a new run from weights.")
+        if progress.get("anchor_digest") != anchor_digest:
+            raise ValueError("Resume with the original qualified checkpoint or initialize a new run.")
         steps, updates = progress["steps"], progress["updates"]
         last_eval, best_rank = progress["last_eval"], progress["best_rank"]
         warm_started = progress["warm_started"]
@@ -208,6 +219,9 @@ def train(args, agent, lib):
     publisher = FramePublisher(args.run_dir) if args.live else None
     target = args.target_two_lap_seconds
     achieved = False
+    reference_count = min(2, args.envs - 1) if protected else 0
+    reference_rng = np.random.default_rng(71)
+    reference_starts = [(0., 1.), (reference_rng.uniform(-.35, .35), reference_rng.uniform(.85, 1.15))]
 
     def record_evaluation(result, log):
         result.update(steps=steps, updates=updates)
@@ -225,7 +239,11 @@ def train(args, agent, lib):
         temporary.replace(path)
         return True
 
-    def reset(env, step):
+    def reset(index, step):
+        env = envs[index]
+        if index < reference_count:
+            side, exposure = reference_starts[index]
+            return env.official_start(side, exposure)
         breakup = rng.uniform(0.05 * args.hdzero_max, args.hdzero_max) if rng.random() < 0.4 else 0.
         video_seed = int(rng.integers(1 << 32))
         if args.focus_gate_two:
@@ -241,8 +259,8 @@ def train(args, agent, lib):
                          rng.uniform(-0.35, 0.35), rng.uniform(0.75, 1.25), breakup, video_seed)
 
     try:
-        for i, env in enumerate(envs):
-            starts[i] = fresh_stack(reset(env, steps), args.stack)
+        for i in range(len(envs)):
+            starts[i] = fresh_stack(reset(i, steps), args.stack)
         with ThreadPoolExecutor(max_workers=args.envs) as workers, (
             args.run_dir / "metrics.jsonl"
         ).open("a", encoding="utf-8", buffering=1) as log:
@@ -251,9 +269,12 @@ def train(args, agent, lib):
                 result["initializer"] = True
                 best_rank = policy_rank(result, True)
                 agent.save(args.run_dir / "best.pt")
+                agent.save(args.run_dir / "latest.pt")
                 achieved = record_evaluation(result, log)
             while not achieved and (target is not None or steps < args.steps):
-                if warm_started:
+                if protected:
+                    noise = min(.06, .02 + .04 * steps / 500_000)
+                elif warm_started:
                     noise = max(.055, .13 - .075 * steps / max(1, args.steps // 2))
                 else:
                     noise = max(.10, .32 - .22 * steps / max(1, args.steps // 2))
@@ -262,17 +283,19 @@ def train(args, agent, lib):
                     actions = np.clip(exploration + trim, -1., 1.)
                 else:
                     actions = agent.action(starts, noise)
+                if reference_count:
+                    actions[:reference_count] = agent.action(starts[:reference_count], reference=True)
                 tasks = [workers.submit(env.step, action) for env, action in zip(envs, actions)]
                 for idx, task in enumerate(tasks):
                     frame, reward, crash, timeout = task.result()
                     next_frames[idx] = frame
                     rewards[idx], flags[idx] = reward, 1 if crash else 2 if timeout else 0
-                    if idx == 0 and publisher is not None:
+                    if idx == reference_count and publisher is not None:
                         publisher.show(frame, gates=envs[idx].lap_stats()[0], step=steps,
                                        phase="SPEED RL", status=1 if crash else 2 if timeout else 0)
                 replay.append(starts[:, -1], actions, rewards, flags, next_frames)
                 for idx in np.flatnonzero(flags):
-                    next_frames[idx] = reset(envs[idx], steps)
+                    next_frames[idx] = reset(idx, steps)
                     starts[idx] = next_frames[idx]
                     exploration[idx] = 0
                 starts[:, :-1] = starts[:, 1:]
@@ -280,12 +303,13 @@ def train(args, agent, lib):
                 previous_steps = steps
                 steps += args.envs
                 if steps >= args.warmup and replay.ready():
-                    actor_ready = not warm_started or steps >= args.warmup + 8_000
+                    actor_ready = not warm_started or steps >= args.warmup + (16_000 if protected else 8_000)
                     imitation_weight = max(0., 1. - steps / 200_000.)
                     for _ in range(steps // args.update_every - previous_steps // args.update_every):
+                        update_actor = actor_ready and (not protected or updates % 4 == 0)
                         demo = (demonstrations.sample(args.batch // 2 or 1)
-                                if demonstrations and actor_ready and imitation_weight else None)
-                        losses = agent.update(replay.sample(args.batch), noise, update_actor=actor_ready,
+                                if demonstrations and update_actor and imitation_weight else None)
+                        losses = agent.update(replay.sample(args.batch), noise, update_actor=update_actor,
                                               demonstration=demo, imitation_weight=imitation_weight)
                         updates += 1
                 now = time.monotonic()
@@ -302,11 +326,14 @@ def train(args, agent, lib):
                     result = evaluate(agent, test_env, args.stack, args.eval_episodes, official=args.official_eval)
                     if args.focus_gate_two:
                         result.update(evaluate_gate_exit(agent, test_env, args.stack))
-                    agent.save(args.run_dir / "latest.pt")
                     rank = policy_rank(result, args.official_eval)
+                    if protected and best_rank is not None and rank[:2] < best_rank[:2]:
+                        agent.restore_actor(args.run_dir / "best.pt")
+                        result["policy_restored"] = True
                     if best_rank is None or rank > best_rank:
                         agent.save(args.run_dir / "best.pt")
                         best_rank = rank
+                    agent.save(args.run_dir / "latest.pt")
                     last_eval = steps
                     achieved = record_evaluation(result, log)
                 save_after = args.checkpoint_every if last_save else min(25_000, args.checkpoint_every)
@@ -315,7 +342,7 @@ def train(args, agent, lib):
                     checkpoint.save(path, agent, replay,
                                     {"steps": steps, "updates": updates, "last_eval": last_eval,
                                      "best_rank": best_rank, "warm_started": warm_started, "physics": physics,
-                                     "reward_version": reward_version},
+                                     "reward_version": reward_version, "anchor_digest": anchor_digest},
                                     starts[:, -1], demonstrations)
                     last_save = steps
                     print(json.dumps({"saved_training_state": str(path), "steps": steps}), flush=True)
@@ -345,6 +372,8 @@ def main():
         agent.load(args.initialize)
         # Preserve visual features while the critic adapts to the new replay.
         agent.configure_warm_start()
+    if args.protect_qualified:
+        agent.protect_qualified_policy(args.protect_qualified)
     if args.evaluate:
         agent.load(args.evaluate)
         env = Environment(lib, args.width, args.height)

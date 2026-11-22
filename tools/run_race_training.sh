@@ -29,5 +29,6 @@ if [[ -s "$speed/training-state.zip" ]]; then
 fi
 echo 'STAGE speed reinforcement learning'
 exec python3 -u -m training.train --device cuda "${start[@]}" --stack 8 --live \
+  --protect-qualified "$school/qualified.pt" \
   --steps 5000000 --target-two-lap-seconds "$record_seconds" --envs 8 --batch 96 \
-  --official-eval --eval-episodes 3 --eval-every 25000 --checkpoint-every 100000 --run-dir "$speed"
+  --official-eval --eval-episodes 3 --eval-every 8000 --checkpoint-every 100000 --run-dir "$speed"

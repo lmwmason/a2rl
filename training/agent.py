@@ -73,18 +73,21 @@ class Agent:
         self.target = deepcopy(self.critic).requires_grad_(False)
         self.critic_opt = torch.optim.Adam([*self.critic.parameters(), *self.encoder.parameters()], lr=1e-4)
         self.actor_opt = torch.optim.Adam(self.actor.parameters(), lr=1e-4)
+        self.reference_actor = None
 
     @torch.no_grad()
-    def action(self, frames, noise=0.):
+    def action(self, frames, noise=0., *, reference=False):
         obs = pixel_tensor(frames, self.device).float() / 255. - 0.5
-        action = self.actor(self.encoder(obs)).tanh()
+        actor = self.reference_actor if reference else self.actor
+        action = actor(self.encoder(obs)).tanh()
         if noise:
             action = (action + torch.randn_like(action) * noise).clamp(-1., 1.)
         return action.cpu().numpy()
 
     def update(self, batch, noise, *, update_actor=True, demonstration=None, imitation_weight=0.):
         obs, action, reward, discount, next_obs = batch
-        obs = random_shift(pixel_tensor(obs, self.device).float() / 255. - 0.5)
+        clean_obs = pixel_tensor(obs, self.device).float() / 255. - 0.5
+        obs = random_shift(clean_obs)
         next_obs = random_shift(pixel_tensor(next_obs, self.device).float() / 255. - 0.5)
         action, reward, discount = [torch.from_numpy(x).to(self.device) for x in (action, reward, discount)]
         with torch.no_grad():
@@ -109,6 +112,11 @@ class Agent:
             self.critic.requires_grad_(False)
             actor_action = self.actor(features.detach()).tanh()
             actor_loss = -torch.minimum(*self.critic(features.detach(), actor_action)).mean()
+            if self.reference_actor is not None:
+                with torch.no_grad():
+                    clean_features = self.encoder(clean_obs)
+                    reference_action = self.reference_actor(clean_features).tanh()
+                actor_loss += 40. * F.mse_loss(self.actor(clean_features).tanh(), reference_action)
             if demonstration is not None and imitation_weight > 0:
                 frames, labels, weights = demonstration
                 with torch.no_grad():
@@ -150,3 +158,16 @@ class Agent:
             {"params": self.critic.parameters(), "lr": 1e-4},
             {"params": self.encoder.parameters(), "lr": 1e-5},
         ])
+
+    def protect_qualified_policy(self, path):
+        params = torch.load(path, map_location=self.device, weights_only=True)
+        self.reference_actor = deepcopy(self.actor).requires_grad_(False)
+        self.reference_actor.load_state_dict(params["actor"])
+        self.encoder.load_state_dict(params["encoder"])
+        self.encoder.requires_grad_(False)
+        self.actor_opt.param_groups[0]["lr"] = 1e-5
+
+    def restore_actor(self, path):
+        params = torch.load(path, map_location=self.device, weights_only=True)
+        self.actor.load_state_dict(params["actor"])
+        self.actor_opt.state.clear()

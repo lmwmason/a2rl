@@ -73,7 +73,13 @@ impl Teacher {
     fn control(&mut self, race: &Race, firmware: bool) -> [f32; 4] {
         if self.flow && race.grand_challenge && race.course == Course::Season2Practice2026 {
             if let Some((accel, heading)) = line::track(race, firmware) {
-                let horizontal_limit = if firmware { 23. } else { 17. };
+                let horizontal_limit = if !firmware {
+                    17.
+                } else if line::is_ladder_leg(race.next_gate()) {
+                    23.
+                } else {
+                    27.
+                };
                 let accel = accel.with_z(0.).clamp_length_max(horizontal_limit)
                     + Vec3::Z * (GRAVITY + accel.z.clamp(-5.5, 8.));
                 let mut command = rate_action(race, accel, heading);

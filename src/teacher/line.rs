@@ -7,26 +7,62 @@ use crate::{Course, Gate, Race, GRAVITY};
 
 const SAMPLES_PER_LEG: usize = 64;
 const SPEED_ACCEL: f32 = 12.;
+const STANDARD_COAST: (f32, f32) = (1.45, 0.55);
 
 struct Pace {
     max_speed: f32,
-    turn_accel: f32,
+    open: LegLimits,
+    tight: LegLimits,
     split_s_turn_accel: f32,
+    open_gate_coast: (f32, f32),
+}
+
+#[derive(Clone, Copy)]
+struct LegLimits {
+    turn_accel: f32,
     brake_accel: f32,
 }
 
-const NATIVE_PACE: Pace = Pace {
-    max_speed: 11.5,
+const NATIVE_LIMITS: LegLimits = LegLimits {
     turn_accel: 9.,
-    split_s_turn_accel: 6.5,
     brake_accel: 3.1,
 };
-const FIRMWARE_PACE: Pace = Pace {
-    max_speed: 14.5,
-    turn_accel: 11.5,
-    split_s_turn_accel: 7.5,
-    brake_accel: 3.8,
+const NATIVE_PACE: Pace = Pace {
+    max_speed: 11.5,
+    open: NATIVE_LIMITS,
+    tight: NATIVE_LIMITS,
+    split_s_turn_accel: 6.5,
+    open_gate_coast: STANDARD_COAST,
 };
+const FIRMWARE_PACE: Pace = Pace {
+    max_speed: 18.,
+    open: LegLimits {
+        turn_accel: 15.,
+        brake_accel: 5.,
+    },
+    tight: LegLimits {
+        turn_accel: 11.5,
+        brake_accel: 3.8,
+    },
+    split_s_turn_accel: 8.5,
+    open_gate_coast: (0.65, 0.25),
+};
+
+impl Pace {
+    fn limits_for_leg(&self, target: usize) -> LegLimits {
+        // Preserve the measured clearance through the chicane and the Ladder.
+        if matches!(target, 4 | 5) || is_ladder_leg(target) {
+            self.tight
+        } else {
+            self.open
+        }
+    }
+}
+
+pub(super) fn is_ladder_leg(target: usize) -> bool {
+    matches!(target, 10 | 11)
+}
+
 // Horizontal guide positions from FlyBy Fig. 5. Heights interpolate between
 // the two estimated opening centers and keep the loop clear of the frame.
 const LADDER_ARC: [(Vec3, Vec3); 3] = [
@@ -92,14 +128,20 @@ impl Line {
             let turn_accel = if (6..=8).contains(&leg) {
                 pace.split_s_turn_accel
             } else {
-                pace.turn_accel
+                pace.limits_for_leg(leg).turn_accel
             };
             point.speed = (turn_accel / curvature.length().max(0.001))
                 .sqrt()
                 .min(pace.max_speed);
         }
         for gate in (SAMPLES_PER_LEG..points.len() - SAMPLES_PER_LEG).step_by(SAMPLES_PER_LEG) {
-            coast_through_gate(&mut points, gate);
+            let target = (gate / SAMPLES_PER_LEG - 1) % gates.len();
+            let margins = if matches!(target, 1 | 2 | 3 | 8 | 9) {
+                pace.open_gate_coast
+            } else {
+                STANDARD_COAST
+            };
+            coast_through_gate(&mut points, gate, margins);
         }
         points[0].speed = 2.2;
         for index in 1..points.len() {
@@ -114,12 +156,14 @@ impl Line {
             );
         }
         for index in (0..points.len() - 1).rev() {
+            let leg = index / SAMPLES_PER_LEG % gates.len();
+            let braking = pace.limits_for_leg(leg).brake_accel;
             let next = points[index + 1];
             let point = &mut points[index];
             let distance = point.position.distance(next.position);
             point.speed = point.speed.min(
                 next.speed
-                    .mul_add(next.speed, 2. * pace.brake_accel * distance)
+                    .mul_add(next.speed, 2. * braking * distance)
                     .sqrt(),
             );
         }
@@ -157,17 +201,17 @@ impl Line {
     }
 }
 
-fn coast_through_gate(points: &mut [Point], gate: usize) {
+fn coast_through_gate(points: &mut [Point], gate: usize, (approach, exit): (f32, f32)) {
     // Finish braking before the aperture and preserve forward speed until clear.
     let mut first = gate;
     let mut last = gate;
     let mut length = 0.;
-    while length < 1.45 && first > 0 {
+    while length < approach && first > 0 {
         length += points[first - 1].position.distance(points[first].position);
         first -= 1;
     }
     length = 0.;
-    while length < 0.55 && last + 1 < points.len() {
+    while length < exit && last + 1 < points.len() {
         length += points[last].position.distance(points[last + 1].position);
         last += 1;
     }
@@ -247,6 +291,16 @@ pub(super) fn track(race: &Race, firmware: bool) -> Option<(Vec3, Vec3)> {
         + 0.75 * here.speed.powi(2) * here.curvature
         - race.drone.rotation * crate::drag(race.drone.rotation.conjugate() * race.drone.velocity)
             / crate::MASS_KG;
+    if firmware && matches!(race.next_gate(), 2 | 3 | 8) {
+        // Add forward thrust on longer legs where the aircraft is aligned,
+        // with enough room before the gate and speed left in the plan.
+        let depth = (target.center - position).dot(target.normal);
+        let room = ((depth - 2.) / 2.).clamp(0., 1.);
+        let alignment = (1. - correction.length() / 0.9).clamp(0., 1.);
+        let straightness = (1. - here.curvature.length() / 0.22).clamp(0., 1.);
+        let speed_deficit = (preview.speed - race.drone.velocity.dot(here.tangent)).clamp(0., 5.);
+        accel += here.tangent * (4. * speed_deficit * alignment * room * straightness);
+    }
     let toward_gate = (target.center - position).truncate().normalize_or_zero();
     let heading = preview.tangent.truncate();
     let heading = (heading + 0.65 * toward_gate).normalize_or_zero();

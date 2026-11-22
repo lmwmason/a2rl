@@ -5,7 +5,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 import json
 from pathlib import Path
 from queue import Empty, Full, Queue
-from shutil import copyfile, which
+from shutil import copyfile, copytree, which
 import subprocess
 from tempfile import TemporaryDirectory
 from threading import Thread
@@ -141,6 +141,8 @@ def main():
         root = Path(directory)
         for name in ("index.html", "style.css", "dashboard.js"):
             copyfile(assets / name, root / name)
+        if (assets / "snapshot").is_dir():
+            copytree(assets / "snapshot", root / "snapshot")
         handler = partial(DashboardHandler, directory=root)
         with ThreadingHTTPServer(("127.0.0.1", args.port), handler) as server:
             pending = Queue(maxsize=1)

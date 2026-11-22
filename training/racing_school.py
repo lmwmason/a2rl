@@ -302,6 +302,8 @@ def main():
     parser.add_argument("--full-course", action="store_true",
                         help="Train complete two-lap episodes from takeoff without gate-count resets.")
     parser.add_argument("--teacher-only", action="store_true")
+    parser.add_argument("--external-qualification", action="store_true",
+                        help="Keep training until the requested round, leaving qualification to firmware evaluation.")
     parser.add_argument("--human-demos", nargs="+", type=Path, default=[],
                         help="Synchronized RGB and real Mode 2 inputs used alongside simulator expert labels.")
     parser.add_argument("--human-held-out", nargs="+", type=Path, default=[],
@@ -511,7 +513,7 @@ def main():
                                      "monorace_ids": monorace_ids,
                                      "monorace_rng": monorace_demo.rng.bit_generator.state if monorace_demo else None,
                                      "human_rng": human_demo.rng.bit_generator.state if human_demo else None})
-                    if qualified >= 2 and round_no - first_full >= args.consolidation_rounds:
+                    if not args.external_qualification and qualified >= 2 and round_no - first_full >= args.consolidation_rounds:
                         agent.save(args.out / "qualified.pt")
                         print(json.dumps({"qualified": True, "verified_two_lap_evaluations": 4 * args.eval_episodes}), flush=True)
                         break

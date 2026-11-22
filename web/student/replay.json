@@ -1,0 +1,13 @@
+{
+  "archived": true,
+  "phase": "IMITATION",
+  "course": "2026-practice",
+  "physics_engine": "elodin",
+  "gates_per_race": 24,
+  "round": 10,
+  "gates": 0,
+  "status": 1,
+  "version": "1795389672798120013",
+  "url": "replay-1795389672798120013.mp4",
+  "controls_url": "controls-1795389672798120013.json"
+}

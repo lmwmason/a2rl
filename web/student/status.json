@@ -1,0 +1,21 @@
+{
+  "archived": true,
+  "phase": "IMITATION",
+  "course": "2026-practice",
+  "physics_engine": "elodin",
+  "gates_per_race": 24,
+  "round": 10,
+  "finish_rate": 0.0,
+  "collision_rate": 1.0,
+  "best_two_lap_seconds": null,
+  "recent_gates": [
+    0
+  ],
+  "recent_finish_times": [
+    {
+      "at": 10,
+      "standard_s": null,
+      "comparison_s": null
+    }
+  ]
+}

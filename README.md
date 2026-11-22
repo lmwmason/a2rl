@@ -194,6 +194,22 @@ bash tools/run_race_training.sh
 
 Use `A2RL_SCHOOL_DIR`, `A2RL_SPEED_DIR`, or `A2RL_INITIAL_POLICY` to select the run folders and initial policy. The launch script starts the speed phase only when `qualified.pt` exists. Speed RL permits unrestricted Mode 2 actions and ranks policies by completion rate, crash rate, and official time. The protected speed run freezes the qualified vision encoder, uses two reference flights to retain successful trajectories, and keeps early actor updates close to the qualified actions. If the next evaluation loses completions or raises the crash rate at the same completion rate, it restores the best validated actor and keeps the critic and experience. Record-target mode uses the 5,000,000-step setting to schedule exploration. It continues until the policy beats 16.56 s from the standard start and all three trials finish cleanly. That target refers to MAVLab's full-scale 2025 run. The resulting simulator benchmark and weights are stored as `record.json` and `record.pt`.
 
+### Firmware-qualified RGB and IMU training
+
+Run the GPU worker inside the training checkout after producing synchronized demonstrations and a seed checkpoint with `training.imitate --imu --stack 8`.
+
+```bash
+bash tools/run_rgb_imu_race.sh runs/target-12 runs/target-12/seed/latest.pt runs/target-12/teacher/nominal.npz
+```
+
+Run the verifier on a machine with the pinned Elodin harness, a release simulator library, and PyTorch installed in the harness environment.
+
+```bash
+python3 -m tools.evaluate_rgb_imu_race --host cbgpu-gpu4   --remote-run /root/a2rl-target-12/runs/target-12 --harness "$A2RL_ELODIN_ROOT"   --elodin "$(command -v elodin)" --out runs/target-12/firmware
+```
+
+The worker collects student rollouts with corrective expert labels in Rust. The verifier uses real Betaflight SITL and accepts a checkpoint after three clean full-course starts at or below 30 seconds. That checkpoint starts speed reinforcement learning with the same RGB and IMU input. The verifier applies a 12-second time limit to all three starts before marking the speed phase complete. The GPU worker and verifier can run on separate hosts. The worker continues training while the verifier is offline, and the phase gate waits for the verifier to return.
+
 ### Reproduce the demonstration and gate-transition experiments
 
 MAVLab Log 5 supplies real-flight samples and Log 7 is reserved for a flight-level holdout. The logs contain direct motor control, so real Mode 2 labels are approximated from synchronized RPM and gyro data. Simulator demonstrations contain the exact applied sticks. These earlier experiments use the default four-frame stack.

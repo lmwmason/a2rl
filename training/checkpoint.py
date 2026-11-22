@@ -41,7 +41,7 @@ def atomic_archive(path):
 
 
 
-def save(path, agent, replay, state, last_frames, demonstrations):
+def save(path, agent, replay, state, last_frames, demonstrations, last_inertial=None):
     payload = {
         "version": 1,
         "agent": agent.weights(),
@@ -65,6 +65,11 @@ def save(path, agent, replay, state, last_frames, demonstrations):
             write_array(archive, name, getattr(replay, name)[:occupied])
         write_array(archive, "next_start", replay.next_start)
         write_array(archive, "last_frames", last_frames)
+        if replay.inertial is not None:
+            write_array(archive, "inertial", replay.inertial[:occupied])
+            write_array(archive, "last_inertial", last_inertial)
+            if keys:
+                write_array(archive, "truncated_inertial", np.stack([replay.truncated_inertial[key] for key in keys]))
         write_array(archive, "truncated_keys", np.array(keys, np.int64).reshape(-1, 2))
         if keys:
             write_array(archive, "truncated_frames", np.stack([replay.truncated_frames[key] for key in keys]))
@@ -88,7 +93,17 @@ def load(path, agent, replay, demonstrations):
             replay.truncated_frames = {tuple(key): frame for key, frame in zip(keys, values)}
         # Native simulator instances start fresh. Preserve the old final image for time-limit
         # bootstrapping and prevent the image stack from crossing the restart.
-        replay.truncate_open(read_array(archive, "last_frames"))
+        with_imu = "inertial.npy" in archive.namelist()
+        if with_imu != (replay.inertial is not None):
+            raise ValueError("Resume with the original replay sensor layout.")
+        last_inertial = None
+        if with_imu:
+            replay.inertial[:occupied] = read_array(archive, "inertial")
+            last_inertial = read_array(archive, "last_inertial")
+            if len(keys):
+                samples = read_array(archive, "truncated_inertial")
+                replay.truncated_inertial = dict(zip(map(tuple, keys), samples))
+        replay.truncate_open(read_array(archive, "last_frames"), last_inertial)
     progress = payload["progress"]
     if progress["warm_started"]:
         agent.configure_warm_start()

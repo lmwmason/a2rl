@@ -79,9 +79,9 @@ class MobileNetEncoder(nn.Module):
 
 
 class Critic(nn.Module):
-    def __init__(self):
+    def __init__(self, features=128):
         super().__init__()
-        self.q1, self.q2 = mlp(132, 1), mlp(132, 1)
+        self.q1, self.q2 = mlp(features + 4, 1), mlp(features + 4, 1)
 
     def forward(self, features, action):
         value = torch.cat((features, action), dim=-1)
@@ -106,11 +106,17 @@ class Agent:
         self.actor = mlp(160 if with_imu else 128, 4).to(device)
         with torch.no_grad():
             self.actor[-1].bias[1] = atanh(hover_stick)
-        self.critic = Critic().to(device)
+        self.critic = Critic(160 if with_imu else 128).to(device)
         self.target = deepcopy(self.critic).requires_grad_(False)
-        self.critic_opt = torch.optim.Adam([*self.critic.parameters(), *self.encoder.parameters()], lr=1e-4)
+        self.critic_opt = torch.optim.Adam([*self.critic.parameters(), *self.observation_parameters()], lr=1e-4)
         self.actor_opt = torch.optim.Adam(self.actor.parameters(), lr=1e-4)
         self.reference_actor = None
+
+    def observation_parameters(self):
+        parameters = list(self.encoder.parameters())
+        if self.imu_encoder is not None:
+            parameters.extend(self.imu_encoder.parameters())
+        return parameters
 
     def policy_features(self, pixels, imu=None):
         image = self.encoder(pixels)
@@ -138,26 +144,27 @@ class Agent:
         return decode_rc(encode_rc(sticks))
 
     def update(self, batch, noise, *, update_actor=True, demonstration=None, imitation_weight=0.):
-        obs, action, reward, discount, next_obs = batch
+        obs, action, reward, discount, next_obs, *inertial = batch
+        imu, next_imu = inertial if inertial else (None, None)
         clean_obs = pixel_tensor(obs, self.device).float() / 255. - 0.5
         obs = random_shift(clean_obs)
         next_obs = random_shift(pixel_tensor(next_obs, self.device).float() / 255. - 0.5)
         action, reward, discount = [torch.from_numpy(x).to(self.device) for x in (action, reward, discount)]
         with torch.no_grad():
-            future = self.encoder(next_obs)
+            future = self.policy_features(next_obs, next_imu)
             target_action = self.actor(future).tanh()
             perturb = (torch.randn_like(target_action) * noise).clamp(-0.3, 0.3)
             target_action = (target_action + perturb).clamp(-1., 1.)
             target = reward * 0.1 + discount * torch.minimum(*self.target(future, target_action))
 
-        features = self.encoder(obs)
+        features = self.policy_features(obs, imu)
         if not update_actor:
             features = features.detach()
         q1, q2 = self.critic(features, action)
         critic_loss = F.mse_loss(q1, target) + F.mse_loss(q2, target)
         self.critic_opt.zero_grad(set_to_none=True)
         critic_loss.backward()
-        nn.utils.clip_grad_norm_([*self.encoder.parameters(), *self.critic.parameters()], 10.)
+        nn.utils.clip_grad_norm_([*self.observation_parameters(), *self.critic.parameters()], 10.)
         self.critic_opt.step()
 
         actor_loss = critic_loss.new_zeros(())
@@ -167,14 +174,14 @@ class Agent:
             actor_loss = -torch.minimum(*self.critic(features.detach(), actor_action)).mean()
             if self.reference_actor is not None:
                 with torch.no_grad():
-                    clean_features = self.encoder(clean_obs)
+                    clean_features = self.policy_features(clean_obs, imu)
                     reference_action = self.reference_actor(clean_features).tanh()
                 actor_loss += 40. * F.mse_loss(self.actor(clean_features).tanh(), reference_action)
             if demonstration is not None and imitation_weight > 0:
-                frames, labels, weights = demonstration
+                frames, labels, weights, *demo_imu = demonstration
                 with torch.no_grad():
                     demo_image = pixel_tensor(frames, self.device).float() / 255. - .5
-                    demo_features = self.encoder(random_shift(demo_image, pad=3))
+                    demo_features = self.policy_features(random_shift(demo_image, pad=3), demo_imu[0] if demo_imu else None)
                 actor_loss += imitation_weight * stick_loss(self.actor(demo_features).tanh(), labels, weights)
             self.actor_opt.zero_grad(set_to_none=True)
             actor_loss.backward()
@@ -207,8 +214,17 @@ class Agent:
         if self.imu_encoder is not None:
             self.imu_encoder.load_state_dict(params["imu_encoder"])
         self.actor.load_state_dict(params["actor"])
-        self.critic.load_state_dict(params["critic"])
-        self.target.load_state_dict(params["target"])
+        for model, key in ((self.critic, "critic"), (self.target, "target")):
+            state = params[key]
+            if self.imu_encoder is not None and state["q1.0.weight"].shape[1] == 132:
+                # Older imitation checkpoints saved unused RGB-only critics.
+                # Preserve the feature and action columns and insert IMU columns.
+                state = dict(state)
+                for name in ("q1.0.weight", "q2.0.weight"):
+                    weight = state[name]
+                    state[name] = torch.cat((weight[:, :128], weight.new_zeros((weight.shape[0], 32)),
+                                             weight[:, 128:]), dim=1)
+            model.load_state_dict(state)
 
     def save(self, path):
         temp = path.with_suffix(".tmp")
@@ -221,7 +237,7 @@ class Agent:
     def configure_warm_start(self):
         self.critic_opt = torch.optim.Adam([
             {"params": self.critic.parameters(), "lr": 1e-4},
-            {"params": self.encoder.parameters(), "lr": 1e-5},
+            {"params": self.observation_parameters(), "lr": 1e-5},
         ])
 
     def protect_qualified_policy(self, path):
@@ -230,6 +246,9 @@ class Agent:
         self.reference_actor.load_state_dict(params["actor"])
         self.encoder.load_state_dict(params["encoder"])
         self.encoder.requires_grad_(False)
+        if self.imu_encoder is not None:
+            self.imu_encoder.load_state_dict(params["imu_encoder"])
+            self.imu_encoder.requires_grad_(False)
         self.actor_opt.param_groups[0]["lr"] = 1e-5
 
     def restore_actor(self, path):

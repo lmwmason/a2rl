@@ -1,4 +1,4 @@
-"""Train or evaluate an RGB-only policy against the Rust race environment."""
+"""Train or evaluate a camera policy against the Rust race environment."""
 import argparse
 from concurrent.futures import ThreadPoolExecutor
 import hashlib
@@ -26,6 +26,7 @@ def options():
     parser.add_argument("--width", type=int, default=96)
     parser.add_argument("--height", type=int, default=72)
     parser.add_argument("--stack", type=int, default=4)
+    parser.add_argument("--imu", action="store_true", help="Train with synchronized gyro and accelerometer history.")
     parser.add_argument("--replay", type=int, default=40_000)
     parser.add_argument("--batch", type=int, default=128)
     parser.add_argument("--warmup", type=int, default=8_000)
@@ -180,8 +181,8 @@ def train(args, agent, lib):
     anchor_digest = hashlib.sha256(args.protect_qualified.read_bytes()).hexdigest() if protected else None
     args.run_dir.mkdir(parents=True, exist_ok=True)
     shape = (args.height, args.width, 3)
-    replay = Replay(args.replay, args.envs, shape, args.stack, args.n_step, args.gamma, rng)
-    demonstrations = (Demonstrations([], args.demo_sim, args.stack, args.height, args.width, args.seed)
+    replay = Replay(args.replay, args.envs, shape, args.stack, args.n_step, args.gamma, rng, with_imu=args.imu)
+    demonstrations = (Demonstrations([], args.demo_sim, args.stack, args.height, args.width, args.seed, with_imu=args.imu)
                       if args.demo_sim else None)
     rewards = np.zeros(args.envs, np.float32)
     flags = np.zeros(args.envs, np.uint8)
@@ -289,13 +290,15 @@ def train(args, agent, lib):
                     noise = max(.055, .13 - .075 * steps / max(1, args.steps // 2))
                 else:
                     noise = max(.10, .32 - .22 * steps / max(1, args.steps // 2))
+                imu = np.stack([env.imu_window(args.stack) for env in envs]) if args.imu else None
                 if steps < args.warmup and not warm_started:
                     exploration = initial_exploration(rng, exploration)
                     actions = np.clip(exploration + trim, -1., 1.)
                 else:
-                    actions = agent.action(starts, noise)
+                    actions = agent.action(starts, noise, imu=imu)
                 if reference_count:
-                    actions[:reference_count] = agent.action(starts[:reference_count], reference=True)
+                    actions[:reference_count] = agent.action(starts[:reference_count], reference=True,
+                                                             imu=imu[:reference_count] if args.imu else None)
                 if steps < args.sprint_exploration_steps:
                     probability = .16 * (1. - steps / args.sprint_exploration_steps)
                     for idx in range(reference_count, args.envs):
@@ -324,7 +327,9 @@ def train(args, agent, lib):
                     if idx == reference_count and publisher is not None:
                         publisher.show(frame, gates=envs[idx].lap_stats()[0], step=steps,
                                        phase="SPEED RL", status=1 if crash else 2 if timeout else 0)
-                replay.append(starts[:, -1], actions, rewards, flags, next_frames)
+                next_imu = np.stack([env.imu_window(1)[0] for env in envs]) if args.imu else None
+                replay.append(starts[:, -1], actions, rewards, flags, next_frames,
+                              imu[:, -1] if args.imu else None, next_imu)
                 for idx in np.flatnonzero(flags):
                     next_frames[idx] = reset(idx, steps)
                     starts[idx] = next_frames[idx]
@@ -381,7 +386,8 @@ def train(args, agent, lib):
                                      "reward_version": reward_version, "anchor_digest": anchor_digest,
                                      "sprint_exploration_steps": args.sprint_exploration_steps,
                                      "full_throttle_steps": full_throttle_steps},
-                                    starts[:, -1], demonstrations)
+                                    starts[:, -1], demonstrations,
+                                    np.stack([env.imu_window(1)[0] for env in envs]) if args.imu else None)
                     last_save = steps
                     print(json.dumps({"saved_training_state": str(path), "steps": steps}), flush=True)
         elapsed = time.monotonic() - started
@@ -405,7 +411,7 @@ def main():
         torch.backends.cudnn.allow_tf32 = True
         torch.backends.cudnn.benchmark = True
     lib = load_sim()
-    agent = Agent(args.stack, device, lib.sim_hover_stick())
+    agent = Agent(args.stack, device, lib.sim_hover_stick(), with_imu=args.imu)
     if args.initialize:
         agent.load(args.initialize)
         # Preserve visual features while the critic adapts to the new replay.

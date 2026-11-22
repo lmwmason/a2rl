@@ -266,7 +266,7 @@ mod tests {
         while race.status == Status::Racing {
             race.step(mode2_acro(teacher.action(&race))).unwrap();
         }
-        assert_eq!((race.status, race.passed), (Status::Finished, 22));
+        assert_eq!((race.status, race.passed), (Status::Finished, 24));
         assert!(race.official_seconds().unwrap() < 80.);
     }
 }

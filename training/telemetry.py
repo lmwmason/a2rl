@@ -142,6 +142,7 @@ def stream_run(root, school, speed, mode):
                               "round": latest.get("round", 0),
                               "steps": latest.get("steps", latest.get("transitions", 0)),
                               "target_gate": latest.get("target_gate", 0),
+                              "gates_per_race": latest.get("gates_per_race", 22),
                               "recent_gates": values[-60:], "best_gates": max(values, default=0.),
                               "recent_finish_times": finish_time_history(metrics, run == speed),
                               "finish_rate": latest.get("two_lap_rate", 0.),
@@ -165,6 +166,7 @@ def stream_run(root, school, speed, mode):
                                           "course": os.environ.get("A2RL_COURSE", "2025"),
                                           "physics_engine": os.environ.get("A2RL_PHYSICS_ENGINE", "rust"),
                                           "round": latest.get("round", 0),
+                                          "gates_per_race": latest.get("gates_per_race", 22),
                                           "steps": latest.get("steps", latest.get("transitions", 0)),
                                           "version": str(key[1])}, stream.read()))
                         last_checkpoint = key

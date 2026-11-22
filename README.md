@@ -4,7 +4,7 @@ An indoor FPV racing research project with a Rust simulator for batch experiment
 
 [Open the English training dashboard](https://a2rl-fpv-dashboard.front.cbgpu.com/).
 
-![Elodin FPV frame from the 2026 practice reconstruction](docs/screenshots/elodin-2026-fpv.png)
+![Rust FPV frame rendered from an Elodin takeoff on the 2026 race reconstruction](docs/screenshots/elodin-2026-fpv.png)
 
 The public dashboard shows the replay, its simulator, and evaluation histories. In the absence of an Elodin feed it plays the saved firmware takeoff check and shows **No live training**. The takeoff clip does not have an evaluation round.
 
@@ -13,7 +13,7 @@ The public dashboard shows the replay, its simulator, and evaluation histories. 
 Run from the project root with Rust 1.88 or later. The desktop app uses eframe on Wayland or X11 on Linux.
 
 ```bash
-cargo run --release
+A2RL_COURSE=2026-practice cargo run --release
 ```
 
 Select **Start flight** or press **Space**. Set throttle with **W** and **S** during the three-second countdown. Physics starts on **GO**, and the HUD shows lap and elapsed time.
@@ -76,9 +76,11 @@ Use a new run directory when changing courses or the vehicle model. Existing pol
 
 The Elodin runner uses the A2RL 2025 reference airframe and supports the 2025 and 2026 practice layouts. Betaflight SITL runs its rate controller and mixer at 1 kHz in lockstep with the plant. The policy reads 30 Hz FPV and synchronized body-frame gyro and acceleration. It emits Mode 2 channels in AETR order. Elodin passes these channels to the firmware's SITL receiver via UDP. Batch training currently uses the Rust learner. An Elodin rollout is a separate validation run.
 
-Set `A2RL_COURSE=2026-practice` to use the 2026 layout reconstructed from UC Berkeley's simulator configuration. The route counts 11 gates per lap and uses a season-specific gate mesh with LED strips based on organizer photos. The organizer describes a 14-gate arena. Gate dimensions, lighting, and the full official event route still require authoritative specifications. [Open layout](https://github.com/airobotics-ucberkeley/isaac_drone_racer_public/blob/66138b7621f051ce6d31dc418a57edf5027f8381/tasks/drone_racer/drone_racer_a2rl_cfg_full.py) · [Organizer photo and 2026 report](https://a2rl.io/news/45/a2rl-drone-championship-sets-the-pace-for-ai-in-autonomous-fligh)
+Set `A2RL_COURSE=2026-practice` to use the 2026 race reconstruction. The horizontal gate centers and headings come from Figure 5 in FlyBy's competition flight report. Figure 2 shows the two double apertures used for the Split-S and Ladder. The simulated sequence scores 12 apertures per lap. The organizer describes a 14-gate arena. The model uses estimated gate heights, start location, LED dimensions, and hall bounds. [FlyBy flight data and figures](https://www.imavs.org/pdf/imav.2026.1) · [Organizer race page](https://a2rl.io/autonomous-drone-race) · [Organizer fixtures photo](https://a2rl.io/news/45/a2rl-drone-championship-sets-the-pace-for-ai-in-autonomous-fligh)
 
-The [airframe profile](assets/a2rl-2025-airframe.toml) describes the 966 g aircraft, inertia used in this project, motor response, drag fit, and reference camera dimensions. Set `A2RL_AIRFRAME` to a different TOML profile when a new airframe has been measured. Elodin uses a pinhole camera with the reference tilt and nominal field of view. Firmware rates, the 2027 aircraft, and the 2027 course require their own specifications.
+![Gate centers and crossing directions for the reconstructed 2026 course](docs/screenshots/a2rl-2026-race-plan.png)
+
+The [airframe profile](assets/a2rl-2025-airframe.toml) describes the 966 g aircraft, inertia, motor response, and drag fit used in this project. Set `A2RL_AIRFRAME` to a measured replacement profile as data becomes available. The original Rust fisheye renderer produces FPV from Elodin's time-stamped position and attitude. The recorded 480 × 360 video and the policy's 96 × 72 RGB images derive from the same frames. The renderer keeps the floor, curtain walls, ceiling lights, and optional HDZero-style breakup. The Elodin editor can separately show its pinhole preview with `A2RL_ELODIN_PREVIEW=1`. Firmware rates and hardware for the entry year still require their own measurements.
 
 Build the Rust library and set up the external Elodin harness. The harness commit and Elodin release below pin the bridge and camera API. Install Git LFS before cloning to retrieve its visual assets.
 
@@ -102,12 +104,13 @@ Install the Elodin 0.17.3 CLI, then run a short takeoff check or evaluate an RGB
 a2rl_root="$PWD"
 cd "$A2RL_ELODIN_ROOT"
 A2RL_COURSE=2026-practice A2RL_ELODIN_SECONDS=1.4 A2RL_ELODIN_DB="$(mktemp -d)/flight" \
+  A2RL_ELODIN_FPV="$a2rl_root/runs/validation/elodin-takeoff.mp4" \
   elodin run "$a2rl_root/tools/elodin_a2rl.py"
 A2RL_COURSE=2026-practice A2RL_ELODIN_POLICY="$a2rl_root/runs/mck-imu-racing-v1/best.pt" \
   A2RL_ELODIN_DB="$(mktemp -d)/flight" elodin editor "$a2rl_root/tools/elodin_a2rl.py"
 ```
 
-Use a fresh `A2RL_ELODIN_DB` for every rollout. The runner reports contacts, ordered passes, and two-lap time for completed flights. The 2026 firmware smoke test reached 0.96 m altitude and exported 41 FPV frames at 820 × 616. A sustained two-lap flight in Elodin and flight-log agreement for the target airframe remain unverified. [Elodin release](https://github.com/elodin-sys/elodin/releases/tag/v0.17.3) · [Upstream lockstep bridge](https://github.com/elodin-sys/ai-grand-prix/blob/13f9f9e3d5a3130f0ce0b65500d9f309cc1e11b2/ARCHITECTURE.md)
+Use a fresh `A2RL_ELODIN_DB` for each rollout. FFmpeg records the shared camera when `A2RL_ELODIN_FPV` is set. `A2RL_FPV_EXPOSURE`, `A2RL_FPV_BREAKUP`, and `A2RL_FPV_SEED` set the camera effect parameters. The runner reports contacts and ordered passes. A sustained two-lap flight in Elodin and full flight-log agreement for the target airframe remain unverified. [Elodin release](https://github.com/elodin-sys/elodin/releases/tag/v0.17.3) · [Upstream lockstep bridge](https://github.com/elodin-sys/ai-grand-prix/blob/13f9f9e3d5a3130f0ce0b65500d9f309cc1e11b2/ARCHITECTURE.md)
 
 ## Policy and rewards
 

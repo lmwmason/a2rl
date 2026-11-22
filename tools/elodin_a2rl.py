@@ -83,7 +83,7 @@ def configure_plant(physics, profile):
     physics.create_apply_forces_system = forces_system
 
 
-def configure_course(course, lib, season2, asset):
+def configure_course(course, lib, season2, asset, finish_capture):
     import numpy as np
 
     pointer = ct.POINTER(ct.c_float)
@@ -99,20 +99,22 @@ def configure_course(course, lib, season2, asset):
     low, high = np.asarray(geometry[4:7]), np.asarray(geometry[7:10])
     low[:2] += .205
     high -= .205
-    n = lib.sim_gate_count()
+    n = lib.sim_course_gate_count(season2)
     frames = []
     for i in range(n + 1):
         pose = (ct.c_float * 4)()
-        if not lib.sim_course_gate_pose(season2, i, pose):
+        if lib.sim_course_gate_pose(season2, i, pose):
+            frames.append(course.Gate(i, tuple(pose[:3]), pose[3]))
+        elif i < n:
             raise RuntimeError(f"Cannot read A2RL gate {i}")
-        frames.append(course.Gate(i, tuple(pose[:3]), pose[3]))
     course.EASY_COURSE = tuple(replace(frame, index=lap * n + frame.index)
                                for lap in range(2) for frame in frames[:n])
     spawn = course.spawn_gates
     course.spawn_gates = lambda world, path: spawn(world, tuple(frames))
+    pitch = 0.0 if season2 else 90.0
     course.schematic_for = lambda path: "\n".join(
         f'object_3d gate_{gate.index}.world_pos {{\n'
-        f'    glb path="{asset}" rotate="(0.0, 90.0, {gate.yaw_deg})"\n'
+        f'    glb path="{asset}" rotate="(0.0, {pitch}, {gate.yaw_deg})"\n'
         f'}}' for gate in frames)
     previous, current = (ct.c_float * 3)(), (ct.c_float * 3)()
     contact = False
@@ -138,6 +140,7 @@ def configure_course(course, lib, season2, asset):
         finished = last + 1 == len(path)
         official = times[last] - times[0] if finished else None
         print(f"[A2RL] gates={last + 1}/{len(path)} contact={contact} official_seconds={official}", flush=True)
+        finish_capture()
 
     course.detect_gate_pass = detect
     course.print_summary = summary
@@ -173,7 +176,18 @@ def main():
         os.environ["ELODIN_ASSETS_DIR"] = str(assets)
         write_gate(assets / asset)
     lib = load_sim()
-    elodin_policy.contact, start, heading = configure_course(course, lib, season2, asset)
+    path = os.environ.get("A2RL_ELODIN_FPV")
+    if path or os.environ.get("A2RL_ELODIN_POLICY"):
+        if not hasattr(lib, "sim_render_pose"):
+            raise RuntimeError("Rebuild the simulator library for the shared FPV camera.")
+        elodin_policy.camera = elodin_policy.CameraFeed(
+            lib, Path(path).expanduser().resolve() if path else None, int(cfg.fpv_rate),
+            float(os.environ.get("A2RL_FPV_BREAKUP", "0")),
+            float(os.environ.get("A2RL_FPV_EXPOSURE", "1")),
+            int(os.environ.get("A2RL_FPV_SEED", "1")),
+        )
+    finish_capture = elodin_policy.camera.close if elodin_policy.camera else lambda: None
+    elodin_policy.contact, start, heading = configure_course(course, lib, season2, asset, finish_capture)
     if os.environ.get("A2RL_ELODIN_FLOW_TEACHER") == "1":
         if os.environ.get("A2RL_ELODIN_POLICY"):
             raise ValueError("Select one pilot for Elodin validation.")
@@ -205,7 +219,11 @@ def main():
                             create_frustum=True, fps=cfg.fpv_rate)
         return camera.DB_NAME
 
-    camera.register = register_camera
+    if elodin_policy.camera is not None and os.environ.get("A2RL_ELODIN_PREVIEW") != "1":
+        camera.register = lambda world, drone: camera.DB_NAME
+        camera.collect_frame = lambda ctx, name: None
+    else:
+        camera.register = register_camera
     # Elodin 0.17.3's render server publishes cameras at their configured FPS.
     camera.request_render = lambda ctx, name: None
     print(f"[A2RL] {course_name}; {profile['name']}: {cfg.mass:.3f} kg, "
@@ -221,7 +239,9 @@ def main():
         # The upstream Crazyflie preview mesh would block this aircraft's FPV image.
         first = content.index("    object_3d drone.world_pos {")
         last = content.index("    vector_arrow", first)
-        return world_schematic(world, content[:first] + content[last:], name)
+        content = (content[:first] + content[last:]).replace(
+            "FPV Camera (640x360)", "Elodin preview")
+        return world_schematic(world, content, name)
 
     def run(world, *args, **kwargs):
         sys.argv.remove("--no-s10")

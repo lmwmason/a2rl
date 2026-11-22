@@ -6,5 +6,6 @@
   "active": false,
   "connection": "disconnected",
   "recent_gates": [],
-  "recent_finish_times": []
+  "recent_finish_times": [],
+  "gates_per_race": 24
 }

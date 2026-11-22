@@ -13,7 +13,7 @@ const quantity = (value, unit) => Number.isFinite(value) ? value.toFixed(2) + " 
 const camera = byId("fpv");
 const chart = byId("history");
 const chartContext = chart.getContext("2d");
-const trend = { values: [], key: "" };
+const trend = { values: [], key: "", limit: 22 };
 const finishChart = byId("finish-history");
 const finishTrend = { values: [], key: "", speed: false };
 let playing = null;
@@ -84,7 +84,7 @@ function drawHistory() {
     chartContext.beginPath();
     series.forEach((value, index) => {
       const x = 3 + (width - 6) * index / Math.max(1, series.length - 1);
-      const y = height - 3 - (height - 6) * Math.max(0, Math.min(value, 22)) / 22;
+      const y = height - 3 - (height - 6) * Math.max(0, Math.min(value, trend.limit)) / trend.limit;
       if (index === 0) {
         chartContext.moveTo(x, y);
         if (series.length === 1) chartContext.fillRect(x - 2, y - 2, 4, 4);
@@ -182,7 +182,7 @@ function startReplay() {
       : playing.phase === "SPEED RL" ? "Reinforcement learning · " + count(playing.steps) + " steps"
       : playing.round ? "Imitation · Round " + count(playing.round) : "Imitation checkpoint";
     setText("replay-stage", stage);
-    setText("flight-gates", count(playing.gates) + " / 22");
+    setText("flight-gates", count(playing.gates) + " / " + count(playing.gates_per_race ?? 22));
     setText("replay-result", firmwareCheck ? "Takeoff verified"
       : { 1: "Crash", 2: "Timed out", 3: "Stalled", 4: "Finished two laps" }[playing.status] || "—");
     setText("replay-physics", physicsLabel(playing));
@@ -213,7 +213,7 @@ function renderStatus(info) {
   const speedTraining = info.phase === "SPEED RL";
   const season2 = info.course === "2026-practice";
   for (const row of document.querySelectorAll(".evaluation")) row.hidden = info.phase === "VALIDATION";
-  setText("course", season2 ? "2026 practice reconstruction" : info.course === "2025" ? "2025 baseline" : "—");
+  setText("course", season2 ? "2026 race reconstruction" : info.course === "2025" ? "2025 baseline" : "—");
   if (info.archived) {
     pill("connection", "No live training", "stale");
   } else if (connected) {
@@ -233,10 +233,14 @@ function renderStatus(info) {
   setText("approach-delay", quantity(info.mean_gate_approach_delay_seconds, "s"));
 
   const values = Array.isArray(info.recent_gates) ? info.recent_gates : [];
-  const key = values.join(",");
+  const limit = info.gates_per_race ?? 22;
+  const key = JSON.stringify([limit, values]);
   if (key !== trend.key) {
     trend.key = key;
     trend.values = values;
+    trend.limit = limit;
+    setText("gates-axis-max", count(limit));
+    setText("gates-axis-mid", count(limit / 2));
     drawHistory();
   }
   setText("history-count", values.length ? "Last " + count(values.length) + " evaluations" : "Awaiting evaluation");

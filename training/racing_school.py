@@ -16,7 +16,7 @@ from . import checkpoint
 from .agent import Agent, pixel_tensor, random_shift, stick_loss
 from .betaflight_link import decode_rc, encode_rc
 from .demonstrations import Demonstrations
-from .sim import Environment, LEGACY_PHYSICS, load_sim, physics_identity, teacher_profile
+from .sim import Environment, LEGACY_PHYSICS, gate_count as course_gate_count, load_sim, physics_identity, teacher_profile
 from .telemetry import FramePublisher
 from .train import fresh_stack
 
@@ -103,7 +103,7 @@ def restore_school(path, agent, aux, optimizer, buffer, rng, physics):
 
 def evaluate_student(agent, env, stack, seed, episodes, teacher=False):
     """Use held-out ground starts. No intervention is permitted in student evaluations."""
-    n_gates = env.lib.sim_gate_count() * 2
+    n_gates = course_gate_count(env.lib) * 2
     passes, crashes, times = [], 0, []
     approach_delay, crossing_speed = 0., 0.
     rng = np.random.default_rng(seed)
@@ -131,6 +131,7 @@ def evaluate_student(agent, env, stack, seed, episodes, teacher=False):
             obs[-1] = frame
     return {
         "gates": passes,
+        "gates_per_race": n_gates,
         "gate_one_rate": sum(x >= 1 for x in passes) / episodes,
         "gate_two_rate": sum(x >= 2 for x in passes) / episodes,
         "two_lap_rate": len(times) / episodes,
@@ -171,9 +172,9 @@ def training_reset(env, index, rng, target, continuous=False):
     if index % 4 < 2:
         return env.ground_start(side=rng.uniform(-.25, .25), exposure=exposure,
                                 breakup=breakup, video_seed=video_seed)
-    gate = (target - 1) % env.lib.sim_gate_count()
+    gate = (target - 1) % course_gate_count(env.lib)
     if index % 4 == 2 and target > 1:
-        gate = (gate - 1) % env.lib.sim_gate_count()
+        gate = (gate - 1) % course_gate_count(env.lib)
         return env.after_gate(gate, side=rng.uniform(-.20, .20), height=rng.uniform(-.17, .17),
                               speed=rng.uniform(.5, 3.), exposure=exposure, breakup=breakup, video_seed=video_seed)
     return env.reset(gate, side=rng.uniform(-.38, .38),
@@ -350,7 +351,7 @@ def main():
         buffer = ExpertReplay(args.capacity // args.envs, args.envs, height, width, args.stack, args.imu)
         best = first_full = None
         qualified = first_round = 0
-        n_gates = lib.sim_gate_count() * 2
+        n_gates = course_gate_count(lib) * 2
         target = n_gates if args.full_course else 1
         if args.initialize:
             agent.load(args.initialize)

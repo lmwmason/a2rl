@@ -14,7 +14,7 @@ from . import checkpoint
 from .agent import Agent
 from .demonstrations import Demonstrations
 from .replay import Replay
-from .sim import Environment, LEGACY_PHYSICS, load_sim, physics_identity, reward_profile
+from .sim import Environment, LEGACY_PHYSICS, gate_count as course_gate_count, load_sim, physics_identity, reward_profile
 from .telemetry import FramePublisher
 
 def options():
@@ -81,7 +81,7 @@ def evaluate(agent, env, stack, episodes, official=False):
     stalls = 0
     approach_delay = 0.
     gate_speed_sum = 0.
-    gates_per_lap = env.lib.sim_gate_count()
+    gates_per_lap = course_gate_count(env.lib)
     rng = np.random.default_rng(71)
     for index in range(episodes):
         reset = env.official_start if official else env.ground_start
@@ -113,6 +113,7 @@ def evaluate(agent, env, stack, episodes, official=False):
             records.append(best)
         returns.append(reward_total)
     return {"return": float(np.mean(returns)), "gates_mean": float(np.mean(passes)),
+            "gates_per_race": 2 * gates_per_lap,
             "laps_total": sum(gate // gates_per_lap for gate in passes),
             "best_lap_seconds": min(records, default=None), "crash_rate": crashes / episodes,
             "official_mean_seconds": float(np.mean(official_times)) if official_times else None,
@@ -124,8 +125,8 @@ def evaluate(agent, env, stack, episodes, official=False):
             "stall_rate": stalls / episodes,
             "launch_to_gate_one_rate": sum(gate >= 1 for gate in passes) / episodes,
             "gate_two_rate": sum(gate >= 2 for gate in passes) / episodes,
-            "split_s_rate": sum(gate >= 6 for gate in passes) / episodes,
-            "slalom_rate": sum(gate >= 10 for gate in passes) / episodes,
+            "split_s_rate": sum(gate >= (8 if gates_per_lap == 12 else 6) for gate in passes) / episodes,
+            "slalom_rate": sum(gate >= 10 for gate in passes) / episodes if gates_per_lap == 11 else None,
             "lap_rate": sum(gate >= gates_per_lap for gate in passes) / episodes,
             "two_lap_rate": sum(gate >= 2 * gates_per_lap for gate in passes) / episodes}
 
@@ -194,8 +195,9 @@ def train(args, agent, lib):
     gate_practice = np.linspace(0.80, 0.25, 101)
     if protected:
         gate_practice = np.linspace(0.20, 0.35, 101)
-    gate_weights = np.ones(lib.sim_gate_count())
-    gate_weights[[4, 6, 10]] = 2.  # Split-S, slalom and hairpin.
+    gate_weights = np.ones(course_gate_count(lib))
+    difficult = [5, 6, 7, 10, 11] if len(gate_weights) == 12 else [4, 6, 10]
+    gate_weights[difficult] = 2.
     gate_weights /= gate_weights.sum()
     started = time.monotonic()
     last_report, last_eval = started, 0

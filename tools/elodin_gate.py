@@ -11,7 +11,8 @@ def write_gate(path):
         def point(u, v):
             xyz = [u, v]
             xyz.insert(axis, plane)
-            return xyz
+            # The gate's plane is perpendicular to +X and its top is +Z.
+            return xyz[2], xyz[0], xyz[1]
 
         a, b, c, d = point(u0, v0), point(u1, v0), point(u1, v1), point(u0, v1)
         positions[material].extend((a, b, c, a, c, d))

@@ -3,7 +3,7 @@ mod viewer;
 use std::time::{Duration, Instant};
 
 use a2rl_sim::{
-    camera::Camera, mode2_acro, Race, Status, CONTROL_HZ, GRAND_CHALLENGE_LAPS, PHYSICS_HZ,
+    camera::Camera, mode2_acro, Course, Race, Status, CONTROL_HZ, GRAND_CHALLENGE_LAPS, PHYSICS_HZ,
 };
 use eframe::egui::{self, Align2, Color32, FontId, Key, Pos2, Rect, Stroke, Vec2, ViewportCommand};
 
@@ -55,8 +55,8 @@ struct Fpv {
 }
 
 impl Fpv {
-    fn new(ctx: &egui::Context) -> Self {
-        let race = Race::grand_challenge();
+    fn new(ctx: &egui::Context, course: Course) -> Self {
+        let race = Race::grand_challenge_on(course);
         let camera = Camera::new(WIDTH, HEIGHT);
         let mut rgb = vec![0; camera.byte_len()];
         camera.render(&race, &mut rgb);
@@ -95,7 +95,7 @@ impl Fpv {
     fn reset(&mut self) {
         self.set_running(false);
         let breakup = self.race.video_breakup;
-        self.race = Race::grand_challenge();
+        self.race = Race::grand_challenge_on(self.race.course);
         self.race.video_breakup = breakup;
         self.throttle = 0.;
         self.countdown = 0;
@@ -236,7 +236,7 @@ impl Fpv {
             Status::Boundary => ("COURSE BOUNDARY", "Restart flight"),
             Status::Timeout => ("SESSION COMPLETE", "Restart flight"),
             Status::Stalled => ("GATE TIME EXPIRED", "Restart flight"),
-            Status::Finished => ("GRAND CHALLENGE FINISH", "Race again"),
+            Status::Finished => ("RACE FINISHED", "Race again"),
         };
         egui::Area::new(egui::Id::new("flight_menu"))
             .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
@@ -343,6 +343,10 @@ fn main() -> eframe::Result {
     if args.next().as_deref() == Some(std::ffi::OsStr::new("--watch")) {
         return viewer::launch(args.next().unwrap_or_else(|| "cbgpu-gpu4".into()));
     }
+    let course = match std::env::var("A2RL_COURSE").as_deref() {
+        Ok("2026-practice") => Course::Season2Practice2026,
+        _ => Course::GrandChallenge2025,
+    };
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1024., 768.])
@@ -352,7 +356,7 @@ fn main() -> eframe::Result {
     eframe::run_native(
         "A2RL FPV Simulator",
         options,
-        Box::new(|cc| Ok(Box::new(Fpv::new(&cc.egui_ctx)))),
+        Box::new(move |cc| Ok(Box::new(Fpv::new(&cc.egui_ctx, course)))),
     )
 }
 
@@ -363,7 +367,7 @@ mod tests {
 
     #[test]
     fn countdown_preloads_sticks_and_releases_on_go() {
-        let mut app = Fpv::new(&egui::Context::default());
+        let mut app = Fpv::new(&egui::Context::default(), Course::GrandChallenge2025);
         app.toggle_flight();
         let sticks = Sticks {
             throttle: 1.,

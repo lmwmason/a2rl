@@ -97,12 +97,15 @@ fn season2_gate_color(contact: Vec3) -> [u8; 3] {
     // Season 2 used continuous light strips along the aperture and the vertical outer edges.
     let edge = contact.y.abs();
     let aperture = edge.max(contact.z.abs());
-    if (contact.x.abs() > 0.38 && aperture < 0.79) || edge > 1.325 {
+    let face = contact.x.abs() > 0.38;
+    if face && (aperture < 0.79 || edge > 1.325) {
         [236, 221, 255]
-    } else if contact.x.abs() > 0.38 {
-        [84, 30, 172]
+    } else if face {
+        let grain = ((contact.y * 147.).floor() as i32 ^ (contact.z * 183.).floor() as i32) & 7;
+        let lit = (5. * (contact.z + 1.35) + grain as f32 * 0.6) as u8;
+        [74 + lit, 25 + lit, 155 + lit]
     } else {
-        [49, 18, 108]
+        [51, 23, 105]
     }
 }
 

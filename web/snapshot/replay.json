@@ -5,6 +5,7 @@
   "physics_engine": "elodin",
   "kind": "takeoff-check",
   "gates": 0,
-  "version": "1795349509000000000",
-  "url": "replay-1795349509000000000.mp4"
+  "version": "1795350968970224440",
+  "url": "replay-1795350968970224440.mp4",
+  "gates_per_race": 24
 }

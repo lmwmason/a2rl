@@ -74,21 +74,21 @@ pub const LAYOUT: [[f32; 4]; 11] = [
     [9., 14., 1.47, 90.],
 ];
 
-// A2RL Season 2 practice reconstruction from AI Robotics @ Berkeley, revision 66138b7.
-// The source positions are translated back to hall coordinates; +1.47 m places the
-// lower aperture above the floor. The repeated lower gate mesh is not an extra pass.
-pub const LAYOUT_2026: [[f32; 4]; 11] = [
-    [14., 34., 1.47, 0.],
-    [20., 30., 1.47, -45.],
-    [21., 22., 1.47, -60.],
-    [21., 14., 1.47, -120.],
-    [19., 6., 1.47, 170.],
-    [14., 14., 1.47, 180.],
-    [9., 6., 1.47, -108.],
-    [9., 6., 3.97, 72.],
-    [8., 14., 1.47, 108.],
-    [6., 22., 1.47, 72.],
-    [8., 30., 1.47, 45.],
+// Top-down gate poses digitized from FlyBy's 2026 competition overlay (IMAV 2026-1,
+// Fig. 5). Fig. 2 supplies the double-aperture geometry. Heights are estimates.
+pub const LAYOUT_2026: [[f32; 4]; 12] = [
+    [12.5, 2., 1.47, 180.],
+    [6.5, 6., 1.47, 135.],
+    [5.5, 14., 1.47, 120.],
+    [2.5, 24., 1.47, 90.],
+    [7.5, 30., 1.47, -10.],
+    [12.2, 22., 1.47, 0.],
+    [17.5, 30., 3.97, 80.],
+    [17.5, 30., 1.47, -100.],
+    [18.5, 22., 1.47, -80.],
+    [20.5, 14., 1.47, -100.],
+    [18.5, 6., 3.97, -135.],
+    [18.5, 6., 1.47, 45.],
 ];
 
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
@@ -99,7 +99,7 @@ pub enum Course {
 }
 
 impl Course {
-    pub fn layout(self) -> &'static [[f32; 4]; LAYOUT.len()] {
+    pub fn layout(self) -> &'static [[f32; 4]] {
         match self {
             Self::GrandChallenge2025 => &LAYOUT,
             Self::Season2Practice2026 => &LAYOUT_2026,
@@ -109,21 +109,21 @@ impl Course {
     pub fn start(self) -> (Vec3, f32) {
         match self {
             Self::GrandChallenge2025 => (START, START_HEADING),
-            Self::Season2Practice2026 => (Vec3::new(10., 34., 1.47), 0.),
+            Self::Season2Practice2026 => (Vec3::new(18.7, 2., 1.47), 180.),
         }
     }
 
     pub fn bounds(self) -> (Vec3, Vec3) {
         match self {
             Self::GrandChallenge2025 => (ARENA_MIN, ARENA_MAX),
-            Self::Season2Practice2026 => (Vec3::ZERO, Vec3::new(29., 41., 6.2)),
+            Self::Season2Practice2026 => (Vec3::new(-1., -2., 0.), Vec3::new(26., 36., 6.2)),
         }
     }
 
-    fn extra_frame(self) -> &'static Gate {
+    fn extra_frames(self) -> &'static [Gate] {
         match self {
-            Self::GrandChallenge2025 => &LOWER_FRAME,
-            Self::Season2Practice2026 => &UPPER_FRAME_2026,
+            Self::GrandChallenge2025 => &[LOWER_FRAME],
+            Self::Season2Practice2026 => &[],
         }
     }
 }
@@ -136,19 +136,6 @@ const LOWER_FRAME: Gate = Gate {
     center: Vec3::new(63., 20., 1.47),
     normal: Vec3::X,
     side: Vec3::Y,
-};
-const UPPER_FRAME_2026: Gate = Gate {
-    center: Vec3::new(8., 30., 3.97),
-    normal: Vec3::new(
-        std::f32::consts::FRAC_1_SQRT_2,
-        std::f32::consts::FRAC_1_SQRT_2,
-        0.,
-    ),
-    side: Vec3::new(
-        -std::f32::consts::FRAC_1_SQRT_2,
-        std::f32::consts::FRAC_1_SQRT_2,
-        0.,
-    ),
 };
 pub const BARS: [(Vec3, Vec3); 4] = [
     (
@@ -178,18 +165,20 @@ pub struct Gate {
 
 impl Gate {
     pub fn all() -> [Self; LAYOUT.len()] {
-        Self::on_course(Course::default())
+        LAYOUT.map(Self::from_pose)
     }
 
-    fn on_course(course: Course) -> [Self; LAYOUT.len()] {
-        course.layout().map(|[x, y, z, yaw]| {
-            let (sin, cos) = yaw.to_radians().sin_cos();
-            Self {
-                center: Vec3::new(x, y, z),
-                normal: Vec3::new(cos, sin, 0.),
-                side: Vec3::new(-sin, cos, 0.),
-            }
-        })
+    fn from_pose([x, y, z, yaw]: [f32; 4]) -> Self {
+        let (sin, cos) = yaw.to_radians().sin_cos();
+        Self {
+            center: Vec3::new(x, y, z),
+            normal: Vec3::new(cos, sin, 0.),
+            side: Vec3::new(-sin, cos, 0.),
+        }
+    }
+
+    fn on_course(course: Course) -> impl Iterator<Item = Self> {
+        course.layout().iter().copied().map(Self::from_pose)
     }
 
     pub fn basis(self, vector: Vec3) -> Vec3 {
@@ -380,7 +369,7 @@ enum RewardProfile {
 
 pub struct Race {
     pub drone: Drone,
-    pub gates: [Gate; LAYOUT.len()],
+    pub gates: Vec<Gate>,
     pub course: Course,
     pub ticks: usize,
     pub passed: usize,
@@ -413,11 +402,12 @@ impl Default for Race {
 
 impl Race {
     fn on_course(course: Course) -> Self {
-        let gates = Gate::on_course(course);
+        let gates: Vec<_> = Gate::on_course(course).collect();
         let (position, yaw) = course.start();
         let mut drone = Drone::new();
         drone.position = position;
         drone.rotation = Quat::from_rotation_z(yaw.to_radians());
+        let initial_distance = gates[0].center.distance(position);
         Self {
             drone,
             gates,
@@ -438,7 +428,7 @@ impl Race {
             start_gate: 0,
             timed_lap: true,
             last_gate_tick: 0,
-            initial_distance: gates[0].center.distance(position),
+            initial_distance,
             progress: 0.,
             on_launch_pad: false,
             grand_challenge: false,
@@ -464,7 +454,7 @@ impl Race {
         Self::grand_challenge_on(Course::default())
     }
 
-    fn grand_challenge_on(course: Course) -> Self {
+    pub fn grand_challenge_on(course: Course) -> Self {
         let mut race = Self::ground_start_on(course, 0., 1.);
         race.grand_challenge = true;
         race
@@ -486,9 +476,7 @@ impl Race {
     }
 
     pub fn gate_frames(&self) -> impl Iterator<Item = &Gate> {
-        self.gates
-            .iter()
-            .chain(std::iter::once(self.course.extra_frame()))
+        self.gates.iter().chain(self.course.extra_frames())
     }
 
     pub fn next_gate(&self) -> usize {
@@ -614,7 +602,7 @@ impl Race {
         speed: f32,
         exposure: f32,
     ) -> Self {
-        let index = gate_index % LAYOUT.len();
+        let index = gate_index % course.layout().len();
         let mut race = Self::practice_on(course, index + 1, 0., 0., exposure);
         let gate = race.gates[index];
         race.drone.position =

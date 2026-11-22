@@ -18,6 +18,7 @@ def physics_identity(lib):
     physics = {"engine": engine, "model_version": lib.sim_physics_model_version()}
     if course_profile() != "2025":
         physics["course"] = course_profile()
+        physics["layout_revision"] = 2
     return physics
 
 
@@ -54,6 +55,9 @@ def load_sim():
     lib = ct.CDLL(str(path.resolve()))
     lib.sim_gate_count.argtypes = []
     lib.sim_gate_count.restype = ct.c_size_t
+    if hasattr(lib, "sim_course_gate_count"):
+        lib.sim_course_gate_count.argtypes = [ct.c_bool]
+        lib.sim_course_gate_count.restype = ct.c_size_t
     lib.sim_hover_stick.argtypes = []
     lib.sim_hover_stick.restype = ct.c_float
     lib.sim_physics_model_version.argtypes = []
@@ -92,11 +96,22 @@ def load_sim():
     lib.sim_step.restype = ct.c_int
     lib.sim_rigid_state.argtypes = [ct.c_void_p, FLOAT_POINTER]
     lib.sim_rigid_state.restype = None
+    if hasattr(lib, "sim_render_pose"):
+        lib.sim_render_pose.argtypes = [ct.c_void_p, FLOAT_POINTER, ct.c_double, ct.c_void_p]
+        lib.sim_render_pose.restype = ct.c_bool
     lib.sim_lap_stats.argtypes = [ct.c_void_p, ct.POINTER(ct.c_uint32), ct.POINTER(ct.c_float)]
     lib.sim_lap_stats.restype = None
     lib.sim_official_seconds.argtypes = [ct.c_void_p]
     lib.sim_official_seconds.restype = ct.c_float
     return lib
+
+
+def gate_count(lib):
+    if course_profile() == "2025":
+        return lib.sim_gate_count()
+    if not hasattr(lib, "sim_course_gate_count"):
+        raise ValueError("Rebuild the simulator library for the 2026 course.")
+    return lib.sim_course_gate_count(True)
 
 
 class Environment:
@@ -191,6 +206,13 @@ class Environment:
         state = (ct.c_float * 13)()
         self.lib.sim_rigid_state(self.handle, state)
         return np.asarray(state).copy()
+
+    def render_pose(self, state, elapsed):
+        pose = np.ascontiguousarray(state, dtype=np.float32)
+        if pose.shape != (13,) or not self.lib.sim_render_pose(
+                self.handle, pose.ctypes.data_as(FLOAT_POINTER), elapsed, self.image.ctypes.data):
+            raise ValueError("Expected a finite position, velocity, quaternion and body rates.")
+        return self.image
 
     def lap_stats(self):
         gates, best = ct.c_uint32(), ct.c_float()

@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -9,7 +10,7 @@ import torch
 from training.agent import Agent
 from training.demonstrations import Clip
 from training.replay import Replay
-from training.sim import Environment, load_sim
+from training.sim import Environment, gate_count, load_sim
 from training.telemetry import FramePublisher, finish_time_history, read_packet
 from training.train import beats_record
 
@@ -81,6 +82,23 @@ class TelemetryTest(unittest.TestCase):
         self.assertEqual(series[2], {"at": 16000, "standard_s": None, "comparison_s": 110.2})
         self.assertEqual(finish_time_history([{"round": 9, "best_two_lap_s": 113.5}], speed=False),
                          [{"at": 9, "standard_s": None, "comparison_s": 113.5}])
+
+
+class SharedCameraTest(unittest.TestCase):
+    def test_external_pose_uses_the_native_2026_camera(self):
+        with patch.dict("os.environ", {"A2RL_COURSE": "2026-practice"}):
+            lib = load_sim()
+            env = Environment(lib, 96, 72)
+            try:
+                self.assertEqual(gate_count(lib), 12)
+                expected = env.official_start().copy()
+                state = env.rigid_state()
+                np.testing.assert_array_equal(env.render_pose(state, 0.), expected)
+                state[8:10] = [0., 1.]
+                self.assertFalse(np.array_equal(env.render_pose(state, 0.), expected))
+                self.assertEqual(env.lap_stats()[0], 0)
+            finally:
+                env.close()
 
 
 class RecordTargetTest(unittest.TestCase):

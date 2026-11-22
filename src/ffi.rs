@@ -26,6 +26,11 @@ pub extern "C" fn sim_gate_count() -> usize {
 }
 
 #[no_mangle]
+pub extern "C" fn sim_course_gate_count(season2: bool) -> usize {
+    course_from_flag(season2).layout().len()
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn sim_course_gate_pose(
     season2: bool,
     index: usize,
@@ -35,8 +40,7 @@ pub unsafe extern "C" fn sim_course_gate_pose(
     if let Some(pose) = course.layout().get(index) {
         *out = *pose;
         true
-    } else if index == LAYOUT.len() {
-        let frame = course.extra_frame();
+    } else if let Some(frame) = course.extra_frames().get(index - course.layout().len()) {
         let [x, y, z] = frame.center.to_array();
         *out = [x, y, z, frame.normal.y.atan2(frame.normal.x).to_degrees()];
         true
@@ -57,8 +61,7 @@ pub unsafe extern "C" fn sim_course_segment(
     let mut passed = false;
     let course = course_from_flag(season2);
     for (index, gate) in crate::Gate::on_course(course)
-        .iter()
-        .chain([course.extra_frame()])
+        .chain(course.extra_frames().iter().copied())
         .enumerate()
     {
         let (collision, crossed) = gate.progress(a, b);
@@ -270,6 +273,25 @@ pub unsafe extern "C" fn sim_step(
 #[no_mangle]
 pub unsafe extern "C" fn sim_rigid_state(env: *const Environment, output: *mut [f32; 13]) {
     *output = (&*env).race.drone.rigid_state();
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn sim_render_pose(
+    env: *mut Environment,
+    state: *const [f32; 13],
+    elapsed: f64,
+    image: *mut u8,
+) -> bool {
+    let env = &mut *env;
+    if !elapsed.is_finite() || elapsed < 0. || !env.race.drone.set_rigid_state(*state) {
+        return false;
+    }
+    env.race.ticks = (elapsed * crate::PHYSICS_HZ as f64).round() as usize;
+    env.camera.render(
+        &env.race,
+        std::slice::from_raw_parts_mut(image, env.camera.byte_len()),
+    );
+    true
 }
 
 #[no_mangle]

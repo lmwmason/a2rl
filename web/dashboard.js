@@ -8,6 +8,7 @@ const setText = (id, value) => {
 const number = new Intl.NumberFormat("en-US");
 const count = (value) => Number.isFinite(value) ? number.format(value) : "—";
 const percent = (value) => Number.isFinite(value) ? count(Math.round(value * 100)) + "%" : "—";
+const quantity = (value, unit) => Number.isFinite(value) ? value.toFixed(2) + " " + unit : "—";
 const camera = byId("fpv");
 const chart = byId("history");
 const chartContext = chart.getContext("2d");
@@ -35,7 +36,11 @@ async function requestData(url, video = false) {
 }
 
 async function readFeed(name) {
-  const requests = feeds.map((feed) => requestData(feed + name));
+  const requests = feeds.map(async (feed) => {
+    const response = await requestData(feed + name);
+    if (hosted && response.value.physics_engine !== "elodin") throw new Error("Elodin feed unavailable");
+    return response;
+  });
   try {
     if (typeof Promise.any === "function") return await Promise.any(requests);
     const responses = await Promise.all(requests.map((request) => request.catch(() => null)));
@@ -165,17 +170,21 @@ function startReplay() {
     camera.hidden = false;
     const download = byId("download-replay");
     download.href = playing.blob;
-    download.download = playing.phase === "SPEED RL" ? `a2rl-rl-${playing.steps}.mp4`
-      : `a2rl-imitation-round-${playing.round}.mp4`;
+    const firmwareCheck = playing.kind === "takeoff-check";
+    const season = playing.course === "2026-practice" ? "2026-practice" : "2025";
+    download.download = firmwareCheck ? `a2rl-${season}-elodin-takeoff.mp4`
+      : playing.phase === "SPEED RL" ? `a2rl-${season}-rl-${playing.steps}.mp4`
+      : `a2rl-${season}-imitation-round-${playing.round}.mp4`;
     download.hidden = false;
     byId("waiting").hidden = true;
-    const stage = playing.phase === "SPEED RL" ? "Reinforcement learning · " + count(playing.steps) + " steps"
+    const stage = firmwareCheck ? "Firmware takeoff check"
+      : playing.phase === "SPEED RL" ? "Reinforcement learning · " + count(playing.steps) + " steps"
       : playing.round ? "Imitation · Round " + count(playing.round) : "Imitation checkpoint";
     setText("replay-stage", stage);
     setText("flight-gates", count(playing.gates) + " / 22");
-    setText("replay-result", { 1: "Crash", 2: "Timed out", 3: "Stalled", 4: "Finished two laps" }[playing.status] || "—");
-    pill("video-state", playing.archived ? "Saved checkpoint replay" : "Student model replay",
-      playing.archived ? "stale" : "live");
+    setText("replay-result", firmwareCheck ? "Takeoff verified"
+      : { 1: "Crash", 2: "Timed out", 3: "Stalled", 4: "Finished two laps" }[playing.status] || "—");
+    setText("replay-physics", physicsLabel(playing));
   } else if (playing) {
     camera.currentTime = 0;
   }
@@ -183,24 +192,32 @@ function startReplay() {
 }
 camera.addEventListener("ended", startReplay);
 
+function physicsLabel(run) {
+  return { elodin: "Elodin + Betaflight SITL", rust: "Rust" }[run.physics_engine] ?? "—";
+}
+
 function renderStatus(info) {
   const connected = info.connection === "connected" && Date.now() / 1000 - info.snapshot_at < 15;
   const speedTraining = info.phase === "SPEED RL";
+  const season2 = info.course === "2026-practice";
+  setText("course", season2 ? "2026 practice reconstruction" : info.course === "2025" ? "2025 baseline" : "—");
   if (info.archived) {
-    pill("connection", "Saved snapshot · Feed unavailable", "stale");
+    pill("connection", "No live training", "stale");
   } else if (connected) {
     pill("connection", info.active ? "GPU online · Training" : "GPU online · Training idle", info.active ? "live" : "");
   } else {
     pill("connection", info.connection === "connecting" ? "Connecting to GPU" : "GPU feed offline", "stale");
   }
-  setText("phase", info.target_beaten ? "Target reached" : speedTraining ? "Reinforcement learning" : info.phase ? "Imitation learning" : "—");
+  setText("phase", info.phase === "VALIDATION" ? "Firmware validation" : info.target_beaten ? "Target reached" : speedTraining ? "Reinforcement learning"
+    : info.full_course ? "Full-course imitation" : info.phase ? "Imitation learning" : "—");
   setText("progress-label", speedTraining ? "Reinforcement learning steps" : "Imitation round");
   setText("progress", count(speedTraining ? info.steps : info.round));
   setText("steps", count(info.steps));
   setText("finish-rate", percent(info.finish_rate));
   setText("collision-rate", percent(info.collision_rate));
-  setText("best-time", Number.isFinite(info.best_two_lap_seconds) ? info.best_two_lap_seconds.toFixed(2) + " s" : "—");
-  setText("target", "Under " + (info.target_two_lap_seconds ?? 16.56).toFixed(2) + " s");
+  setText("best-time", quantity(info.best_two_lap_seconds, "s"));
+  setText("crossing-speed", quantity(info.mean_gate_crossing_speed_m_s, "m/s"));
+  setText("approach-delay", quantity(info.mean_gate_approach_delay_seconds, "s"));
 
   const values = Array.isArray(info.recent_gates) ? info.recent_gates : [];
   const key = values.join(",");
@@ -248,7 +265,7 @@ async function fetchReplay() {
       await queueReplay(await requestData("/snapshot/replay.json"));
     }
   } catch {
-    if (!playing) pill("video-state", "Preparing replay");
+    if (!playing) setText("waiting", "Waiting for replay");
   } finally {
     window.setTimeout(fetchReplay, 3000);
   }
@@ -262,7 +279,6 @@ async function queueReplay({ url, value: info }) {
   if (pending) URL.revokeObjectURL(pending.blob);
   pending = { ...info, blob };
   if (!playing || camera.ended) startReplay();
-  else pill("video-state", "Next replay ready", "live");
 }
 
 new ResizeObserver(drawHistory).observe(chart);

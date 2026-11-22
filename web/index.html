@@ -3,30 +3,21 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Watch A2RL FPV imitation and reinforcement learning">
-  <title>A2RL FPV Training</title>
+  <meta name="description" content="FPV policy evaluation, training metrics, and checkpoint replays">
+  <title>Flight Policy Research</title>
   <link rel="stylesheet" href="style.css">
   <script src="dashboard.js" defer></script>
 </head>
 <body>
   <main>
-    <header>
-      <div>
-        <p class="series">A2RL × DCL / 2025 GRAND CHALLENGE</p>
-        <h1>FPV Training</h1>
-      </div>
-      <p id="connection" class="pill" role="status">Connecting to GPU</p>
-    </header>
-
     <div class="layout">
       <section class="panel flight" aria-labelledby="camera-title">
         <div class="bar">
-          <h2 id="camera-title">Latest model replay</h2>
-          <span id="video-state" class="pill">Preparing replay</span>
+          <h2 id="camera-title">FPV replay</h2>
         </div>
         <div class="screen">
-          <video id="fpv" muted playsinline controls hidden aria-label="FPV replay of the latest student model"></video>
-          <p id="waiting">Rendering the latest checkpoint</p>
+          <video id="fpv" muted playsinline controls hidden aria-label="FPV replay"></video>
+          <p id="waiting">Loading replay</p>
         </div>
         <footer class="bar">
           <span id="replay-stage">—</span>
@@ -37,14 +28,21 @@
       </section>
 
       <section class="panel status" aria-labelledby="status-title">
-        <div class="bar"><h2 id="status-title">Training status</h2><span id="phase">—</span></div>
+        <div class="bar">
+          <h2 id="status-title">Status</h2>
+          <span id="connection" class="pill" role="status">Connecting</span>
+        </div>
         <dl>
+          <div><dt>Course</dt><dd id="course">—</dd></div>
+          <div><dt>Replay physics</dt><dd id="replay-physics">—</dd></div>
+          <div><dt>Phase</dt><dd id="phase">—</dd></div>
           <div><dt id="progress-label">Imitation round</dt><dd id="progress">—</dd></div>
           <div><dt>Training samples</dt><dd id="steps">—</dd></div>
-          <div><dt>Latest two-lap finish rate</dt><dd id="finish-rate">—</dd></div>
-          <div><dt>Latest crash rate</dt><dd id="collision-rate">—</dd></div>
+          <div><dt>Two-lap finish rate</dt><dd id="finish-rate">—</dd></div>
+          <div><dt>Crash rate</dt><dd id="collision-rate">—</dd></div>
+          <div><dt>Gate crossing speed</dt><dd id="crossing-speed">—</dd></div>
+          <div><dt>Slow approach time per run</dt><dd id="approach-delay">—</dd></div>
           <div><dt>Best two-lap time</dt><dd id="best-time">—</dd></div>
-          <div><dt>Target time</dt><dd id="target">Under 16.56 s</dd></div>
         </dl>
       </section>
 
@@ -75,16 +73,6 @@
         </div>
       </section>
     </div>
-    <details class="panel model">
-      <summary>Model and simulator</summary>
-      <dl>
-        <div><dt>Policy</dt><dd>Custom 3-layer CNN and MLP</dd></div>
-        <div><dt>Input and output</dt><dd>8 RGB frames → 4 Mode 2 Acro axes</dd></div>
-        <div><dt>Training</dt><dd>DAgger-style imitation, DrQ-v2-style reinforcement learning</dd></div>
-        <div><dt>Physics</dt><dd>Rust quadrotor model at 240 Hz, optional MuJoCo integration, Parry gate contacts</dd></div>
-        <div><dt>Libraries</dt><dd>PyTorch, NumPy, glam, eframe, FFmpeg</dd></div>
-      </dl>
-    </details>
   </main>
 </body>
 </html>

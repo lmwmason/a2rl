@@ -14,6 +14,7 @@ import torch
 
 from . import checkpoint
 from .agent import Agent, pixel_tensor, random_shift, stick_loss
+from .betaflight_link import decode_rc, encode_rc
 from .demonstrations import Demonstrations
 from .sim import Environment, LEGACY_PHYSICS, load_sim, physics_identity, teacher_profile
 from .telemetry import FramePublisher
@@ -23,23 +24,26 @@ from .train import fresh_stack
 class ExpertReplay:
     """Keep each RGB image once and reconstruct short histories inside episodes."""
 
-    def __init__(self, rows, envs, height, width, stack):
+    def __init__(self, rows, envs, height, width, stack, with_imu=False):
         self.frames = np.empty((rows, envs, height, width, 3), np.uint8)
         self.sticks = np.empty((rows, envs, 4), np.float32)
         self.features = np.empty((rows, envs, 12), np.float32)
         self.weights = np.empty((rows, envs), np.float32)
         self.starts = np.empty((rows, envs), np.int64)
+        self.imu = np.empty((rows, envs, 6), np.float32) if with_imu else None
         self.rows, self.envs, self.stack = rows, envs, stack
         self.next_start = np.zeros(envs, np.int64)
         self.count = 0
 
-    def append(self, frame, labels, features, confidence, ended):
+    def append(self, frame, labels, features, confidence, ended, imu=None):
         index = self.count % self.rows
         self.frames[index] = frame
         self.sticks[index] = labels
         self.features[index] = features
         self.weights[index] = confidence
         self.starts[index] = self.next_start
+        if self.imu is not None:
+            self.imu[index] = imu
         self.count += 1
         self.next_start[ended] = self.count
 
@@ -49,9 +53,10 @@ class ExpertReplay:
         env = rng.integers(self.envs, size=batch)
         indexes = row[:, None] + np.arange(1 - self.stack, 1)
         indexes = np.maximum(indexes, np.maximum(first, self.starts[row % self.rows, env])[:, None])
-        return (self.frames[indexes % self.rows, env[:, None]],
+        batch = (self.frames[indexes % self.rows, env[:, None]],
                 self.sticks[row % self.rows, env], self.features[row % self.rows, env],
                 self.weights[row % self.rows, env])
+        return (*batch, self.imu[indexes % self.rows, env[:, None]]) if self.imu is not None else batch
 
 
 REPLAY_FIELDS = ("frames", "sticks", "features", "weights", "starts")
@@ -69,7 +74,7 @@ def save_school(path, agent, aux, optimizer, buffer, rng, progress):
         data = BytesIO()
         torch.save(payload, data)
         archive.writestr("school.pt", data.getbuffer())
-        for field in REPLAY_FIELDS:
+        for field in REPLAY_FIELDS + (("imu",) if buffer.imu is not None else ()):
             checkpoint.write_array(archive, field, getattr(buffer, field)[:min(buffer.count, buffer.rows)])
 
 
@@ -81,7 +86,9 @@ def restore_school(path, agent, aux, optimizer, buffer, rng, physics):
         if payload["layout"] != (tuple(buffer.frames.shape), buffer.stack):
             raise ValueError("Use the original environment, replay and frame-stack settings to resume.")
         buffer.count = payload["count"]
-        for field in REPLAY_FIELDS:
+        if ("imu.npy" in archive.namelist()) != (buffer.imu is not None):
+            raise ValueError("Use the original IMU setting to resume.")
+        for field in REPLAY_FIELDS + (("imu",) if buffer.imu is not None else ()):
             getattr(buffer, field)[:min(buffer.count, buffer.rows)] = checkpoint.read_array(archive, field)
         buffer.next_start.fill(buffer.count)
     agent.set_weights(payload["agent"])
@@ -108,7 +115,7 @@ def evaluate_student(agent, env, stack, seed, episodes, teacher=False):
                                      exposure=float(rng.uniform(.90, 1.10)))
         obs = fresh_stack(frame, stack)
         for tick in range(1, 180 * 30 + 1):
-            action = env.expert_action() if teacher else agent.action(obs[None])[0]
+            action = env.expert_action() if teacher else agent.command(obs, env)
             frame, _, status = env.advance(action)
             gates, _ = env.lap_stats()
             if status or gates >= n_gates:
@@ -142,9 +149,14 @@ def evaluation_rank(result):
 
 
 def demonstration_loss(agent, demonstrations, batch):
-    frames, controls, confidence = demonstrations.sample(batch)
+    frames, controls, confidence, *imu = demonstrations.sample(batch)
     pixels = random_shift(pixel_tensor(frames, agent.device).float() / 255. - .5, pad=1)
-    return stick_loss(agent.actor(agent.encoder(pixels)).tanh(), controls, confidence)
+    return stick_loss(agent.actor(agent.policy_features(pixels, imu[0] if imu else None)).tanh(), controls, confidence)
+
+
+def demonstration_error(agent, sample):
+    frames, controls, _, *imu = sample
+    return float(np.abs(agent.action(frames, imu=imu[0] if imu else None) - controls).mean())
 
 
 def training_reset(env, index, rng, target, continuous=False):
@@ -179,6 +191,7 @@ def collect(envs, workers, agent, buffer, obs, rng, ticks, teacher_probability, 
             delay[i], _ = env.flow_stats()
     accidents = pace_samples = 0
     for tick in range(ticks):
+        imu = np.stack([env.imu_window(buffer.stack) for env in envs]) if buffer.imu is not None else None
         labels = np.asarray([env.expert_action() for env in envs], dtype=np.float32)
         features = np.asarray([env.expert_features() for env in envs], dtype=np.float32)
         if teacher_probability >= 1.:
@@ -187,7 +200,7 @@ def collect(envs, workers, agent, buffer, obs, rng, ticks, teacher_probability, 
         else:
             if tick % 6 == 0:
                 authority = rng.random(len(envs)) < teacher_probability
-            student = agent.action(obs)
+            student = agent.action(obs, imu=imu) if imu is not None else agent.action(obs)
             errors = np.abs(student - labels).max(axis=1)
             intervene = (errors > .48) & (rng.random(len(envs)) < .55)
             assisted = authority | intervene | (pace_assist_ticks > 0)
@@ -198,6 +211,8 @@ def collect(envs, workers, agent, buffer, obs, rng, ticks, teacher_probability, 
         if continuous_env is not None:
             assisted[continuous_env] = True
             action[continuous_env] = labels[continuous_env]
+        if imu is not None:
+            action = [decode_rc(encode_rc(command)) for command in action]
         following = np.empty_like(obs[:, -1])
         emphasis = 1. + 1.25 * np.abs(labels[:, [0, 2, 3]]).max(axis=1)
         tasks = [workers.submit(env.advance, command) for env, command in zip(envs, action)]
@@ -227,7 +242,7 @@ def collect(envs, workers, agent, buffer, obs, rng, ticks, teacher_probability, 
                 publisher.show(image, gates=gates, step=buffer.count * len(envs),
                                phase="IMITATION", status=status, driver="Teacher" if assisted[0] else "Student")
             following[i] = training_reset(envs[i], i, rng, target, continuous) if ended[i] else image
-        buffer.append(obs[:, -1], labels, features, emphasis, ended)
+        buffer.append(obs[:, -1], labels, features, emphasis, ended, None if imu is None else imu[:, -1])
         obs[:, :-1] = obs[:, 1:]
         obs[:, -1] = following
         obs[ended] = following[ended, None]
@@ -245,12 +260,14 @@ def main():
     parser.add_argument("--batch", type=int, default=96)
     parser.add_argument("--capacity", type=int, default=56_000)
     parser.add_argument("--stack", type=int, default=8)
+    parser.add_argument("--imu", action="store_true", help="Use RGB and simulated gyro/acceleration history.")
     parser.add_argument("--eval-episodes", type=int, default=3)
     parser.add_argument("--initialize", type=Path)
     parser.add_argument("--resume", type=Path)
     parser.add_argument("--live", action="store_true")
     parser.add_argument("--save-every", type=int, default=10)
     parser.add_argument("--consolidation-rounds", type=int, default=6)
+    parser.add_argument("--teacher-warmup-rounds", type=int, default=0)
     parser.add_argument("--teacher-only", action="store_true")
     parser.add_argument("--human-demos", nargs="+", type=Path, default=[],
                         help="Synchronized RGB and real Mode 2 inputs used alongside simulator expert labels.")
@@ -262,7 +279,7 @@ def main():
                         help="Separate MonoRace flights used only to report estimated control error.")
     args = parser.parse_args()
     if min(args.envs, args.collect_ticks, args.updates, args.batch, args.stack, args.eval_episodes,
-           args.save_every) <= 0 or min(args.rounds, args.consolidation_rounds) < 0:
+           args.save_every) <= 0 or min(args.rounds, args.consolidation_rounds, args.teacher_warmup_rounds) < 0:
         parser.error("Training counts must be positive.")
     if args.initialize and args.resume:
         parser.error("Choose initialization or resumption.")
@@ -279,13 +296,13 @@ def main():
     physics = physics_identity(lib)
     teacher = teacher_profile()
     height, width = 72, 96
-    human_demo = (Demonstrations(args.human_demos, [], args.stack, height, width, 213)
+    human_demo = (Demonstrations(args.human_demos, [], args.stack, height, width, 213, args.imu)
                   if args.human_demos else None)
-    human_validation = (Demonstrations(args.human_held_out, [], args.stack, height, width, 917).sample(192)
+    human_validation = (Demonstrations(args.human_held_out, [], args.stack, height, width, 917, args.imu).sample(192)
                         if args.human_held_out else None)
-    monorace_demo = (Demonstrations(args.monorace_demos, [], args.stack, height, width, 614)
+    monorace_demo = (Demonstrations(args.monorace_demos, [], args.stack, height, width, 614, args.imu)
                      if args.monorace_demos else None)
-    monorace_validation = (Demonstrations(args.monorace_held_out, [], args.stack, height, width, 918).sample(192)
+    monorace_validation = (Demonstrations(args.monorace_held_out, [], args.stack, height, width, 918, args.imu).sample(192)
                            if args.monorace_held_out else None)
     demo_ids = {}
     train_paths = args.human_demos + args.monorace_demos
@@ -293,6 +310,9 @@ def main():
     for path in train_paths + validation_paths:
         with path.open("rb") as stream:
             demo_ids[str(path)] = hashlib.file_digest(stream, "sha256").hexdigest()
+        if args.imu:
+            with path.with_suffix(".imu.npy").open("rb") as stream:
+                demo_ids[str(path)] += ":" + hashlib.file_digest(stream, "sha256").hexdigest()
     if {demo_ids[str(path)] for path in train_paths} & {demo_ids[str(path)] for path in validation_paths}:
         parser.error("Keep demonstration and held-out flights separate.")
     human_ids = {str(path): demo_ids[str(path)] for path in args.human_demos + args.human_held_out}
@@ -307,13 +327,16 @@ def main():
         if args.teacher_only:
             return
 
-        agent = Agent(args.stack, args.device, lib.sim_hover_stick())
-        auxiliary = torch.nn.Linear(128, 12).to(args.device)
+        agent = Agent(args.stack, args.device, lib.sim_hover_stick(), args.imu)
+        auxiliary = torch.nn.Linear(160 if args.imu else 128, 12).to(args.device)
+        parameters = [*agent.encoder.parameters(), *agent.actor.parameters()]
+        if agent.imu_encoder is not None:
+            parameters.extend(agent.imu_encoder.parameters())
         optimizer = torch.optim.AdamW(
-            [*agent.encoder.parameters(), *agent.actor.parameters(), *auxiliary.parameters()],
+            [*parameters, *auxiliary.parameters()],
             lr=1.0e-4 if args.initialize else 1.5e-4,
         )
-        buffer = ExpertReplay(args.capacity // args.envs, args.envs, height, width, args.stack)
+        buffer = ExpertReplay(args.capacity // args.envs, args.envs, height, width, args.stack, args.imu)
         best = first_full = None
         qualified = first_round = 0
         target = 1
@@ -322,7 +345,8 @@ def main():
         if args.resume:
             progress = restore_school(args.resume, agent, auxiliary, optimizer, buffer, rng, physics)
             if (progress.get("human_ids", {}) != human_ids or progress.get("monorace_ids", {}) != monorace_ids
-                    or progress.get("teacher_profile", "standard") != teacher):
+                    or progress.get("teacher_profile", "standard") != teacher
+                    or progress.get("teacher_warmup_rounds", 0) != args.teacher_warmup_rounds):
                 raise ValueError("Resume with the original teacher profile and flight datasets.")
             if human_demo is not None:
                 human_demo.rng.bit_generator.state = progress["human_rng"]
@@ -336,7 +360,7 @@ def main():
                     first_full, qualified = None, 0
                 saved_best = args.out / "best.pt"
                 if saved_best.is_file():
-                    previous = Agent(args.stack, args.device, lib.sim_hover_stick())
+                    previous = Agent(args.stack, args.device, lib.sim_hover_stick(), args.imu)
                     previous.load(saved_best)
                     best = evaluation_rank(evaluate_student(previous, test_env, args.stack,
                                                             EVALUATION_SEED, args.eval_episodes))
@@ -358,16 +382,17 @@ def main():
                 for round_no in count(first_round + 1):
                     if args.rounds and round_no > args.rounds:
                         break
-                    teacher_probability = max(.19, .57 - .012 * (round_no - 1))
+                    warmup = args.teacher_warmup_rounds
+                    teacher_probability = 1. if round_no <= warmup else max(.19, .57 - .012 * (round_no - warmup - 1))
                     accidents, pace_samples = collect(
                         envs, workers, agent, buffer, obs, rng, args.collect_ticks,
                         teacher_probability, target, publisher, continuous_env,
                     )
                     for _ in range(args.updates):
-                        frames, labels, features, weights = buffer.sample(rng, args.batch)
+                        frames, labels, features, weights, *imu = buffer.sample(rng, args.batch)
                         pixels = random_shift(pixel_tensor(frames, args.device).float() / 255. - .5, pad=1)
                         exposure = torch.empty((args.batch, 1, 1, 1), device=args.device).uniform_(.92, 1.08)
-                        embedding = agent.encoder((pixels * exposure).clamp(-.5, .5))
+                        embedding = agent.policy_features((pixels * exposure).clamp(-.5, .5), imu[0] if imu else None)
                         action = agent.actor(embedding).tanh()
                         pose_loss = torch.nn.functional.smooth_l1_loss(
                             auxiliary(embedding), torch.from_numpy(features).to(args.device))
@@ -382,7 +407,7 @@ def main():
                             loss = loss + .10 * monorace_loss
                         optimizer.zero_grad(set_to_none=True)
                         loss.backward()
-                        torch.nn.utils.clip_grad_norm_([*agent.encoder.parameters(), *agent.actor.parameters()], 5.)
+                        torch.nn.utils.clip_grad_norm_(parameters, 5.)
                         optimizer.step()
 
                     result = evaluate_student(agent, test_env, args.stack, EVALUATION_SEED, args.eval_episodes)
@@ -403,13 +428,11 @@ def main():
                     if human_loss is not None:
                         result["human_training_loss"] = float(human_loss.detach())
                     if human_validation is not None:
-                        real, controls, _ = human_validation
-                        result["human_heldout_stick_mae"] = float(np.abs(agent.action(real) - controls).mean())
+                        result["human_heldout_stick_mae"] = demonstration_error(agent, human_validation)
                     if monorace_loss is not None:
                         result["monorace_training_loss"] = float(monorace_loss.detach())
                     if monorace_validation is not None:
-                        real, controls, _ = monorace_validation
-                        result["monorace_heldout_proxy_mae"] = float(np.abs(agent.action(real) - controls).mean())
+                        result["monorace_heldout_proxy_mae"] = demonstration_error(agent, monorace_validation)
                     print(json.dumps(result), flush=True)
                     log.write(json.dumps(result) + "\n")
                     agent.save(args.out / "latest.pt")
@@ -433,6 +456,7 @@ def main():
                                     {"round": round_no, "target": target, "best": best,
                                      "first_full": first_full, "qualified": qualified, "physics": physics,
                                      "evaluation_seed": EVALUATION_SEED, "human_ids": human_ids,
+                                     "teacher_warmup_rounds": args.teacher_warmup_rounds,
                                      "teacher_profile": teacher, "monorace_ids": monorace_ids,
                                      "monorace_rng": monorace_demo.rng.bit_generator.state if monorace_demo else None,
                                      "human_rng": human_demo.rng.bit_generator.state if human_demo else None})

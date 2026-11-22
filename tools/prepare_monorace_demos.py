@@ -189,6 +189,7 @@ def main():
     parser.add_argument("--height", type=int, default=72)
     parser.add_argument("--workers", type=int, default=12)
     parser.add_argument("--central-cache", type=Path)
+    parser.add_argument("--validation-logs", action="store_true", help="Fetch only IMU and EKF for Logs 5, 7 and 8.")
     args = parser.parse_args()
     if min(args.width, args.height, args.workers) <= 0:
         parser.error("Resolution and workers must be positive.")
@@ -197,6 +198,17 @@ def main():
     if not cached.is_file():
         cached.write_bytes(download(CENTRAL_START, ARCHIVE_SIZE - 1))
     entries = directory(cached.read_bytes())
+    if args.validation_logs:
+        for number in (5, 7, 8):
+            folder = args.output / f"log{number}"
+            folder.mkdir(exist_ok=True)
+            for kind in ("imu", "ekf"):
+                name = next(name for name in entries
+                            if name.startswith(f"data/Log{number}_") and name.endswith(f"/{kind}.csv"))
+                destination = folder / f"{kind}.csv"
+                if not destination.is_file():
+                    destination.write_bytes(read_member(entries[name]))
+        return
     for alias in args.logs:
         make_log(entries, args.output, alias, args.width, args.height, args.workers)
 

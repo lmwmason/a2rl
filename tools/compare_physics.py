@@ -5,6 +5,7 @@ import math
 
 import numpy as np
 
+from training.betaflight_link import decode_rc, encode_rc
 from training.sim import Environment, load_sim
 
 
@@ -40,12 +41,15 @@ def compare(lib, name, commands):
         mujoco.close()
 
 
-def course(lib, engine):
+def course(lib, engine, msp=False):
     env = Environment(lib, 16, 12, physics=engine)
     try:
         env.official_start()
         while True:
-            _, _, status = env.advance(env.expert_action())
+            action = env.expert_action()
+            if msp:
+                action = decode_rc(encode_rc(action))
+            _, _, status = env.advance(action)
             if status:
                 return {"engine": engine, "status": status, "gates": env.lap_stats()[0],
                         "official_s": env.official_seconds() if status == 4 else None}
@@ -56,6 +60,7 @@ def course(lib, engine):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--course", action="store_true", help="Run the state-driven teacher on both backends.")
+    parser.add_argument("--msp", action="store_true", help="Send each command through the MSP v1 RC adapter.")
     args = parser.parse_args()
     lib = load_sim()
     hover = lib.sim_hover_stick()
@@ -67,6 +72,9 @@ def main():
         "combined turn": [[.25, hover + .05, -.2, .18]] * 10 + [[-.15, hover, .1, -.21]] * 14,
         "free fall": [[0., -1., 0., 0.]] * 8,
     }
+    if args.msp:
+        profiles = {name: [decode_rc(encode_rc(action)) for action in commands]
+                    for name, commands in profiles.items()}
     results = [compare(lib, name, commands) for name, commands in profiles.items()]
     print(json.dumps(results, indent=2), flush=True)
     if any(result["status"][0] != result["status"][1]
@@ -75,7 +83,7 @@ def main():
            or result["max_attitude_error_deg"] > .02 for result in results):
         raise SystemExit("Rust and MuJoCo exceeded the shared-input comparison tolerances.")
     if args.course:
-        races = [course(lib, engine) for engine in ("rust", "mujoco")]
+        races = [course(lib, engine, args.msp) for engine in ("rust", "mujoco")]
         print(json.dumps(races, indent=2))
         if any(race["status"] != 4 or race["gates"] != 2 * lib.sim_gate_count() for race in races):
             raise SystemExit("The teacher did not complete both laps on both engines.")

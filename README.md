@@ -53,6 +53,8 @@ HDZero-style breakup approximates localized degradation on a weak digital link. 
 
 ### Physics validation and MuJoCo
 
+The [simulator validation report](docs/simulator-validation.md) includes the MSP command path, the full-course check, and reproducible comparisons with held-out MonoRace flight logs.
+
 The default backend integrates the rigid body in Rust with glam. Python rollouts can also use MuJoCo while keeping the same motor model, body-rate controller, camera, scoring, and rewards. Parry performs swept sphere–box collision tests at gate frames for both backends. A regression test distinguishes a real corner contact from a near miss that previously touched the expanded bounding box.
 
 ```bash
@@ -121,6 +123,15 @@ To train a fresh end-to-end policy on MCK alone, use the two synchronized flight
 A2RL_PHYSICS_ENGINE=mujoco python -m training.imitate --device cuda --stack 8 --imu \
   --real runs/mck/train/*.npz --held-out runs/mck/holdout/flight-15p-trackRATM.npz \
   --official-eval --out runs/mck-e2e-v1
+```
+
+To adapt that RGB+IMU policy to A2RL with simulator demonstrations and supervised corrections:
+
+```bash
+A2RL_PHYSICS_ENGINE=mujoco A2RL_TEACHER_PROFILE=flow python -m training.racing_school \
+  --device cuda --imu --initialize runs/mck-e2e-v1/best.pt --teacher-warmup-rounds 5 \
+  --human-demos runs/mck/train/*.npz --human-held-out runs/mck/holdout/flight-15p-trackRATM.npz \
+  --out runs/mck-imu-racing-v1
 ```
 
 Evaluation and replay send the fused policy's four commands through the Betaflight-style MSP v1 RC boundary. The adapter encodes roll, pitch, throttle, and yaw in AETR order with `MSP_SET_RAW_RC`. The simulator decodes the frame, then uses its existing Acro controller, mixer, and MuJoCo rigid-body integration. This tests the command interface. Firmware timing, PID behavior, and hardware remain separate validation work. [Betaflight MSP documentation](https://betaflight.com/docs/wiki/guides/current/MSP-Companion-Computer-Control)

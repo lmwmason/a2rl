@@ -1,5 +1,6 @@
 pub mod camera;
 mod ffi;
+pub mod teacher;
 
 use glam::{Quat, Vec3};
 

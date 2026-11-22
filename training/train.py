@@ -38,6 +38,7 @@ def options():
     parser.add_argument("--resume", type=Path, help="Restore a saved training state, including optimizer and replay.")
     parser.add_argument("--checkpoint-every", type=int, default=0, help="Training steps between resumable snapshots.")
     parser.add_argument("--focus-gate-two", action="store_true", help="Practice the turn from gate 1 to gate 2.")
+    parser.add_argument("--official-eval", action="store_true", help="Rank speed by the official two-lap time.")
     parser.add_argument("--demo-sim", type=Path, nargs="*", default=[],
                         help="Simulator demonstrations used as a decaying actor regularizer.")
     args = parser.parse_args()
@@ -55,12 +56,14 @@ def fresh_stack(frame, stack):
     return np.repeat(frame[None], stack, axis=0)
 
 
-def evaluate(agent, env, stack, episodes):
+def evaluate(agent, env, stack, episodes, official=False):
     returns, passes, records, crashes = [], [], [], 0
+    official_times = []
     stalls = 0
     rng = np.random.default_rng(71)
     for index in range(episodes):
-        frame = env.ground_start() if index == 0 else env.ground_start(
+        reset = env.official_start if official else env.ground_start
+        frame = reset() if index == 0 else reset(
             side=rng.uniform(-0.35, 0.35), exposure=rng.uniform(0.85, 1.15))
         obs = fresh_stack(frame, stack)
         reward_total = 0.
@@ -72,6 +75,8 @@ def evaluate(agent, env, stack, episodes):
             if status:
                 crashes += int(status == 1)
                 stalls += int(status == 3)
+                if status == 4:
+                    official_times.append(env.official_seconds())
                 break
         gates, best = env.lap_stats()
         passes.append(gates)
@@ -82,6 +87,7 @@ def evaluate(agent, env, stack, episodes):
     return {"return": float(np.mean(returns)), "gates_mean": float(np.mean(passes)),
             "laps_total": sum(gate // gates_per_lap for gate in passes),
             "best_lap_seconds": min(records, default=None), "crash_rate": crashes / episodes,
+            "official_mean_seconds": float(np.mean(official_times)) if official_times else None,
             "stall_rate": stalls / episodes,
             "launch_to_gate_one_rate": sum(gate >= 1 for gate in passes) / episodes,
             "gate_two_rate": sum(gate >= 2 for gate in passes) / episodes,
@@ -107,6 +113,16 @@ def evaluate_gate_exit(agent, env, stack):
             obs[:-1] = obs[1:]
             obs[-1] = frame
     return {"gate_exit_to_two_rate": passed / len(starts), "gate_exit_crash_rate": crashes / len(starts)}
+
+
+def policy_rank(result, official):
+    if official:
+        time_seconds = result["official_mean_seconds"]
+        return (result["two_lap_rate"], -result["crash_rate"],
+                -time_seconds if time_seconds is not None else float("-inf"), result["gates_mean"])
+    fastest = result["best_lap_seconds"]
+    return (result["two_lap_rate"], result["lap_rate"], -fastest if fastest is not None else 0.,
+            result["gate_two_rate"], result["gates_mean"], -result["crash_rate"], result["return"])
 
 
 
@@ -173,6 +189,13 @@ def train(args, agent, lib):
         with ThreadPoolExecutor(max_workers=args.envs) as workers, (
             args.run_dir / "metrics.jsonl"
         ).open("a", encoding="utf-8", buffering=1) as log:
+            if args.official_eval and args.initialize:
+                result = evaluate(agent, test_env, args.stack, args.eval_episodes, official=True)
+                result.update(steps=steps, updates=updates, initializer=True)
+                best_rank = policy_rank(result, True)
+                agent.save(args.run_dir / "best.pt")
+                print(json.dumps(result), flush=True)
+                log.write(json.dumps(result) + "\n")
             while steps < args.steps:
                 if warm_started:
                     noise = max(.055, .13 - .075 * steps / max(1, args.steps // 2))
@@ -216,16 +239,14 @@ def train(args, agent, lib):
                     last_report = now
                     last_report_steps = steps
                 if steps - last_eval >= args.eval_every or steps >= args.steps:
-                    result = evaluate(agent, test_env, args.stack, args.eval_episodes)
+                    result = evaluate(agent, test_env, args.stack, args.eval_episodes, official=args.official_eval)
                     if args.focus_gate_two:
                         result.update(evaluate_gate_exit(agent, test_env, args.stack))
                     result.update(steps=steps, updates=updates)
                     print(json.dumps(result), flush=True)
                     log.write(json.dumps(result) + "\n")
                     agent.save(args.run_dir / "latest.pt")
-                    fastest = result["best_lap_seconds"]
-                    rank = (result["two_lap_rate"], result["lap_rate"], -fastest if fastest is not None else 0.,
-                            result["gate_two_rate"], result["gates_mean"], -result["crash_rate"], result["return"])
+                    rank = policy_rank(result, args.official_eval)
                     if best_rank is None or rank > best_rank:
                         agent.save(args.run_dir / "best.pt")
                         best_rank = rank
@@ -269,7 +290,7 @@ def main():
         agent.load(args.evaluate)
         env = Environment(lib, args.width, args.height)
         try:
-            result = evaluate(agent, env, args.stack, args.eval_episodes)
+            result = evaluate(agent, env, args.stack, args.eval_episodes, official=args.official_eval)
             if args.focus_gate_two:
                 result.update(evaluate_gate_exit(agent, env, args.stack))
             print(json.dumps(result))

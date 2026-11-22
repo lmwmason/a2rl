@@ -134,6 +134,21 @@ python -m training.train --device cuda --initialize runs/bc-rl/best.pt \
 
 `training-state.zip`에 정책, 옵티마이저, 리플레이와 난수 상태를 저장합니다. 재개할 때는 같은 환경·리플레이 설정으로 `--initialize` 인수 대신 `--resume runs/gate-two-5m/training-state.zip`을 사용합니다. 시뮬레이터는 새 에피소드에서 시작하고, 중단 시 마지막 카메라 프레임을 유지해 이전 에피소드의 리플레이가 새 프레임과 섞이지 않게 합니다.
 
+### 완주를 익힌 뒤 속도 최적화
+
+MonoRace Log 5의 EKF 위치에서 연속 게이트 간 비행선을 추출했습니다. 시뮬레이터 교사는 이 비행선과 게이트 통과 방향을 기준으로 론치, 스플릿 S의 상단→하단 진입, 슬라럼과 급턴을 수행합니다. 실제 팀의 속도나 순간 자세를 그대로 재생하기보다, 같은 구간을 느린 속도로 통과하며 실제 Mode 2 입력을 계산합니다. 학생이 비행 중 벗어난 상태에도 교사 입력을 붙여 다시 학습합니다. 학생의 입력은 최근 RGB 여덟 프레임입니다.
+
+```bash
+cargo build --release --lib --no-default-features
+python -m training.racing_school --device cuda --out runs/racing-school
+test -s runs/racing-school/qualified.pt &&
+  python -m training.train --device cuda --initialize runs/racing-school/qualified.pt \
+    --stack 8 --steps 5000000 --batch 96 --official-eval --eval-episodes 3 \
+    --eval-every 25000 --checkpoint-every 100000 --run-dir runs/speed-rl
+```
+
+교사 개입 없이 연속 두 차례 평가에서 출발 위치와 노출이 다른 3회 모두 2랩을 완주해야 `qualified.pt`가 저장됩니다. 속도 강화학습에는 교사 행동을 따르는 손실이나 정해진 비행선을 두지 않습니다. 초기 완주 모델을 보존하고, 정책은 완주율, 충돌률, 공식 2랩 평균 시간 순으로 비교합니다.
+
 ## CBGPU GPU 4에서 실행
 
 승인된 예약 시간에 등록된 SSH 별칭으로 GPU와 드라이버를 확인합니다.

@@ -59,6 +59,21 @@ class DemonstrationTest(unittest.TestCase):
 
 
 class EnvironmentTest(unittest.TestCase):
+    def test_logged_route_expert_finishes_two_official_laps(self):
+        env = Environment(load_sim(), 16, 12)
+        try:
+            env.official_start()
+            self.assertIsNone(env.official_seconds())
+            for _ in range(180 * 30):
+                _, _, status = env.advance(env.expert_action())
+                if status:
+                    break
+            self.assertEqual(status, 4)
+            self.assertEqual(env.lap_stats()[0], 22)
+            self.assertGreater(env.official_seconds(), 0.)
+        finally:
+            env.close()
+
     def test_gate_exit_starts_with_an_uncounted_gate_two_approach(self):
         env = Environment(load_sim(), 96, 72)
         try:

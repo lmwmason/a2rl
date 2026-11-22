@@ -35,10 +35,14 @@ def load_sim():
         ct.c_float, ct.c_uint32, ct.c_void_p,
     ]
     lib.sim_reset_after_gate.restype = None
+    lib.sim_expert_action.argtypes = [ct.c_void_p, ct.c_void_p]
+    lib.sim_expert_action.restype = None
     lib.sim_step.argtypes = [ct.c_void_p, ct.c_void_p, ct.c_void_p, ct.POINTER(ct.c_float)]
     lib.sim_step.restype = ct.c_int
     lib.sim_lap_stats.argtypes = [ct.c_void_p, ct.POINTER(ct.c_uint32), ct.POINTER(ct.c_float)]
     lib.sim_lap_stats.restype = None
+    lib.sim_official_seconds.argtypes = [ct.c_void_p]
+    lib.sim_official_seconds.restype = ct.c_float
     return lib
 
 
@@ -58,14 +62,26 @@ class Environment:
     def ground_start(self, side=0., exposure=1., breakup=0., video_seed=1):
         return self.reset(-2, side, exposure=exposure, breakup=breakup, video_seed=video_seed)
 
+    def official_start(self, side=0., exposure=1.):
+        return self.reset(-3, side, exposure=exposure)
+
+    def official_seconds(self):
+        value = self.lib.sim_official_seconds(self.handle)
+        return None if np.isnan(value) else value
+
     def after_gate(self, gate=0, side=0., height=0., speed=0., exposure=1., breakup=0., video_seed=1):
         self.lib.sim_reset_after_gate(self.handle, gate, side, height, speed, exposure,
                                       breakup, video_seed, self.image.ctypes.data)
         return self.image
 
+    def expert_action(self):
+        action = np.empty(4, dtype=np.float32)
+        self.lib.sim_expert_action(self.handle, action.ctypes.data)
+        return action
+
     def step(self, action):
         image, reward, status = self.advance(action)
-        return image, reward, status in (1, 3), status == 2
+        return image, reward, status in (1, 3, 4), status == 2
 
     def advance(self, action):
         native = np.ascontiguousarray(action, dtype=np.float32)

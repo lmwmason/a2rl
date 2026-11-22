@@ -365,10 +365,13 @@ async function fetchReplay(poll = true) {
   }
 }
 
-function selectPilot(view) {
+function selectPilot(view, refresh = true) {
   if (pilot === view) return;
   pilot = view;
   selection++;
+  const page = new URL(window.location.href);
+  page.searchParams.set("pilot", view);
+  window.history.replaceState(null, "", page.href);
   byId("show-teacher").setAttribute("aria-pressed", String(view === "teacher"));
   byId("show-student").setAttribute("aria-pressed", String(view === "student"));
   liveUrl = null;
@@ -388,8 +391,10 @@ function selectPilot(view) {
   for (const id of ["replay-stage", "flight-gates", "replay-result", "replay-physics"]) setText(id, "—");
   applyStudentView();
   renderStatus({ course: "2026-practice", pending: true, phase: view === "teacher" ? "TEACHER" : "IMITATION", gates_per_race: 24 });
-  fetchStatus(false);
-  fetchReplay(false);
+  if (refresh) {
+    fetchStatus(false);
+    fetchReplay(false);
+  }
 }
 
 function updateStudentFeed(origin, info) {
@@ -469,5 +474,8 @@ async function queueReplay({ url, value: info }, selected) {
 
 new ResizeObserver(drawHistory).observe(chart);
 new ResizeObserver(drawFinishHistory).observe(finishChart);
+if (new URLSearchParams(window.location.search).get("pilot") === "student") {
+  selectPilot("student", false);
+}
 fetchStatus();
 fetchReplay();

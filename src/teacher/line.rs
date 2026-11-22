@@ -128,9 +128,11 @@ pub(super) fn is_fast_leg(target: usize) -> bool {
     matches!(target, 2 | 3 | 8 | 9)
 }
 
+type Ladder = [(Vec3, Vec3); 3];
+
 // Horizontal guide positions from FlyBy Fig. 5. Heights interpolate between
 // the two estimated opening centers and keep the loop clear of the frame.
-const LADDER_ARC: [(Vec3, Vec3); 3] = [
+const LADDER_ARC: Ladder = [
     (Vec3::new(16.75, 5.58, 3.55), Vec3::new(-0.9, 0.25, -0.33)),
     (Vec3::new(16.45, 7.1, 2.75), Vec3::new(0.42, 0.81, -0.42)),
     (Vec3::new(18.1, 7.8, 1.75), Vec3::new(0.54, -0.79, -0.28)),
@@ -159,6 +161,14 @@ static SEASON2_FIRMWARE_LINE: OnceLock<Line> = OnceLock::new();
 
 impl Line {
     fn season2(pace: Pace, crossings: &[Crossing; crate::LAYOUT_2026.len()]) -> Self {
+        Self::with_ladder(pace, crossings, LADDER_ARC)
+    }
+
+    fn with_ladder(
+        pace: Pace,
+        crossings: &[Crossing; crate::LAYOUT_2026.len()],
+        ladder: Ladder,
+    ) -> Self {
         let course = Course::Season2Practice2026;
         let gates: Vec<_> = Gate::on_course(course).collect();
         let (start, yaw) = course.start();
@@ -174,7 +184,7 @@ impl Line {
                 Quat::from_rotation_z(crossing.yaw) * gate.normal,
             );
             if leg % gates.len() == gates.len() - 1 {
-                let knots = LADDER_ARC.into_iter().chain([target]);
+                let knots = ladder.into_iter().chain([target]);
                 for end in knots {
                     append_curve(&mut points, start, end, SAMPLES_PER_LEG / 4);
                     start = end;
@@ -273,7 +283,38 @@ impl Line {
                 }
             }
         }
-        best
+        // Pull the loop inward after clearing the upper frame, and align the
+        // descent with the lower opening earlier. Use the frame test before
+        // handing the re-planned line to the flight controller.
+        let mut pace = FIRMWARE_PACE;
+        pace.ladder_exit.turn_accel *= 1.468000;
+        pace.ladder_exit.brake_accel *= 0.568000;
+        let offsets = [
+            Vec3::new(0.316816, 0.330859, 0.252000),
+            Vec3::new(0.307844, -0.222176, 0.194575),
+            Vec3::new(-0.280147, -0.359855, 0.180000),
+        ];
+        let ladder = std::array::from_fn(|index| {
+            let (position, tangent) = LADDER_ARC[index];
+            let yaw = [-0.7, 0.4, 0.8][index] * -0.216000;
+            let mut direction = Quat::from_rotation_z(yaw) * tangent;
+            direction.z += 0.064829;
+            (position + offsets[index], direction)
+        });
+        let mut adjusted = Self::with_ladder(pace, &crossings, ladder);
+        // Keep the independently planned approach speed up to the upper gate.
+        // The slower braking schedule is local to the descending loop.
+        for (index, (point, reference)) in adjusted.points.iter_mut().zip(&best.points).enumerate()
+        {
+            if index / SAMPLES_PER_LEG % crate::LAYOUT_2026.len() != crate::LAYOUT_2026.len() - 1 {
+                *point = *reference;
+            }
+        }
+        if adjusted.clears_frames() {
+            adjusted
+        } else {
+            best
+        }
     }
 
     fn estimated_time(&self, crossings: &[Crossing]) -> f32 {

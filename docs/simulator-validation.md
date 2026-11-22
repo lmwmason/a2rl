@@ -33,6 +33,14 @@ The teacher previews the change in velocity along the line to compensate for att
 
 A moderate setting cleared all 24 gates in 29.475 s with a 24.83% time-weighted receiver throttle and 0.133 s at or above 90% throttle. Its first full circuit took 15.291 s. The upper-to-lower Ladder still took 2.344 s and 2.340 s on the respective laps. A repeat with the same gains made contact on lap two before the third gate, so this run establishes a best observed time for that setting. After widening the third gate’s lateral prediction window and lowering that leg’s target speed, the reference start and a 3 cm lateral-offset start both cleared all 24 gates. They finished in 29.400 s and 29.468 s respectively, with mean receiver throttle of 24.94% and 24.86%. The best run spent 0.100 s at or above 90% throttle. The archived dashboard replay shows the 29.400 s run. The comparison uses reconstructed gate geometry and the state-driven teacher.
 
+### Ladder trajectory search
+
+The search evaluated 10,001 settings for the guide positions, tangents, and turn and braking limits between the upper and lower Ladder apertures. Eight screening states came from two prior Elodin flight exports. A 12% increase to the turn limit alone caused contact before the lower aperture in a full Elodin and Betaflight rollout.
+
+The selected path moved the loop inward and aligned the descent sooner. The nominal and 3 cm offset starts cleared all 24 gates in 29.217 s and 29.267 s. The selected nominal run took 2.145 s and 2.137 s through the Ladder on its respective laps, compared with 2.336 s and 2.326 s on the previous best run. A more aggressive path reduced those splits to 2.057 s and 2.049 s, but cost time on the approach and finished in 29.349 s.
+
+Keeping the original speed schedule on the approach and applying the revised path after the upper crossing reduced the best full run to 28.984 s. The 3 cm offset retest finished in 28.986 s. Both runs cleared 24 gates with zero contact. The nominal run crossed the Ladder in 2.091 s and 2.082 s and averaged 24.46% receiver throttle. An earlier run of this configuration disarmed after 22 crossings without reported contact. The archived dashboard replay uses the 28.984 s run.
+
 ### MCK stick-input reference
 
 Using TII Racing v3 flights 13p, 14p and 15p on trackRATM, the time-weighted means of the logged throttle channels were 48.2%, 49.1% and 49.7%. Each flight reached 100%. The logs spent 2.6%, 3.6% and 4.9% of their respective observed airborne intervals at or above 90%. The calculation uses the interval between adjacent retained camera samples as its weight. These intervals cover 44.767, 44.501 and 34.701 seconds on trackRATM. The reported 11-second A2RL run needs its own synchronized transmitter trace to measure its throttle distribution. [TII Racing v3 logs](https://github.com/tii-racing/drone-racing-dataset/releases/tag/v3.0.0)

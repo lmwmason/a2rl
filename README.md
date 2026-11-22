@@ -202,15 +202,19 @@ Run the GPU worker inside the training checkout after producing synchronized dem
 bash tools/run_rgb_imu_race.sh runs/target-12 runs/target-12/seed/latest.pt runs/target-12/teacher/nominal.npz
 ```
 
-Run the verifier on a machine with the pinned Elodin harness, a release simulator library, and PyTorch installed in the harness environment.
+Run the evaluator and loopback replay feed on the GPU host. Install the pinned Elodin harness with its Python dependencies, PyTorch, and FFmpeg first.
 
 ```bash
-python3 -m tools.evaluate_rgb_imu_race --host cbgpu-gpu4 \
-  --remote-run /root/a2rl-target-12/runs/target-12 --harness "$A2RL_ELODIN_ROOT" \
-  --elodin "$(command -v elodin)" --out runs/target-12/firmware
+python3 -m tools.evaluate_rgb_imu_race \
+  --local-run runs/target-12 --harness "$A2RL_ELODIN_ROOT" \
+  --elodin "$(command -v elodin)" --out runs/target-12/firmware \
+  --public runs/target-12/public
+python3 -m training.live_feed --run runs/target-12 --media runs/target-12/public --port 8766
 ```
 
-The worker collects student rollouts with corrective expert labels in Rust. The verifier uses real Betaflight SITL and accepts a checkpoint after three clean full-course starts at or below 30 seconds. That checkpoint starts speed reinforcement learning with the same RGB and IMU input. The verifier applies a 12-second time limit to all three starts before marking the speed phase complete. The GPU worker and verifier can run on separate hosts. The worker continues training while the verifier is offline, and the phase gate waits for the verifier to return.
+The worker collects student rollouts with corrective expert labels in Rust. The evaluator uses real Betaflight SITL and accepts a checkpoint after three clean full-course starts at or below 30 seconds. That checkpoint starts speed reinforcement learning with the same RGB and IMU input. The evaluator applies a 12-second time limit to all three starts before marking the speed phase complete. Use `--host` and `--remote-run` if the worker and evaluator are on separate hosts.
+
+The dashboard's Student view shows GPU training metrics and sampled FPV frames from Rust. Evaluation shows the latest Elodin + Betaflight student recording with its matching stick inputs. The loopback feed serves only the status, current FPV frame, and published replay assets. An HTTPS tunnel connects the public dashboard to this feed on GPU 4.
 
 ### Reproduce the demonstration and gate-transition experiments
 

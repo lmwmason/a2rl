@@ -114,3 +114,6 @@ dd { margin: 0; text-align: right; font: 600 0.95rem ui-monospace, monospace; }
   color: var(--accent);
   background: #142b22;
 }
+
+.pilot-switch[hidden], #live-fpv[hidden] { display: none; }
+#live-fpv { width: 100%; height: 100%; object-fit: contain; image-rendering: pixelated; }

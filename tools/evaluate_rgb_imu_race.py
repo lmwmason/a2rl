@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import shlex
+from shutil import copyfile, rmtree
 import signal
 import subprocess
 from tempfile import mkdtemp
@@ -21,10 +22,11 @@ def evaluate(args, weights, session, side):
     report = session / "replay.result.json"
     if report.is_file():
         return json.loads(report.read_text())
+    database = Path(mkdtemp(prefix="attempt-", dir=session))
     environment = os.environ | {
         "A2RL_COURSE": "2026-practice",
         "A2RL_ELODIN_ROOT": str(args.harness),
-        "A2RL_ELODIN_DB": str(Path(mkdtemp(prefix="attempt-", dir=session)) / "flight"),
+        "A2RL_ELODIN_DB": str(database / "flight"),
         "A2RL_ELODIN_FPV": str(session / "replay.mp4"),
         "A2RL_ELODIN_FLOW_TEACHER": "0",
         "A2RL_ELODIN_POLICY": str(weights),
@@ -58,6 +60,7 @@ def evaluate(args, weights, session, side):
                 except subprocess.TimeoutExpired:
                     os.killpg(child.pid, signal.SIGKILL)
                     child.wait()
+            rmtree(database)
 
 
 def succeeds(result, threshold):
@@ -71,6 +74,11 @@ def remote_path(args, file):
 
 
 def fetch(args, file):
+    if args.local_run:
+        try:
+            return (args.local_run / file).read_bytes()
+        except FileNotFoundError:
+            return b""
     path = remote_path(args, file)
     result = subprocess.run([*SSH, args.host, f"if test -s {path}; then cat {path}; fi"],
                             capture_output=True, check=True, timeout=45)
@@ -78,10 +86,47 @@ def fetch(args, file):
 
 
 def promote(args, file, weights):
+    if args.local_run:
+        path = args.local_run / file
+        temporary = path.with_suffix(".tmp")
+        temporary.write_bytes(weights)
+        temporary.replace(path)
+        return
     path = remote_path(args, file)
     temporary = remote_path(args, file + ".tmp")
     subprocess.run([*SSH, args.host, f"cat > {temporary} && mv {temporary} {path}"],
                    input=weights, check=True, timeout=45)
+
+
+def publish_replay(directory, session, phase, result):
+    if directory is None:
+        return
+    report = session / "replay.result.json"
+    version = str(report.stat().st_mtime_ns)
+    directory.mkdir(parents=True, exist_ok=True)
+    manifest = directory / "replay.json"
+    if manifest.is_file() and int(json.loads(manifest.read_text())["version"]) >= int(version):
+        return
+
+    video = f"replay-{version}.mp4"
+    controls = f"controls-{version}.json"
+    # The result is written after FFmpeg and the RC trace have closed.
+    copyfile(session / "replay.mp4", directory / video)
+    copyfile(session / "replay.controls.json", directory / controls)
+    temporary = manifest.with_suffix(".tmp")
+    temporary.write_text(json.dumps({
+        "version": version, "phase": phase, "kind": "student-evaluation",
+        "url": video, "controls_url": controls, "course": result["course"],
+        "physics_engine": result["physics_engine"], "gates": result["gates"],
+        "gates_per_race": result["gates_per_race"],
+        "status": 4 if result["finished"] else 1 if result["contact"] else 2,
+        "official_seconds": result["official_seconds"],
+    }) + "\n")
+    temporary.replace(manifest)
+    for prefix, suffix in (("replay", ".mp4"), ("controls", ".json")):
+        old = sorted(directory.glob(f"{prefix}-[0-9]*{suffix}"), reverse=True)
+        for path in old[3:]:
+            path.unlink(missing_ok=True)
 
 
 def watch(args):
@@ -103,11 +148,17 @@ def watch(args):
                 for index, side in enumerate(STARTS):
                     session = args.out / digest / str(index)
                     result = evaluate(args, weights, session, side)
+                    if index == 0:
+                        publish_replay(args.public, session, phase, result)
+                    if args.public is not None:
+                        for name in ("replay.mp4", "replay.controls.json"):
+                            (session / name).unlink(missing_ok=True)
                     print(json.dumps({"phase": phase, "checkpoint": digest, "start_side": side,
                                       "target_seconds": target, **result}), flush=True)
                     if not succeeds(result, target):
                         qualified = False
                         break
+                weights.unlink(missing_ok=True)
                 if qualified:
                     promote(args, marker, raw)
                     print(json.dumps({"qualified": phase, "checkpoint": digest, "target_seconds": target}),
@@ -121,14 +172,21 @@ def watch(args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--host", required=True)
-    parser.add_argument("--remote-run", required=True)
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--host")
+    source.add_argument("--local-run", type=Path)
+    parser.add_argument("--remote-run")
+    parser.add_argument("--public", type=Path, help="Publish rendered student evaluation artifacts here.")
     parser.add_argument("--harness", type=Path, required=True)
     parser.add_argument("--elodin", required=True)
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args()
-    if args.host.startswith("-"):
-        parser.error("Use an SSH alias or hostname.")
+    if args.host and (args.host.startswith("-") or not args.remote_run):
+        parser.error("--host requires an SSH alias or hostname and --remote-run.")
+    if args.local_run:
+        args.local_run = args.local_run.resolve()
+    if args.public:
+        args.public = args.public.resolve()
     args.harness = args.harness.resolve()
     args.out = args.out.resolve()
     args.out.mkdir(parents=True, exist_ok=True)

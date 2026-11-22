@@ -7,14 +7,13 @@ use crate::{Course, Gate, Race, GRAVITY};
 
 const SAMPLES_PER_LEG: usize = 64;
 const SPEED_ACCEL: f32 = 12.;
-const STANDARD_COAST: (f32, f32) = (1.45, 0.55);
 
 struct Pace {
     max_speed: f32,
     open: LegLimits,
     tight: LegLimits,
     split_s_turn_accel: f32,
-    open_gate_coast: (f32, f32),
+    coast_at_open_gates: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -32,7 +31,7 @@ const NATIVE_PACE: Pace = Pace {
     open: NATIVE_LIMITS,
     tight: NATIVE_LIMITS,
     split_s_turn_accel: 6.5,
-    open_gate_coast: STANDARD_COAST,
+    coast_at_open_gates: true,
 };
 const FIRMWARE_PACE: Pace = Pace {
     max_speed: 18.,
@@ -45,7 +44,7 @@ const FIRMWARE_PACE: Pace = Pace {
         brake_accel: 3.8,
     },
     split_s_turn_accel: 8.5,
-    open_gate_coast: (0.65, 0.25),
+    coast_at_open_gates: false,
 };
 
 impl Pace {
@@ -136,12 +135,11 @@ impl Line {
         }
         for gate in (SAMPLES_PER_LEG..points.len() - SAMPLES_PER_LEG).step_by(SAMPLES_PER_LEG) {
             let target = (gate / SAMPLES_PER_LEG - 1) % gates.len();
-            let margins = if matches!(target, 1 | 2 | 3 | 8 | 9) {
-                pace.open_gate_coast
-            } else {
-                STANDARD_COAST
-            };
-            coast_through_gate(&mut points, gate, margins);
+            // The curvature and braking passes already cap the speed on
+            // open approaches. Hold entry speed only at constrained gates.
+            if pace.coast_at_open_gates || !matches!(target, 1 | 2 | 3 | 8 | 9) {
+                coast_through_gate(&mut points, gate);
+            }
         }
         points[0].speed = 2.2;
         for index in 1..points.len() {
@@ -201,17 +199,17 @@ impl Line {
     }
 }
 
-fn coast_through_gate(points: &mut [Point], gate: usize, (approach, exit): (f32, f32)) {
+fn coast_through_gate(points: &mut [Point], gate: usize) {
     // Finish braking before the aperture and preserve forward speed until clear.
     let mut first = gate;
     let mut last = gate;
     let mut length = 0.;
-    while length < approach && first > 0 {
+    while length < 1.45 && first > 0 {
         length += points[first - 1].position.distance(points[first].position);
         first -= 1;
     }
     length = 0.;
-    while length < exit && last + 1 < points.len() {
+    while length < 0.55 && last + 1 < points.len() {
         length += points[last].position.distance(points[last + 1].position);
         last += 1;
     }

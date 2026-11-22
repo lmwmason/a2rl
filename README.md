@@ -37,7 +37,7 @@ Releasing yaw, pitch, or roll centers the corresponding rate command. The aircra
 | --- | --- |
 | Reference aircraft | A2RL × DCL carbon-frame quadrotor, 966 g, approximately 30 × 28 × 10 cm, 5-inch-class propellers, XNOVA Black Thunder 2207 2100 KV motors, 6S 1400 mAh battery |
 | Vehicle model | Six-degree-of-freedom rigid body at 240 Hz, four first-order motor responses, thrust and torque, body-rate control, aerodynamic drag, swept gate collision checks |
-| Camera | Monocular FPV RGB with IMX219 fisheye calibration. Mount pitch is 51.33° for the 2025 profile and 45° for the 2026 practice profile. The reference camera logs 820 × 616 at 90 Hz. The simulator delivers observations and accepts stick input at 30 Hz. |
+| Camera | Monocular FPV RGB with IMX219 fisheye calibration. Mount pitch is 51.33° for the 2025 profile and 70° for the 2026 practice profile. The reference camera logs 820 × 616 at 90 Hz. The simulator delivers observations and accepts stick input at 30 Hz. |
 | Course | Eleven 1.5 m openings from the published 2025 Grand Challenge plan, including two double frames and the Gate 5–6 Split-S |
 | Arena | Competition gate textures and an arena reconstructed from photographs, with approximate ceiling and lighting geometry |
 

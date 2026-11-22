@@ -10,6 +10,7 @@
     24,
     24,
     24,
+    24,
     24
   ],
   "recent_finish_times": [
@@ -32,10 +33,15 @@
       "at": 4,
       "standard_s": null,
       "comparison_s": 34.689
+    },
+    {
+      "at": 5,
+      "standard_s": null,
+      "comparison_s": 34.201
     }
   ],
-  "best_two_lap_seconds": 34.689,
+  "best_two_lap_seconds": 34.201,
   "finish_rate": 1.0,
   "collision_rate": 0.0,
-  "mean_gate_crossing_speed_m_s": 5.86060742024326
+  "mean_gate_crossing_speed_m_s": 6.040363149522577
 }

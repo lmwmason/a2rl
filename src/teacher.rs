@@ -38,6 +38,7 @@ pub struct Teacher {
     phase: Phase,
     recovery_side: f32,
     flow: bool,
+    sprint_ticks: u8,
 }
 
 impl Teacher {
@@ -54,6 +55,7 @@ impl Teacher {
             phase,
             recovery_side: 1.,
             flow: false,
+            sprint_ticks: 0,
         }
     }
 
@@ -84,6 +86,10 @@ impl Teacher {
                     + Vec3::Z * (GRAVITY + accel.z.clamp(-5.5, 8.));
                 let mut command = rate_action(race, accel, heading);
                 protect_level_pitch(race, &mut command);
+                if firmware {
+                    reinforce_braking(race, accel, &mut command);
+                    self.sprint(race, &mut command);
+                }
                 // Use full launch thrust while there is room to arrest the climb.
                 let height = race.drone.position.z;
                 let climb = race.drone.velocity.z.max(0.);
@@ -247,6 +253,53 @@ impl Teacher {
         }
         command
     }
+
+    fn sprint(&mut self, race: &Race, command: &mut [f32; 4]) {
+        // The exit from the Split-S opens onto the long straight to gate 9.
+        let target = race.next_gate();
+        if target != 8 {
+            self.sprint_ticks = 0;
+            return;
+        }
+        let gate = race.gates[target];
+        let drone = &race.drone;
+        let offset = gate.center - drone.position;
+        let depth = offset.dot(gate.normal);
+        let thrust_up = (drone.rotation * Vec3::Z).z;
+        // Leave the entry controller time to regain the aperture after the
+        // pulse, and wait until most thrust is directed along the straight.
+        if self.sprint_ticks < 2
+            && (4.8..6.4).contains(&depth)
+            && offset.dot(gate.side).abs() < 0.7
+            && offset.z.abs() < 0.25
+            && (-1.5..0.6).contains(&drone.velocity.z)
+            && (0.28..0.55).contains(&thrust_up)
+            && (4.0..9.0).contains(&drone.velocity.dot(gate.normal))
+        {
+            command[1] = 1.;
+            self.sprint_ticks += 1;
+        }
+    }
+}
+
+fn reinforce_braking(race: &Race, accel: Vec3, command: &mut [f32; 4]) {
+    let travel = race.drone.velocity.truncate();
+    let direction = travel.normalize_or_zero();
+    let up = race.drone.rotation * Vec3::Z;
+    let braking_demand = -accel.truncate().dot(direction);
+    let braking_alignment = -up.truncate().dot(direction);
+    if travel.length_squared() < 9. || braking_demand < 2. || braking_alignment < 0.25 || up.z < 0.3
+    {
+        return;
+    }
+
+    // Only use extra collective once its horizontal component opposes travel.
+    // Bound vertical lift while the craft is still rotating into the turn.
+    let braking_thrust = braking_demand / braking_alignment;
+    let vertical_limit = (accel.z + 1.5) / up.z;
+    let throttle = (braking_thrust.min(vertical_limit) * HOVER / GRAVITY).clamp(0., 1.);
+    let boost_limit = 0.16 * (1. - line::level_approach(race));
+    command[1] += (2. * throttle - 1. - command[1]).clamp(0., boost_limit);
 }
 
 fn protect_level_pitch(race: &Race, command: &mut [f32; 4]) {
@@ -308,6 +361,50 @@ mod tests {
         }
         assert_eq!((race.status, race.passed), (Status::Finished, 22));
         assert!(race.official_seconds().unwrap() < 95.);
+    }
+
+    #[test]
+    fn firmware_braking_only_adds_thrust_when_it_opposes_travel() {
+        let mut race = Race::grand_challenge_on(Course::Season2Practice2026);
+        race.drone.velocity = Vec3::X * 5.;
+        let desired = Vec3::new(-4., 0., GRAVITY);
+        let mut command = [0., -0.9, 0., 0.];
+        race.drone.rotation = Quat::from_rotation_y(30_f32.to_radians());
+        reinforce_braking(&race, desired, &mut command);
+        assert_eq!(command[1], -0.9);
+
+        race.drone.rotation = Quat::from_rotation_y(-30_f32.to_radians());
+        reinforce_braking(&race, desired, &mut command);
+        assert!(command[1] > -0.9);
+        assert!(command[1] <= -0.9 + 0.16);
+    }
+
+    #[test]
+    fn firmware_sprint_ends_before_the_gate_and_rearms_on_the_next_lap() {
+        let mut race = Race::grand_challenge_on(Course::Season2Practice2026);
+        let mut teacher = Teacher::new(&race, false);
+        race.passed = 8;
+        let gate = race.gates[race.next_gate()];
+        race.drone.position = gate.center - gate.normal * 5.6;
+        race.drone.velocity = gate.normal * 7.;
+        race.drone.rotation = Quat::from_rotation_y(60_f32.to_radians());
+
+        for expected in [1., 1., 0.] {
+            let mut command = [0.; 4];
+            teacher.sprint(&race, &mut command);
+            assert_eq!(command[1], expected);
+        }
+        race.passed = 9;
+        teacher.sprint(&race, &mut [0.; 4]);
+
+        race.passed = 20;
+        race.drone.position = gate.center - gate.normal * 3.;
+        let mut command = [0.; 4];
+        teacher.sprint(&race, &mut command);
+        assert_eq!(command[1], 0.);
+        race.drone.position = gate.center - gate.normal * 5.6;
+        teacher.sprint(&race, &mut command);
+        assert_eq!(command[1], 1.);
     }
 
     #[test]

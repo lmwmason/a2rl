@@ -5,7 +5,7 @@ pub const H_FOV: f32 = 155.;
 pub const V_FOV: f32 = 115.;
 pub const MOUNT_ANGLE: f32 = 51.3328;
 // A simulation preset. The Season 2 camera mount has not been measured.
-const SEASON2_MOUNT_ANGLE: f32 = 45.;
+const SEASON2_MOUNT_ANGLE: f32 = 70.;
 // Intrinsics of IMX219 in 4TU MonoRace Log 8, normalized to image dimensions.
 pub const LENS: [f32; 8] = [
     578.258_7 / 1640.,

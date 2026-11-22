@@ -67,7 +67,15 @@ def alive(root):
     try:
         pid = int((root / "run.pid").read_text())
         state = Path(f"/proc/{pid}/stat").read_text().split(") ", 1)[1][0]
-        return state not in ("Z", "T", "X")
+        if state in ("Z", "T", "X"):
+            return False
+        children = Path(f"/proc/{pid}/task/{pid}/children").read_text().split()
+        for child in children:
+            command = Path(f"/proc/{child}/cmdline").read_bytes().split(b"\0")
+            if b"training.racing_school" in command:
+                child_state = Path(f"/proc/{child}/stat").read_text().split(") ", 1)[1][0]
+                return child_state not in ("Z", "T", "X")
+        return True
     except (OSError, ValueError, IndexError):
         return False
 

@@ -3,8 +3,11 @@ import argparse
 import base64
 import hashlib
 import json
+from functools import partial
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from queue import Empty, Full, Queue
+import re
 from shutil import which
 import subprocess
 import sys
@@ -16,7 +19,27 @@ import torch
 
 from . import telemetry
 from .sim import load_sim
-from .web_watch import render_video
+from .web_watch import render_video, write_json
+
+
+class ReadOnlyFeed(SimpleHTTPRequestHandler):
+    def send_head(self):
+        if self.path not in ("/status.json", "/replay.json") and not re.fullmatch(
+                r"/replay-[0-9]{1,24}\.mp4", self.path):
+            self.send_error(404)
+            return None
+        return super().send_head()
+
+    def end_headers(self):
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Vary", "Origin")
+        origin = "https://a2rl-fpv-dashboard.front.cbgpu.com"
+        if self.headers.get("Origin") == origin:
+            self.send_header("Access-Control-Allow-Origin", origin)
+        super().end_headers()
+
+    def log_message(self, format, *args):
+        pass
 
 
 def send(endpoint, key, name, body, meta=None):
@@ -35,8 +58,8 @@ def send(endpoint, key, name, body, meta=None):
         "X-A2RL-Time": timestamp, "X-A2RL-Sha256": digest,
         "X-A2RL-Signature": base64.b64encode(signature).decode(), "X-A2RL-Meta": encoded_meta,
     }
-    command = ["curl", "--silent", "--show-error", "--fail", "--connect-timeout", "5",
-               "--max-time", "40" if meta else "8", "-X", "PUT", "--data-binary", "@-"]
+    command = ["curl", "-4", "--silent", "--show-error", "--fail", "--connect-timeout", "12",
+               "--max-time", "50" if meta else "16", "-X", "PUT", "--data-binary", "@-"]
     for key, value in headers.items():
         command.extend(("-H", f"{key}: {value}"))
     subprocess.run([*command, endpoint + "/" + name], input=body, check=True)
@@ -57,7 +80,6 @@ def publish_status(args, pending):
     while True:
         item = pending.get()
         try:
-            item.update(connection="connected", snapshot_at=time.time())
             send(args.endpoint, args.key, "status.json", json.dumps(item).encode())
         except (OSError, subprocess.SubprocessError) as error:
             print(f"Status upload failed ({type(error).__name__})", flush=True)
@@ -65,15 +87,16 @@ def publish_status(args, pending):
 
 def publish_replays(args, pending, directory):
     lib = load_sim()
-    path = directory / "checkpoint.mp4"
+    path = None
     replay = None
+    versions = []
     while True:
         try:
             info, weights = pending.get(timeout=15)
         except Empty:
             if replay:
                 current = subprocess.run(
-                    ["curl", "-fsS", "--max-time", "8", args.endpoint + "/replay.json"],
+                    ["curl", "-4", "-fsS", "--max-time", "15", args.endpoint + "/replay.json"],
                     capture_output=True,
                 )
                 try:
@@ -83,10 +106,17 @@ def publish_replays(args, pending, directory):
                     pass
         else:
             try:
-                candidate = path.with_suffix(".tmp.mp4")
+                candidate = directory / "encoding.mp4"
                 result = render_video(lib, weights, candidate, args.ffmpeg)
-                candidate.replace(path)
                 replay = info | result | {"url": f"replay-{info['version']}.mp4"}
+                path = directory / replay["url"]
+                candidate.replace(path)
+                if args.serve_port:
+                    write_json(directory / "replay.json", replay)
+                versions.append(path)
+                if len(versions) > 3:
+                    versions.pop(0).unlink(missing_ok=True)
+                print(f"Replay ready for round {replay['round']} ({replay['gates']} gates)", flush=True)
             except (OSError, RuntimeError, ValueError, KeyError) as error:
                 print(f"Replay render failed: {error}", flush=True)
                 continue
@@ -105,6 +135,7 @@ def main():
     parser.add_argument("--school", default="runs/racing-school-v2")
     parser.add_argument("--speed", default="runs/speed-rl-v2")
     parser.add_argument("--ffmpeg")
+    parser.add_argument("--serve-port", type=int, help="Also serve the public read-only feed on loopback.")
     args = parser.parse_args()
     args.endpoint = args.endpoint.rstrip("/")
     if args.ffmpeg is None:
@@ -115,8 +146,13 @@ def main():
     torch.set_num_threads(2)
     statuses, replays = Queue(maxsize=1), Queue(maxsize=1)
     with TemporaryDirectory(prefix="a2rl-feed-") as folder:
+        directory = Path(folder)
+        if args.serve_port:
+            handler = partial(ReadOnlyFeed, directory=directory)
+            server = ThreadingHTTPServer(("127.0.0.1", args.serve_port), handler)
+            Thread(target=server.serve_forever, daemon=True).start()
         Thread(target=publish_status, args=(args, statuses), daemon=True).start()
-        Thread(target=publish_replays, args=(args, replays, Path(folder)), daemon=True).start()
+        Thread(target=publish_replays, args=(args, replays, directory), daemon=True).start()
         command = [sys.executable, "-u", "-m", "training.telemetry", str(Path.cwd()),
                    args.school, args.speed, "replay"]
         with subprocess.Popen(command, stdout=subprocess.PIPE) as source:
@@ -124,6 +160,9 @@ def main():
                 while message := telemetry.read_packet(source.stdout):
                     info, payload = message
                     if info["type"] == "meta":
+                        info.update(connection="connected", snapshot_at=time.time())
+                        if args.serve_port:
+                            write_json(directory / "status.json", info)
                         offer(statuses, info)
                     elif info["type"] == "checkpoint":
                         offer(replays, (info, payload))

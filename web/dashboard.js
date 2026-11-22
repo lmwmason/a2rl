@@ -5,7 +5,7 @@ const setText = (id, value) => {
   const element = byId(id);
   if (element.textContent !== value) element.textContent = value;
 };
-const number = new Intl.NumberFormat("ko-KR");
+const number = new Intl.NumberFormat("en-US");
 const count = (value) => Number.isFinite(value) ? number.format(value) : "—";
 const percent = (value) => Number.isFinite(value) ? count(Math.round(value * 100)) + "%" : "—";
 const camera = byId("fpv");
@@ -15,13 +15,22 @@ const trend = { values: [], key: "" };
 let playing = null;
 let pending = null;
 const hosted = !["127.0.0.1", "localhost", "[::1]"].includes(window.location.hostname);
-const dataRoot = hosted ? "https://a2rl-fpv-feed.server.cbgpu.com/" : "/";
+const feeds = hosted ? [
+  "https://a2rl-fpv-feed.server.cbgpu.com/",
+  "https://beam-snapshot-down-museums.trycloudflare.com/",
+] : ["/"];
 
-function dataFile(name) {
-  return fetch(dataRoot + name, {
-    cache: "no-store",
-    credentials: "omit",
-  });
+async function dataFile(name, manifestUrl) {
+  const urls = manifestUrl ? [new URL(name, manifestUrl)] : feeds.map((feed) => feed + name);
+  for (const url of urls) {
+    try {
+      const response = await fetch(url, { cache: "no-store", credentials: "omit", signal: AbortSignal.timeout(5000) });
+      if (response.ok) return response;
+    } catch {
+      // Try the GPU-hosted feed if the managed feed is unavailable.
+    }
+  }
+  return null;
 }
 
 function pill(id, label, state = "") {
@@ -79,12 +88,12 @@ function startReplay() {
       : `a2rl-imitation-round-${playing.round}.mp4`;
     download.hidden = false;
     byId("waiting").hidden = true;
-    const stage = playing.phase === "SPEED RL" ? "강화학습 · " + count(playing.steps) + " 스텝"
-      : playing.round ? "모방학습 · " + count(playing.round) + " 라운드" : "모방학습 체크포인트";
+    const stage = playing.phase === "SPEED RL" ? "Reinforcement learning · " + count(playing.steps) + " steps"
+      : playing.round ? "Imitation · Round " + count(playing.round) : "Imitation checkpoint";
     setText("replay-stage", stage);
     setText("flight-gates", count(playing.gates) + " / 22");
-    setText("replay-result", { 1: "충돌", 2: "시간 초과", 3: "진행 정체", 4: "2랩 완주" }[playing.status] || "—");
-    pill("video-state", "학생 모델 리플레이", "live");
+    setText("replay-result", { 1: "Crash", 2: "Timed out", 3: "Stalled", 4: "Finished two laps" }[playing.status] || "—");
+    pill("video-state", "Student model replay", "live");
   } else if (playing) {
     camera.currentTime = 0;
   }
@@ -96,18 +105,18 @@ function renderStatus(info) {
   const connected = info.connection === "connected" && Date.now() / 1000 - info.snapshot_at < 15;
   const speedTraining = info.phase === "SPEED RL";
   if (connected) {
-    pill("connection", info.active ? "GPU 연결 · 학습 중" : "GPU 연결 · 학습 종료", info.active ? "live" : "");
+    pill("connection", info.active ? "GPU online · Training" : "GPU online · Training stopped", info.active ? "live" : "");
   } else {
-    pill("connection", info.connection === "connecting" ? "GPU 연결 중" : "GPU 연결 끊김", "stale");
+    pill("connection", info.connection === "connecting" ? "Connecting to GPU" : "GPU feed offline", "stale");
   }
-  setText("phase", info.target_beaten ? "목표 달성" : speedTraining ? "강화학습" : info.phase ? "모방학습" : "—");
-  setText("progress-label", speedTraining ? "강화학습 스텝" : "모방학습 라운드");
+  setText("phase", info.target_beaten ? "Target reached" : speedTraining ? "Reinforcement learning" : info.phase ? "Imitation learning" : "—");
+  setText("progress-label", speedTraining ? "Reinforcement learning steps" : "Imitation round");
   setText("progress", count(speedTraining ? info.steps : info.round));
   setText("steps", count(info.steps));
   setText("finish-rate", percent(info.finish_rate));
   setText("collision-rate", percent(info.collision_rate));
-  setText("best-time", Number.isFinite(info.best_two_lap_seconds) ? info.best_two_lap_seconds.toFixed(2) + " 초" : "—");
-  setText("target", (info.target_two_lap_seconds ?? 16.56).toFixed(2) + " 초 미만");
+  setText("best-time", Number.isFinite(info.best_two_lap_seconds) ? info.best_two_lap_seconds.toFixed(2) + " s" : "—");
+  setText("target", "Under " + (info.target_two_lap_seconds ?? 16.56).toFixed(2) + " s");
 
   const values = Array.isArray(info.recent_gates) ? info.recent_gates : [];
   const key = values.join(",");
@@ -116,16 +125,16 @@ function renderStatus(info) {
     trend.values = values;
     drawHistory();
   }
-  setText("history-count", values.length ? "최근 " + count(values.length) + "회" : "평가 대기");
+  setText("history-count", values.length ? "Last " + count(values.length) + " evaluations" : "Awaiting evaluation");
 }
 
 async function fetchStatus() {
   try {
     const response = await dataFile("status.json");
-    if (!response.ok) throw new Error("Status unavailable");
+    if (!response) throw new Error("Status unavailable");
     renderStatus(await response.json());
   } catch {
-    pill("connection", "학습 데이터 연결 대기", "stale");
+    pill("connection", "Waiting for training feed", "stale");
   } finally {
     window.setTimeout(fetchStatus, 2000);
   }
@@ -134,19 +143,19 @@ async function fetchStatus() {
 async function fetchReplay() {
   try {
     const response = await dataFile("replay.json");
-    if (!response.ok) return;
+    if (!response) return;
     const info = await response.json();
     if (info.version === playing?.version || info.version === pending?.version) return;
     if (!/^replay-[0-9]+\.mp4$/.test(info.url)) return;
-    const video = await dataFile(info.url);
-    if (!video.ok) return;
+    const video = await dataFile(info.url, response.url);
+    if (!video) return;
     const blob = URL.createObjectURL(await video.blob());
     if (pending) URL.revokeObjectURL(pending.blob);
     pending = { ...info, blob };
     if (!playing || camera.ended) startReplay();
-    else pill("video-state", "다음 리플레이 준비됨", "live");
+    else pill("video-state", "Next replay ready", "live");
   } catch {
-    if (!playing) pill("video-state", "리플레이 준비 중");
+    if (!playing) pill("video-state", "Preparing replay");
   } finally {
     window.setTimeout(fetchReplay, 3000);
   }

@@ -1,10 +1,10 @@
 <!doctype html>
-<html lang="ko">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="A2RL FPV 모방학습 및 강화학습 관전">
-  <title>A2RL FPV 학습 관전</title>
+  <meta name="description" content="Watch A2RL FPV imitation and reinforcement learning">
+  <title>A2RL FPV Training</title>
   <link rel="stylesheet" href="style.css">
   <script src="dashboard.js" defer></script>
 </head>
@@ -13,53 +13,63 @@
     <header>
       <div>
         <p class="series">A2RL × DCL / 2025 GRAND CHALLENGE</p>
-        <h1>FPV 학습 관전</h1>
+        <h1>FPV Training</h1>
       </div>
-      <p id="connection" class="pill" role="status">GPU 연결 중</p>
+      <p id="connection" class="pill" role="status">Connecting to GPU</p>
     </header>
 
     <div class="layout">
       <section class="panel flight" aria-labelledby="camera-title">
         <div class="bar">
-          <h2 id="camera-title">최신 모델 FPV 리플레이</h2>
-          <span id="video-state" class="pill">리플레이 준비 중</span>
+          <h2 id="camera-title">Latest model replay</h2>
+          <span id="video-state" class="pill">Preparing replay</span>
         </div>
         <div class="screen">
-          <video id="fpv" muted playsinline controls hidden aria-label="최신 학생 모델의 FPV 리플레이"></video>
-          <p id="waiting">최신 체크포인트의 비행을 렌더링하는 중</p>
+          <video id="fpv" muted playsinline controls hidden aria-label="FPV replay of the latest student model"></video>
+          <p id="waiting">Rendering the latest checkpoint</p>
         </div>
         <footer class="bar">
           <span id="replay-stage">—</span>
-          <span>통과 <strong id="flight-gates">—</strong></span>
+          <span>Gates <strong id="flight-gates">—</strong></span>
           <span id="replay-result">—</span>
-          <a id="download-replay" class="download" hidden>이 영상 저장</a>
+          <a id="download-replay" class="download" hidden>Download this video</a>
         </footer>
       </section>
 
       <section class="panel status" aria-labelledby="status-title">
-        <div class="bar"><h2 id="status-title">현재 학습</h2><span id="phase">—</span></div>
+        <div class="bar"><h2 id="status-title">Training status</h2><span id="phase">—</span></div>
         <dl>
-          <div><dt id="progress-label">모방학습 라운드</dt><dd id="progress">—</dd></div>
-          <div><dt>학습 샘플</dt><dd id="steps">—</dd></div>
-          <div><dt>최근 평가 2랩 완주율</dt><dd id="finish-rate">—</dd></div>
-          <div><dt>최근 평가 충돌률</dt><dd id="collision-rate">—</dd></div>
-          <div><dt>최고 2랩 기록</dt><dd id="best-time">—</dd></div>
-          <div><dt>추월 목표</dt><dd id="target">16.56 초 미만</dd></div>
+          <div><dt id="progress-label">Imitation round</dt><dd id="progress">—</dd></div>
+          <div><dt>Training samples</dt><dd id="steps">—</dd></div>
+          <div><dt>Latest two-lap finish rate</dt><dd id="finish-rate">—</dd></div>
+          <div><dt>Latest crash rate</dt><dd id="collision-rate">—</dd></div>
+          <div><dt>Best two-lap time</dt><dd id="best-time">—</dd></div>
+          <div><dt>Target time</dt><dd id="target">Under 16.56 s</dd></div>
         </dl>
       </section>
 
       <section class="panel history" aria-labelledby="history-title">
         <div class="bar">
-          <h2 id="history-title">평가당 평균 통과 게이트</h2>
+          <h2 id="history-title">Average gates per evaluation</h2>
           <span id="history-count">—</span>
         </div>
-        <p class="chart-key"><span>각 평가</span><span>최근 8회 이동평균</span></p>
+        <p class="chart-key"><span>Individual evaluations</span><span>8-evaluation moving average</span></p>
         <div class="plot">
           <div class="axis" aria-hidden="true"><span>22</span><span>11</span><span>0</span></div>
-          <canvas id="history" aria-label="최근 평가별 평균 게이트 수, 최대 22개"></canvas>
+          <canvas id="history" aria-label="Average gates in recent evaluations, out of 22"></canvas>
         </div>
       </section>
     </div>
+    <details class="panel model">
+      <summary>Model and simulator</summary>
+      <dl>
+        <div><dt>Policy</dt><dd>Custom 3-layer CNN and MLP</dd></div>
+        <div><dt>Input and output</dt><dd>8 RGB frames → 4 Mode 2 Acro axes</dd></div>
+        <div><dt>Training</dt><dd>DAgger-style imitation, DrQ-v2-style reinforcement learning</dd></div>
+        <div><dt>Physics</dt><dd>Custom Rust quadrotor simulator at 240 Hz</dd></div>
+        <div><dt>Libraries</dt><dd>PyTorch, NumPy, glam, FFmpeg</dd></div>
+      </dl>
+    </details>
   </main>
 </body>
 </html>

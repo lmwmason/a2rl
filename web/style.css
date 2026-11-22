@@ -42,6 +42,9 @@ dd { margin: 0; text-align: right; font: 600 0.95rem ui-monospace, monospace; }
 .plot { display: flex; gap: 10px; padding: 4px 16px 16px; }
 .axis { display: flex; flex-direction: column; justify-content: space-between; color: var(--muted); font: 0.8rem ui-monospace, monospace; text-align: right; }
 #history { width: calc(100% - 30px); height: 105px; }
+.model { margin-top: 16px; }
+.model summary { padding: 16px; cursor: pointer; font-weight: 600; }
+.model dd { font-family: system-ui, sans-serif; }
 
 @media (max-width: 720px) {
   main { padding: 24px 14px; }

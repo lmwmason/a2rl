@@ -728,8 +728,10 @@ mod tests {
     #[test]
     fn reward_profile_changes_time_cost_without_changing_dynamics() {
         let mut normal = Race::default();
-        let mut pace = Race::default();
-        pace.reward_profile = RewardProfile::Pace;
+        let mut pace = Race {
+            reward_profile: RewardProfile::Pace,
+            ..Race::default()
+        };
         let action = [HOVER, 0., 0., 0.];
         let standard_reward = normal.step(action).unwrap();
         let pace_reward = pace.step(action).unwrap();

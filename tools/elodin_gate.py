@@ -17,8 +17,8 @@ def artwork_png():
     return png.getvalue()
 
 
-def write_gate(path):
-    half_opening, half_outer, half_depth = .75, 1.35, .40
+def write_gate(path, half_depth):
+    half_opening, half_outer = .75, 1.35
     positions = [[], [], []]
 
     def panel(material, axis, plane, u0, u1, v0, v1):

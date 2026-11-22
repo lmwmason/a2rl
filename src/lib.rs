@@ -126,29 +126,56 @@ impl Course {
             Self::Season2Practice2026 => &[],
         }
     }
+
+    const fn gate_half_depth(self) -> f32 {
+        match self {
+            Self::GrandChallenge2025 => DEPTH,
+            // From the 0.1322825 m front-to-back extent of Berkeley's gate.usd.
+            Self::Season2Practice2026 => SEASON2_GATE_DEPTH,
+        }
+    }
+
+    fn gate_bars(self) -> &'static [(Vec3, Vec3); 4] {
+        match self {
+            Self::GrandChallenge2025 => &BARS,
+            Self::Season2Practice2026 => &SEASON2_BARS,
+        }
+    }
 }
 
 const W: f32 = 0.75;
 const H: f32 = 0.75;
 const BEAM: f32 = 0.60;
 const DEPTH: f32 = 0.40;
+const SEASON2_GATE_DEPTH: f32 = 0.066_141_27;
 const LOWER_FRAME: Gate = Gate {
     center: Vec3::new(63., 20., 1.47),
     normal: Vec3::X,
     side: Vec3::Y,
 };
-pub const BARS: [(Vec3, Vec3); 4] = [
-    (
-        Vec3::new(-DEPTH, -W - BEAM, H),
-        Vec3::new(DEPTH, W + BEAM, H + BEAM),
-    ),
-    (
-        Vec3::new(-DEPTH, -W - BEAM, -H - BEAM),
-        Vec3::new(DEPTH, W + BEAM, -H),
-    ),
-    (Vec3::new(-DEPTH, -W - BEAM, -H), Vec3::new(DEPTH, -W, H)),
-    (Vec3::new(-DEPTH, W, -H), Vec3::new(DEPTH, W + BEAM, H)),
-];
+const fn bars_with_depth(half_depth: f32) -> [(Vec3, Vec3); 4] {
+    [
+        (
+            Vec3::new(-half_depth, -W - BEAM, H),
+            Vec3::new(half_depth, W + BEAM, H + BEAM),
+        ),
+        (
+            Vec3::new(-half_depth, -W - BEAM, -H - BEAM),
+            Vec3::new(half_depth, W + BEAM, -H),
+        ),
+        (
+            Vec3::new(-half_depth, -W - BEAM, -H),
+            Vec3::new(half_depth, -W, H),
+        ),
+        (
+            Vec3::new(-half_depth, W, -H),
+            Vec3::new(half_depth, W + BEAM, H),
+        ),
+    ]
+}
+
+pub const BARS: [(Vec3, Vec3); 4] = bars_with_depth(DEPTH);
+const SEASON2_BARS: [(Vec3, Vec3); 4] = bars_with_depth(SEASON2_GATE_DEPTH);
 
 const FLOW_APPROACH_METERS: f32 = 4.;
 const FLOW_SLOW_METERS_PER_SECOND: f32 = 1.5;
@@ -185,14 +212,16 @@ impl Gate {
         Vec3::new(self.normal.dot(vector), self.side.dot(vector), vector.z)
     }
 
-    fn progress(self, start: Vec3, end: Vec3) -> (bool, bool) {
+    fn progress(self, start: Vec3, end: Vec3, course: Course) -> (bool, bool) {
         let a = self.basis(start - self.center);
         let b = self.basis(end - self.center);
-        if a.x.min(b.x) > DEPTH + RADIUS || a.x.max(b.x) < -DEPTH - RADIUS {
+        let reach = course.gate_half_depth() + RADIUS;
+        if a.x.min(b.x) > reach || a.x.max(b.x) < -reach {
             return (false, false);
         }
         let delta = b - a;
-        if BARS
+        if course
+            .gate_bars()
             .iter()
             .any(|&(min, max)| frame_contact(a, delta, min, max))
         {
@@ -666,7 +695,7 @@ impl Race {
             } else {
                 let mut hit_frame = false;
                 for (i, gate) in self.gate_frames().enumerate() {
-                    let (collision, crossed) = gate.progress(previous, current);
+                    let (collision, crossed) = gate.progress(previous, current, self.course);
                     if collision {
                         hit_frame = true;
                         break;
@@ -808,18 +837,39 @@ mod tests {
         let gate = Gate::all()[0];
         let a = gate.center - gate.normal;
         let b = gate.center + gate.normal;
-        assert_eq!(gate.progress(a, b), (false, true));
-        assert_eq!(gate.progress(b, a), (false, false));
+        let course = Course::GrandChallenge2025;
+        assert_eq!(gate.progress(a, b, course), (false, true));
+        assert_eq!(gate.progress(b, a, course), (false, false));
         assert_eq!(
-            gate.progress(a + W * gate.side, b + W * gate.side),
+            gate.progress(a + W * gate.side, b + W * gate.side, course),
             (true, false)
         );
         assert_eq!(
-            gate.progress(a + 3. * gate.side, b + 3. * gate.side),
+            gate.progress(a + 3. * gate.side, b + 3. * gate.side, course),
             (false, false)
         );
-        assert_eq!(gate.progress(a, gate.center), (false, true));
-        assert_eq!(gate.progress(gate.center, b), (false, false));
+        assert_eq!(gate.progress(a, gate.center, course), (false, true));
+        assert_eq!(gate.progress(gate.center, b, course), (false, false));
+    }
+
+    #[test]
+    fn season2_gate_contact_uses_the_thinner_frame() {
+        let gate = Gate::all()[0];
+        let beside_opening = gate.center + gate.side;
+        let near = beside_opening - 0.46 * gate.normal;
+        let far = beside_opening - 0.68 * gate.normal;
+        assert_eq!(
+            gate.progress(far, near, Course::GrandChallenge2025),
+            (true, false)
+        );
+        assert_eq!(
+            gate.progress(far, near, Course::Season2Practice2026),
+            (false, false)
+        );
+        assert_eq!(
+            gate.progress(near, beside_opening, Course::Season2Practice2026),
+            (true, false)
+        );
     }
 
     #[test]

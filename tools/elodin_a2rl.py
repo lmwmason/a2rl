@@ -168,14 +168,16 @@ def main():
     course_name = course_profile()
     season2 = course_name == "2026-practice"
     asset = "gate.glb"
+    lib = load_sim()
     if season2:
         from tools.elodin_gate import write_gate
 
         asset = "a2rl-season2-gate.glb"
         assets = Path(os.environ.get("ELODIN_ASSETS_DIR", root / "assets")).resolve()
         os.environ["ELODIN_ASSETS_DIR"] = str(assets)
-        write_gate(assets / asset)
-    lib = load_sim()
+        lib.sim_course_gate_half_depth.argtypes = [ct.c_bool]
+        lib.sim_course_gate_half_depth.restype = ct.c_float
+        write_gate(assets / asset, lib.sim_course_gate_half_depth(season2))
     path = os.environ.get("A2RL_ELODIN_FPV")
     if path or os.environ.get("A2RL_ELODIN_POLICY"):
         if not hasattr(lib, "sim_render_pose"):

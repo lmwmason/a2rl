@@ -1,4 +1,4 @@
-use crate::{ray_box, Course, Race, ARENA_MAX, ARENA_MIN, BARS};
+use crate::{ray_box, Course, Race, ARENA_MAX, ARENA_MIN};
 use glam::Vec3;
 
 pub const H_FOV: f32 = 155.;
@@ -110,11 +110,10 @@ fn season2_ink(contact: Vec3) -> f32 {
     (top + (bottom - top) * v.fract()) / 255.
 }
 
-fn season2_gate_color(contact: Vec3) -> [u8; 3] {
+fn season2_gate_color(contact: Vec3, face: bool) -> [u8; 3] {
     // Season 2 used continuous light strips along the aperture and the vertical outer edges.
     let edge = contact.y.abs();
     let aperture = edge.max(contact.z.abs());
-    let face = contact.x.abs() > 0.38;
     if face && (aperture < 0.79 || edge > 1.325) {
         [236, 221, 255]
     } else if face {
@@ -163,6 +162,8 @@ impl Camera {
     }
 
     pub fn render(&self, race: &Race, image: &mut [u8]) {
+        let bars = race.course.gate_bars();
+        let face_depth = race.course.gate_half_depth() - 0.005;
         let [sensor, right, up, forward] = camera_pose(race);
         let [px, py, pz] = sensor.to_array();
         let (arena_min, arena_max) = race.course.bounds();
@@ -227,14 +228,15 @@ impl Camera {
                     continue;
                 }
                 let local = gate.basis(direction);
-                for (min, max) in BARS {
+                for &(min, max) in bars {
                     let Some(hit) = ray_box(origin, local, min, max, 0.015, distance) else {
                         continue;
                     };
                     let contact = origin + local * hit;
+                    let face = contact.x.abs() >= face_depth;
                     color = if race.course == Course::Season2Practice2026 {
-                        season2_gate_color(contact)
-                    } else if contact.x.abs() >= 0.395 {
+                        season2_gate_color(contact, face)
+                    } else if face {
                         gate_texture(contact.y, contact.z, contact.x > 0.)
                     } else {
                         [53, 30, 93]

@@ -31,6 +31,11 @@ pub extern "C" fn sim_course_gate_count(season2: bool) -> usize {
 }
 
 #[no_mangle]
+pub extern "C" fn sim_course_gate_half_depth(season2: bool) -> f32 {
+    course_from_flag(season2).gate_half_depth()
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn sim_course_gate_pose(
     season2: bool,
     index: usize,
@@ -64,7 +69,7 @@ pub unsafe extern "C" fn sim_course_segment(
         .chain(course.extra_frames().iter().copied())
         .enumerate()
     {
-        let (collision, crossed) = gate.progress(a, b);
+        let (collision, crossed) = gate.progress(a, b, course);
         if collision {
             return -1;
         }

@@ -39,7 +39,7 @@ The search evaluated 10,001 settings for the guide positions, tangents, and turn
 
 The selected path moved the loop inward and aligned the descent sooner. The nominal and 3 cm offset starts cleared all 24 gates in 29.217 s and 29.267 s. The selected nominal run took 2.145 s and 2.137 s through the Ladder on its respective laps, compared with 2.336 s and 2.326 s on the previous best run. A more aggressive path reduced those splits to 2.057 s and 2.049 s, but cost time on the approach and finished in 29.349 s.
 
-Keeping the original speed schedule on the approach and applying the revised path after the upper crossing reduced the best full run to 28.984 s. The 3 cm offset retest finished in 28.986 s. Both runs cleared 24 gates with zero contact. The nominal run crossed the Ladder in 2.091 s and 2.082 s and averaged 24.46% receiver throttle. An earlier run of this configuration disarmed after 22 crossings without reported contact. The archived dashboard replay uses the 28.984 s run.
+Keeping the original speed schedule on the approach and applying the revised path after the upper crossing reduced the best full run to 28.984 s. The 3 cm offset retest finished in 28.986 s. Both runs cleared 24 gates with zero contact. The nominal run crossed the Ladder in 2.091 s and 2.082 s and averaged 24.46% receiver throttle. An earlier run of this configuration disarmed after 22 crossings without reported contact. The release build repeated the result in 28.961 s, with 24.42% mean throttle and Ladder splits of 2.090 s and 2.079 s. The archived dashboard replay uses the release run.
 
 ### MCK stick-input reference
 

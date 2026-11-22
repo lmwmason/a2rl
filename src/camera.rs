@@ -4,6 +4,8 @@ use glam::Vec3;
 pub const H_FOV: f32 = 155.;
 pub const V_FOV: f32 = 115.;
 pub const MOUNT_ANGLE: f32 = 51.3328;
+// A simulation preset. The Season 2 camera mount has not been measured.
+const SEASON2_MOUNT_ANGLE: f32 = 45.;
 // Intrinsics of IMX219 in 4TU MonoRace Log 8, normalized to image dimensions.
 pub const LENS: [f32; 8] = [
     578.258_7 / 1640.,
@@ -19,9 +21,16 @@ const GATE_TEXTURE: &[u8; 256 * 256 * 3] = include_bytes!("../assets/grand-chall
 const SEASON2_GATE_INK: &[u8; 256 * 256] = include_bytes!("../assets/season2-gate-ink.a8");
 const HALL_CEILING: f32 = 8.6;
 
+pub fn mount_angle(course: Course) -> f32 {
+    match course {
+        Course::GrandChallenge2025 => MOUNT_ANGLE,
+        Course::Season2Practice2026 => SEASON2_MOUNT_ANGLE,
+    }
+}
+
 pub fn camera_pose(race: &Race) -> [Vec3; 4] {
     let drone = &race.drone;
-    let (sin, cos) = MOUNT_ANGLE.to_radians().sin_cos();
+    let (sin, cos) = mount_angle(race.course).to_radians().sin_cos();
     [
         drone.position + drone.rotation * Vec3::new(0.12, 0., 0.02),
         drone.rotation * -Vec3::Y,

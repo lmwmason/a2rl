@@ -36,6 +36,11 @@ pub extern "C" fn sim_course_gate_half_depth(season2: bool) -> f32 {
 }
 
 #[no_mangle]
+pub extern "C" fn sim_course_camera_tilt(season2: bool) -> f32 {
+    crate::camera::mount_angle(course_from_flag(season2))
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn sim_course_gate_pose(
     season2: bool,
     index: usize,

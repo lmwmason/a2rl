@@ -330,7 +330,7 @@ def main():
     teacher = teacher_profile()
     line_teacher = course_profile() == "2026-practice" and teacher == "flow"
     qualify_pace = args.full_course and line_teacher
-    teacher_revision = 3 if line_teacher else 1
+    teacher_revision = 4 if line_teacher else 1
     height, width = 72, 96
     human_demo = (Demonstrations(args.human_demos, [], args.stack, height, width, 213, args.imu)
                   if args.human_demos else None)

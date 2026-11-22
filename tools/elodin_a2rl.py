@@ -213,11 +213,17 @@ def main():
     configure_plant(physics, profile)
     elodin_policy.hover = cfg.hover_throttle
     camera.CAM_WIDTH, camera.CAM_HEIGHT = profile["camera_width"], profile["camera_height"]
+    tilt = profile["camera_up_tilt_deg"]
+    if season2:
+        lib.sim_course_camera_tilt.argtypes = [ct.c_bool]
+        lib.sim_course_camera_tilt.restype = ct.c_float
+        tilt = lib.sim_course_camera_tilt(True)
+
     def register_camera(world, drone):
         world.sensor_camera(entity=drone, name=camera.CAMERA_NAME, width=camera.CAM_WIDTH,
                             height=camera.CAM_HEIGHT, fov=profile["camera_vertical_fov_deg"],
                             near=.02, far=120., pos_offset=[.10, 0., 0.],
-                            rot_offset=[0., -profile["camera_up_tilt_deg"], 0.], format="rgba",
+                            rot_offset=[0., -tilt, 0.], format="rgba",
                             create_frustum=True, fps=cfg.fpv_rate)
         return camera.DB_NAME
 

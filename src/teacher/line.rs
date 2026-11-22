@@ -3,13 +3,14 @@ use std::sync::OnceLock;
 
 use glam::{Quat, Vec3};
 
-use crate::{Course, Gate, Race};
+use crate::{Course, Gate, Race, GRAVITY};
 
 const SAMPLES_PER_LEG: usize = 64;
 const MAX_SPEED: f32 = 11.5;
-const TURN_ACCEL: f32 = 8.0;
-const SPEED_ACCEL: f32 = 9.;
-const BRAKE_ACCEL: f32 = 7.8;
+const TURN_ACCEL: f32 = 9.;
+const SPLIT_S_TURN_ACCEL: f32 = 6.5;
+const SPEED_ACCEL: f32 = 12.;
+const BRAKE_ACCEL: f32 = 3.1;
 // Horizontal guide positions from FlyBy Fig. 5. Heights interpolate between
 // the two estimated opening centers and keep the loop clear of the frame.
 const LADDER_ARC: [(Vec3, Vec3); 3] = [
@@ -70,7 +71,13 @@ impl Line {
             let curvature = (after.tangent - before.tangent) / arc;
             let point = &mut points[index];
             point.curvature = curvature;
-            point.speed = (TURN_ACCEL / curvature.length().max(0.001))
+            let leg = index / SAMPLES_PER_LEG % gates.len();
+            let turn_accel = if (6..=8).contains(&leg) {
+                SPLIT_S_TURN_ACCEL
+            } else {
+                TURN_ACCEL
+            };
+            point.speed = (turn_accel / curvature.length().max(0.001))
                 .sqrt()
                 .min(MAX_SPEED);
         }
@@ -227,10 +234,23 @@ pub(super) fn track(race: &Race) -> Option<(Vec3, Vec3)> {
     } else {
         target.normal
     };
-    let depth = (target.center - position).dot(target.normal);
-    let near_crossing = ((2.4 - depth.abs()) / 1.6).clamp(0., 1.)
-        * ((here.tangent.dot(target.normal) - 0.6) / 0.35).clamp(0., 1.);
-    let braking = (-1.8 - accel.dot(heading)).max(0.);
-    accel += heading * (near_crossing * braking);
+    // Avoid braking through the opening. The backwards speed pass already
+    // limits entry speed before the gate according to the upcoming curvature.
+    let minimum_forward = (GRAVITY + accel.z.clamp(-5.5, 8.)) * 0.065;
+    accel += heading * (level_approach(race) * (minimum_forward - accel.dot(heading)).max(0.));
     Some((accel, heading))
+}
+
+pub(super) fn level_approach(race: &Race) -> f32 {
+    let index = race.next_gate();
+    let gate = race.gates[index];
+    let previous = race.gates[(index + race.gates.len() - 1) % race.gates.len()];
+    // Allow unrestricted pitch on legs that climb to a higher gate.
+    if gate.center.z > previous.center.z + 0.6 {
+        return 0.;
+    }
+    let offset = gate.center - race.drone.position;
+    let depth = offset.dot(gate.normal);
+    let lateral = (offset - gate.normal * depth).length();
+    ((3.2 - depth.abs()) / 1.4).clamp(0., 1.) * ((2.4 - lateral) / 0.7).clamp(0., 1.)
 }

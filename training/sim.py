@@ -19,6 +19,8 @@ def physics_identity(lib):
     if course_profile() != "2025":
         physics["course"] = course_profile()
         physics["layout_revision"] = 4
+        if hasattr(lib, "sim_course_camera_tilt"):
+            physics["camera_tilt_degrees"] = lib.sim_course_camera_tilt(True)
     return physics
 
 
@@ -58,6 +60,9 @@ def load_sim():
     if hasattr(lib, "sim_course_gate_count"):
         lib.sim_course_gate_count.argtypes = [ct.c_bool]
         lib.sim_course_gate_count.restype = ct.c_size_t
+    if hasattr(lib, "sim_course_camera_tilt"):
+        lib.sim_course_camera_tilt.argtypes = [ct.c_bool]
+        lib.sim_course_camera_tilt.restype = ct.c_float
     lib.sim_hover_stick.argtypes = []
     lib.sim_hover_stick.restype = ct.c_float
     lib.sim_physics_model_version.argtypes = []

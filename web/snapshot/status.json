@@ -13,12 +13,12 @@
     {
       "at": 1,
       "standard_s": null,
-      "comparison_s": 39.12083435058594
+      "comparison_s": 40.45417022705078
     }
   ],
-  "best_two_lap_seconds": 39.12083435058594,
+  "best_two_lap_seconds": 40.420833587646484,
   "finish_rate": 1.0,
   "collision_rate": 0.0,
-  "mean_gate_crossing_speed_m_s": 4.3512555934764725,
-  "mean_gate_approach_delay_seconds": 0.13796878192159864
+  "mean_gate_crossing_speed_m_s": 4.684653105559172,
+  "mean_gate_approach_delay_seconds": 0.13657823204994202
 }

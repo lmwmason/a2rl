@@ -37,7 +37,7 @@ Releasing yaw, pitch, or roll centers the corresponding rate command. The aircra
 | --- | --- |
 | Reference aircraft | A2RL × DCL carbon-frame quadrotor, 966 g, approximately 30 × 28 × 10 cm, 5-inch-class propellers, XNOVA Black Thunder 2207 2100 KV motors, 6S 1400 mAh battery |
 | Vehicle model | Six-degree-of-freedom rigid body at 240 Hz, four first-order motor responses, thrust and torque, body-rate control, aerodynamic drag, swept gate collision checks |
-| Camera | Monocular FPV RGB with IMX219 fisheye calibration and a 51.33° mount pitch. The reference camera logs 820 × 616 at 90 Hz. The simulator delivers observations and accepts stick input at 30 Hz. |
+| Camera | Monocular FPV RGB with IMX219 fisheye calibration. Mount pitch is 51.33° for the 2025 profile and 45° for the 2026 practice profile. The reference camera logs 820 × 616 at 90 Hz. The simulator delivers observations and accepts stick input at 30 Hz. |
 | Course | Eleven 1.5 m openings from the published 2025 Grand Challenge plan, including two double frames and the Gate 5–6 Split-S |
 | Arena | Competition gate textures and an arena reconstructed from photographs, with approximate ceiling and lighting geometry |
 
@@ -145,7 +145,7 @@ Use `--device cpu` for local checks. Match frame size and stack depth when evalu
 
 ### Imitation and speed optimization
 
-The teacher follows an inter-gate racing line derived from MAVLab Log 5 and labels Mode 2 actions from its own runs and states visited by the student. The student observes RGB only. Each round uses the same three evaluation starts for comparison. A separate randomized panel checks candidate policies. The full-race progression runs without a round limit, trains for at least six more rounds after the first round that completes both panels, then requires two consecutive rounds of clean qualification without teacher control. Gate progression and optimizer state are saved in `imitation-state.zip`.
+The teacher follows a continuous race line and labels Mode 2 actions from its own runs and from states visited by the student. The 2025 line takes cues from MAVLab Log 5. The 2026 teacher schedules braking ahead of gate openings and allows pitch-up on climbs to higher gates. The student observes RGB and, with `--imu`, synchronized gyro and accelerometer history. Each round uses the same three evaluation starts for comparison. A separate randomized panel checks candidate policies. The full-race progression runs without a round limit, trains for at least six more rounds after the first round that completes both panels, then requires two consecutive rounds of clean qualification without teacher control. Gate progression and optimizer state are saved in `imitation-state.zip`.
 
 `A2RL_TEACHER_PROFILE=flow` preserves forward speed through aligned gates while using the tighter approach controller around turns. Training can also use synchronized human FPV footage and transmitter channels from TII Racing's Race Against the Machine v3 release. The human runs took place on trackRATM, so the A2RL simulator demonstrations still provide course-specific corrections. MCK's logged controls provide real-pilot labels, and a separate real flight can be held out to report stick error. [TII Racing v3 release](https://github.com/tii-racing/drone-racing-dataset/releases/tag/v3.0.0) · [Dataset and CC BY 4.0 license](https://github.com/tii-racing/drone-racing-dataset)
 

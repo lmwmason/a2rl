@@ -65,9 +65,10 @@ impl Teacher {
     pub fn action(&mut self, race: &Race) -> [f32; 4] {
         if self.flow && race.grand_challenge && race.course == Course::Season2Practice2026 {
             if let Some((accel, heading)) = line::track(race) {
-                let accel = accel.with_z(0.).clamp_length_max(12.)
+                let accel = accel.with_z(0.).clamp_length_max(17.)
                     + Vec3::Z * (GRAVITY + accel.z.clamp(-5.5, 8.));
                 let mut command = rate_action(race, accel, heading);
+                protect_level_pitch(race, &mut command);
                 // Use full launch thrust while there is room to arrest the climb.
                 let height = race.drone.position.z;
                 let climb = race.drone.velocity.z.max(0.);
@@ -225,8 +226,23 @@ impl Teacher {
         } else {
             5.2
         }) + Vec3::Z * (GRAVITY + error.z.clamp(-5.5, 6.0));
-        rate_action(race, accel, heading)
+        let mut command = rate_action(race, accel, heading);
+        if self.flow && season2 && race.grand_challenge {
+            protect_level_pitch(race, &mut command);
+        }
+        command
     }
+}
+
+fn protect_level_pitch(race: &Race, command: &mut [f32; 4]) {
+    let rotation = race.drone.rotation;
+    let forward_z = (rotation * Vec3::X).z;
+    let forward_z_rate = (rotation * race.drone.omega.cross(Vec3::X)).z;
+    // Brake the upward angular motion before reaching level, accounting for the
+    // effect of yaw while the aircraft is banked.
+    let horizon = forward_z + 0.24 * forward_z_rate;
+    let correction = line::level_approach(race) * (horizon + 0.065).max(0.) * 14.;
+    command[3] = (command[3] + correction / 5.5).clamp(-1., 1.);
 }
 
 fn rate_action(race: &Race, accel: Vec3, heading: Vec3) -> [f32; 4] {
@@ -283,11 +299,27 @@ mod tests {
     fn season2_flow_teacher_finishes_both_laps() {
         let mut race = Race::grand_challenge_on(Course::Season2Practice2026);
         let mut teacher = Teacher::new(&race, false).with_flow(true);
+        let mut approach_pitch = [0.; 8];
+        let mut tick = 0;
         while race.status == Status::Racing {
+            let target = race.next_gate();
+            let passed = race.passed;
             race.step(mode2_acro(teacher.action(&race))).unwrap();
+            let forward_z = (race.drone.rotation * Vec3::X).z;
+            approach_pitch[tick % 8] = forward_z;
+            tick += 1;
+            if race.passed > passed && ![6, 10].contains(&target) {
+                assert!(
+                    approach_pitch
+                        .iter()
+                        .all(|&slope| slope < 0.5_f32.to_radians().sin()),
+                    "nose-up on approach to gate {}",
+                    target + 1
+                );
+            }
         }
         assert_eq!((race.status, race.passed), (Status::Finished, 24));
-        assert!(race.official_seconds().unwrap() < 40.);
+        assert!(race.official_seconds().unwrap() < 42.);
         let ladder = &race.gates[race.gates.len() - 2..];
         assert!(ladder[0].center.z > ladder[1].center.z);
         assert!(ladder

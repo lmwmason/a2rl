@@ -32,10 +32,12 @@ def main():
     parser.add_argument("--updates", type=int, default=1400)
     parser.add_argument("--batch", type=int, default=96)
     parser.add_argument("--seed", type=int, default=21)
+    parser.add_argument("--stack", type=int, default=4, help="Number of consecutive RGB frames per observation.")
+    parser.add_argument("--official-eval", action="store_true")
     parser.add_argument("--eval-every", type=int, default=200)
     parser.add_argument("--eval-episodes", type=int, default=3)
     args = parser.parse_args()
-    if min(args.updates, args.batch, args.eval_every, args.eval_episodes) <= 0:
+    if min(args.updates, args.batch, args.stack, args.eval_every, args.eval_episodes) <= 0:
         parser.error("Counts must be positive.")
     if args.device == "cuda" and not torch.cuda.is_available():
         raise SystemExit("CUDA is unavailable in this Python environment.")
@@ -44,10 +46,12 @@ def main():
     if args.device == "cuda":
         torch.backends.cudnn.benchmark = True
 
-    stack, height, width = 4, 72, 96
+    stack, height, width = args.stack, 72, 96
     lib = load_sim()
     agent = Agent(stack, args.device, lib.sim_hover_stick())
     demos = Demonstrations(args.real, args.sim, stack, height, width, args.seed)
+    if {path.resolve() for path in args.real} & {path.resolve() for path in args.held_out}:
+        parser.error("Hold out complete flights from training.")
     held_out = [Clip(path, stack, height, width) for path in args.held_out]
     optimizer = torch.optim.AdamW([*agent.encoder.parameters(), *agent.actor.parameters()], lr=3e-4)
     run = Environment(lib, width, height)
@@ -69,15 +73,19 @@ def main():
                 optimizer.step()
                 if step % args.eval_every and step != args.updates:
                     continue
-                metrics = evaluate(agent, run, stack, args.eval_episodes)
-                metrics.update(update=step, bc_loss=float(loss.detach()),
-                               real_holdout_mae=held_out_mae(agent, held_out, args.batch))
+                metrics = evaluate(agent, run, stack, args.eval_episodes, official=args.official_eval)
+                real_error = held_out_mae(agent, held_out, args.batch)
+                metrics.update(update=step, steps=step, round=(step + args.eval_every - 1) // args.eval_every,
+                               bc_loss=float(loss.detach()), real_holdout_mae=real_error,
+                               best_two_lap_s=metrics["official_best_seconds"])
                 print(json.dumps(metrics), flush=True)
                 log.write(json.dumps(metrics) + "\n")
                 agent.save(args.out / "latest.pt")
                 record = metrics["best_lap_seconds"]
                 rank = (metrics["two_lap_rate"], metrics["lap_rate"], metrics["gates_mean"],
                         -metrics["crash_rate"], -record if record else 0., metrics["return"])
+                if not args.sim and real_error is not None:
+                    rank = (-float(np.mean(real_error)),)
                 if best_rank is None or rank > best_rank:
                     agent.save(args.out / "best.pt")
                     best_rank = rank

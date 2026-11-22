@@ -115,6 +115,14 @@ python -m tools.prepare_mck_demos --flight flight-13p-trackRATM --flight flight-
 python -m tools.prepare_mck_demos --flight flight-15p-trackRATM --out runs/mck/holdout
 ```
 
+To train a fresh end-to-end policy on MCK alone, use the two synchronized flights for training and reserve the third for evaluation of stick prediction. The policy starts with fresh weights and learns its RGB encoder and Mode 2 actor jointly. The simulator evaluates transfer to A2RL without providing training samples.
+
+```bash
+A2RL_PHYSICS_ENGINE=mujoco python -m training.imitate --device cuda --stack 8 \
+  --real runs/mck/train/*.npz --held-out runs/mck/holdout/flight-15p-trackRATM.npz \
+  --official-eval --out runs/mck-e2e-v1
+```
+
 Pass these using `A2RL_HUMAN_DEMO_DIR` and `A2RL_HUMAN_HOLDOUT`. During speed RL, `A2RL_SPRINT_EXPLORATION_STEPS` enables full-throttle bursts of up to three control ticks on aligned straights with room before the next gate. The frequency fades to zero by the selected step. The evaluated RGB policy chooses all four sticks on its own.
 
 The [MAVLab race video](https://www.youtube.com/watch?v=yz2in2eFATE) shows the TU Delft autonomous competitor. Its [published MonoRace data](https://doi.org/10.4121/039abd82-094c-4c93-baa1-e7446f562e0e) supplies original onboard frames, motor speeds, and body-rate measurements. In racing school, use `A2RL_MONORACE_DEMO=runs/monorace/log5.npz` and `A2RL_MONORACE_HOLDOUT=runs/monorace/log7.npz` after generating the files below. Estimated Mode 2 labels from the autonomous run enter the loss at weight 0.10, compared with 0.35 for synchronized human transmitter inputs. Each source reports its own held-out error.

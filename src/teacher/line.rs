@@ -7,9 +7,16 @@ use crate::{Course, Gate, Race};
 
 const SAMPLES_PER_LEG: usize = 64;
 const MAX_SPEED: f32 = 11.5;
-const TURN_ACCEL: f32 = 7.2;
-const SPEED_ACCEL: f32 = 6.;
-const BRAKE_ACCEL: f32 = 6.5;
+const TURN_ACCEL: f32 = 8.0;
+const SPEED_ACCEL: f32 = 9.;
+const BRAKE_ACCEL: f32 = 7.8;
+// Horizontal guide positions from FlyBy Fig. 5. Heights interpolate between
+// the two estimated opening centers and keep the loop clear of the frame.
+const LADDER_ARC: [(Vec3, Vec3); 3] = [
+    (Vec3::new(16.75, 5.58, 3.55), Vec3::new(-0.9, 0.25, -0.33)),
+    (Vec3::new(16.45, 7.1, 2.75), Vec3::new(0.42, 0.81, -0.42)),
+    (Vec3::new(18.1, 7.8, 1.75), Vec3::new(0.54, -0.79, -0.28)),
+];
 
 #[derive(Clone, Copy)]
 struct Point {
@@ -34,20 +41,17 @@ impl Line {
         let mut points = Vec::with_capacity(3 * gates.len() * SAMPLES_PER_LEG + 1);
         let mut begin = start;
         let mut direction = start_direction;
-        for gate in gates.iter().cycle().take(3 * gates.len()) {
-            let distance = gate.center.distance(begin);
-            let reversal = gate.normal.dot(direction) < -0.9
-                && gate.center.truncate().distance(begin.truncate()) < 0.5;
-            let handle = if reversal { 8.5 } else { 0.88 * distance };
-            for tick in 0..SAMPLES_PER_LEG {
-                let t = tick as f32 / SAMPLES_PER_LEG as f32;
-                points.push(hermite(
-                    begin,
-                    direction * handle,
-                    gate.center,
-                    gate.normal * handle,
-                    t,
-                ));
+        for (leg, gate) in gates.iter().cycle().take(3 * gates.len()).enumerate() {
+            let mut start = (begin, direction);
+            let target = (gate.center, gate.normal);
+            if leg % gates.len() == gates.len() - 1 {
+                let knots = LADDER_ARC.into_iter().chain([target]);
+                for end in knots {
+                    append_curve(&mut points, start, end, SAMPLES_PER_LEG / 4);
+                    start = end;
+                }
+            } else {
+                append_curve(&mut points, start, target, SAMPLES_PER_LEG);
             }
             begin = gate.center;
             direction = gate.normal;
@@ -69,6 +73,9 @@ impl Line {
             point.speed = (TURN_ACCEL / curvature.length().max(0.001))
                 .sqrt()
                 .min(MAX_SPEED);
+        }
+        for gate in (SAMPLES_PER_LEG..points.len() - SAMPLES_PER_LEG).step_by(SAMPLES_PER_LEG) {
+            coast_through_gate(&mut points, gate);
         }
         points[0].speed = 2.2;
         for index in 1..points.len() {
@@ -126,6 +133,50 @@ impl Line {
     }
 }
 
+fn coast_through_gate(points: &mut [Point], gate: usize) {
+    // Finish braking before the aperture and preserve forward speed until clear.
+    let mut first = gate;
+    let mut last = gate;
+    let mut length = 0.;
+    while length < 1.45 && first > 0 {
+        length += points[first - 1].position.distance(points[first].position);
+        first -= 1;
+    }
+    length = 0.;
+    while length < 0.55 && last + 1 < points.len() {
+        length += points[last].position.distance(points[last + 1].position);
+        last += 1;
+    }
+    let limit = points[first..=last]
+        .iter()
+        .map(|point| point.speed)
+        .fold(MAX_SPEED, f32::min);
+    for point in &mut points[first..=last] {
+        point.speed = limit;
+    }
+}
+
+fn append_curve(
+    points: &mut Vec<Point>,
+    (begin, direction): (Vec3, Vec3),
+    (end, heading): (Vec3, Vec3),
+    samples: usize,
+) {
+    let distance = begin.distance(end);
+    let reversal = direction.dot(heading) < -0.9 && begin.truncate().distance(end.truncate()) < 0.5;
+    let handle = if reversal { 8.5 } else { 0.88 * distance };
+    for tick in 0..samples {
+        let t = tick as f32 / samples as f32;
+        points.push(hermite(
+            begin,
+            direction.normalize() * handle,
+            end,
+            heading.normalize() * handle,
+            t,
+        ));
+    }
+}
+
 fn hermite(a: Vec3, da: Vec3, b: Vec3, db: Vec3, t: f32) -> Point {
     let quadratic = 3. * (b - a) - 2. * da - db;
     let cubic = 2. * (a - b) + da + db;
@@ -149,11 +200,13 @@ fn blend(a: Point, b: Point, t: f32) -> Point {
 pub(super) fn track(race: &Race) -> Option<(Vec3, Vec3)> {
     let target = race.gates[race.next_gate()];
     let position = race.drone.position;
-    if (position - target.center).dot(target.normal) > 0.60 {
-        return None;
-    }
     let line = SEASON2_LINE.get_or_init(Line::season2);
     let (index, fraction) = line.closest(race.passed, position);
+    if index + 5 >= (race.passed + 1) * SAMPLES_PER_LEG
+        && (position - target.center).dot(target.normal) > 0.60
+    {
+        return None;
+    }
     let here = blend(line.points[index], line.points[index + 1], fraction);
     if here.position.distance_squared(position) > 3.0_f32.powi(2) {
         return None;
@@ -161,7 +214,7 @@ pub(super) fn track(race: &Race) -> Option<(Vec3, Vec3)> {
     let preview = line.look_ahead(index, 0.32 + 0.18 * here.speed);
     let velocity_error = here.tangent * preview.speed - race.drone.velocity;
     let correction = here.position - position;
-    let accel = 3.8 * velocity_error
+    let mut accel = 3.8 * velocity_error
         + 10. * correction
         + 0.75 * here.speed.powi(2) * here.curvature
         - race.drone.rotation * crate::drag(race.drone.rotation.conjugate() * race.drone.velocity)
@@ -174,5 +227,10 @@ pub(super) fn track(race: &Race) -> Option<(Vec3, Vec3)> {
     } else {
         target.normal
     };
+    let depth = (target.center - position).dot(target.normal);
+    let near_crossing = ((2.4 - depth.abs()) / 1.6).clamp(0., 1.)
+        * ((here.tangent.dot(target.normal) - 0.6) / 0.35).clamp(0., 1.);
+    let braking = (-1.8 - accel.dot(heading)).max(0.);
+    accel += heading * (near_crossing * braking);
     Some((accel, heading))
 }

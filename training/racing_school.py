@@ -171,7 +171,10 @@ def matches_teacher_pace(result, expert):
 def demonstration_loss(agent, demonstrations, batch):
     frames, controls, confidence, *imu = demonstrations.sample(batch)
     pixels = random_shift(pixel_tensor(frames, agent.device).float() / 255. - .5, pad=1)
-    return stick_loss(agent.actor(agent.policy_features(pixels, imu[0] if imu else None)).tanh(), controls, confidence)
+    # Preserve brief high-throttle examples in the real-pilot demonstration set.
+    emphasis = 1. + np.maximum(0., controls[:, 1] - .5)
+    return stick_loss(agent.actor(agent.policy_features(pixels, imu[0] if imu else None)).tanh(),
+                      controls, confidence * emphasis)
 
 
 def demonstration_error(agent, sample):
@@ -238,6 +241,8 @@ def collect(envs, workers, agent, buffer, obs, rng, ticks, teacher_probability, 
             action = [decode_rc(encode_rc(command)) for command in action]
         following = np.empty_like(obs[:, -1])
         emphasis = 1. + 1.25 * np.abs(labels[:, [0, 2, 3]]).max(axis=1)
+        if full_course:
+            emphasis += np.maximum(0., labels[:, 1] - .5)
         tasks = [workers.submit(env.advance, command) for env, command in zip(envs, action)]
         for i, task in enumerate(tasks):
             image, _, status = task.result()
@@ -325,7 +330,7 @@ def main():
     teacher = teacher_profile()
     line_teacher = course_profile() == "2026-practice" and teacher == "flow"
     qualify_pace = args.full_course and line_teacher
-    teacher_revision = 2 if line_teacher else 1
+    teacher_revision = 3 if line_teacher else 1
     height, width = 72, 96
     human_demo = (Demonstrations(args.human_demos, [], args.stack, height, width, 213, args.imu)
                   if args.human_demos else None)

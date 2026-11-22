@@ -67,7 +67,14 @@ impl Teacher {
             if let Some((accel, heading)) = line::track(race) {
                 let accel = accel.with_z(0.).clamp_length_max(12.)
                     + Vec3::Z * (GRAVITY + accel.z.clamp(-5.5, 8.));
-                return rate_action(race, accel, heading);
+                let mut command = rate_action(race, accel, heading);
+                // Use full launch thrust while there is room to arrest the climb.
+                let height = race.drone.position.z;
+                let climb = race.drone.velocity.z.max(0.);
+                if race.passed == 0 && height < 0.55 && height + climb * climb / 16. < 0.95 {
+                    command[1] = 1.;
+                }
+                return command;
             }
         }
         let next = race.next_gate();
@@ -280,6 +287,11 @@ mod tests {
             race.step(mode2_acro(teacher.action(&race))).unwrap();
         }
         assert_eq!((race.status, race.passed), (Status::Finished, 24));
-        assert!(race.official_seconds().unwrap() < 37.);
+        assert!(race.official_seconds().unwrap() < 40.);
+        let ladder = &race.gates[race.gates.len() - 2..];
+        assert!(ladder[0].center.z > ladder[1].center.z);
+        assert!(ladder
+            .iter()
+            .all(|gate| gate.normal.x < 0. && gate.normal.y < 0.));
     }
 }

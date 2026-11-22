@@ -6,7 +6,7 @@ An indoor FPV racing research project with a Rust simulator for batch experiment
 
 ![Rust FPV frame rendered from an Elodin takeoff on the 2026 race reconstruction](docs/screenshots/elodin-2026-fpv.png)
 
-The public dashboard shows the replay, its simulator, and evaluation histories. The saved **Flow teacher evaluation** shows one complete Rust simulation race and the results of the teacher's validation batch. The status panel shows **No live training** when no live run is connected.
+The public dashboard shows the replay, its simulator, and evaluation histories. The saved **Flow teacher evaluation** shows one complete Rust simulation race and the results of the teacher's validation batch. Its Mode 2 overlay follows the replay timestamp, with yaw and throttle on the left and roll and pitch on the right. The overlay is a dashboard control display sourced from the recorded stick commands. The status panel shows **No live training** when no live run is connected.
 
 ## Fly the course
 

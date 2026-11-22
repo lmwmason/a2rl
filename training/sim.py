@@ -18,7 +18,7 @@ def physics_identity(lib):
     physics = {"engine": engine, "model_version": lib.sim_physics_model_version()}
     if course_profile() != "2025":
         physics["course"] = course_profile()
-        physics["layout_revision"] = 3
+        physics["layout_revision"] = 4
     return physics
 
 

@@ -18,6 +18,7 @@ const finishChart = byId("finish-history");
 const finishTrend = { values: [], key: "", speed: false };
 let playing = null;
 let pending = null;
+let displayedControl = -1;
 const hosted = !["127.0.0.1", "localhost", "[::1]"].includes(window.location.hostname);
 const feeds = hosted ? [
   "https://beam-snapshot-down-museums.trycloudflare.com/",
@@ -57,6 +58,20 @@ async function readFeed(name) {
 function pill(id, label, state = "") {
   setText(id, label);
   byId(id).className = state ? "pill " + state : "pill";
+}
+
+function showSticks(time = camera.currentTime) {
+  const controls = playing?.controls;
+  if (!controls || !Number.isFinite(time)) return;
+  const index = Math.min(controls.actions.length - 1, Math.floor(time * controls.sample_rate + 0.0001));
+  if (index === displayedControl) return;
+  displayedControl = index;
+  const [yaw, throttle, roll, pitch] = controls.actions[index];
+  for (const [id, x, y] of [["left-stick", yaw, throttle], ["right-stick", roll, pitch]]) {
+    byId(id).style.left = (50 + 46 * x) + "%";
+    byId(id).style.top = (50 - 46 * y) + "%";
+  }
+  setText("stick-throttle", Math.round(50 * (throttle + 1)) + "%");
 }
 
 function drawHistory() {
@@ -169,6 +184,9 @@ function startReplay() {
     camera.src = playing.blob;
     camera.muted = true;
     camera.hidden = false;
+    byId("mode2-sticks").hidden = !playing.controls;
+    displayedControl = -1;
+    showSticks(0);
     const download = byId("download-replay");
     download.href = playing.blob;
     const firmwareCheck = playing.kind === "takeoff-check";
@@ -206,6 +224,16 @@ function startReplay() {
   if (playing) camera.play().catch(() => {});
 }
 camera.addEventListener("ended", startReplay);
+camera.addEventListener("seeked", () => showSticks());
+if ("requestVideoFrameCallback" in camera) {
+  const updateSticks = (_, frame) => {
+    showSticks(frame.mediaTime);
+    camera.requestVideoFrameCallback(updateSticks);
+  };
+  camera.requestVideoFrameCallback(updateSticks);
+} else {
+  camera.addEventListener("timeupdate", () => showSticks());
+}
 
 function physicsLabel(run) {
   return { elodin: "Elodin + Betaflight SITL", rust: "Rust" }[run.physics_engine] ?? "—";
@@ -298,10 +326,17 @@ async function fetchReplay() {
 async function queueReplay({ url, value: info }) {
   if (info.version === playing?.version || info.version === pending?.version) return;
   if (!/^replay-[0-9]+\.mp4$/.test(info.url)) throw new Error("Invalid replay filename");
-  const video = await requestData(new URL(info.url, url), true);
+  const controlsRequest = /^controls-[0-9]+\.json$/.test(info.controls_url)
+    ? requestData(new URL(info.controls_url, url)).then(({ value }) => (
+      Number.isFinite(value.sample_rate) && value.sample_rate > 0
+        && Array.isArray(value.actions) && value.actions.length
+        && value.actions.every((axes) => Array.isArray(axes) && axes.length === 4
+          && axes.every((axis) => Number.isFinite(axis) && Math.abs(axis) <= 1)) ? value : null
+    )).catch(() => null) : null;
+  const [video, controls] = await Promise.all([requestData(new URL(info.url, url), true), controlsRequest]);
   const blob = URL.createObjectURL(video.value.slice(0, video.value.size, "video/mp4"));
   if (pending) URL.revokeObjectURL(pending.blob);
-  pending = { ...info, blob };
+  pending = { ...info, blob, controls };
   if (!playing || camera.ended) startReplay();
 }
 

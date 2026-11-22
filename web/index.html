@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="FPV policy evaluation, training metrics, and checkpoint replays">
   <title>Flight Policy Research</title>
-  <link rel="stylesheet" href="style.css">
-  <script src="dashboard.js?v=2026-teacher" defer></script>
+  <link rel="stylesheet" href="style.css?v=mode2">
+  <script src="dashboard.js?v=mode2" defer></script>
 </head>
 <body>
   <main>
@@ -17,6 +17,17 @@
         </div>
         <div class="screen">
           <video id="fpv" muted playsinline controls hidden aria-label="FPV replay"></video>
+          <div id="mode2-sticks" class="mode2-sticks" role="group" aria-label="Recorded Mode 2 stick positions" hidden>
+            <div class="stick">
+              <span>Yaw / Throttle</span>
+              <div class="stick-grid" aria-hidden="true"><i id="left-stick"></i></div>
+              <output id="stick-throttle" aria-label="Throttle"></output>
+            </div>
+            <div class="stick">
+              <span>Roll / Pitch</span>
+              <div class="stick-grid" aria-hidden="true"><i id="right-stick"></i></div>
+            </div>
+          </div>
           <p id="waiting">Loading replay</p>
         </div>
         <footer class="bar">

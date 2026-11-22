@@ -79,6 +79,8 @@ impl Teacher {
                     17.
                 } else if line::is_ladder_leg(race.next_gate()) {
                     23.
+                } else if line::is_fast_leg(race.next_gate()) {
+                    38.
                 } else {
                     27.
                 };

@@ -12,7 +12,9 @@ struct Pace {
     max_speed: f32,
     open: LegLimits,
     tight: LegLimits,
+    fast: LegLimits,
     split_s_turn_accel: f32,
+    split_s_exit: LegLimits,
     coast_at_open_gates: bool,
 }
 
@@ -30,7 +32,12 @@ const NATIVE_PACE: Pace = Pace {
     max_speed: 11.5,
     open: NATIVE_LIMITS,
     tight: NATIVE_LIMITS,
+    fast: NATIVE_LIMITS,
     split_s_turn_accel: 6.5,
+    split_s_exit: LegLimits {
+        turn_accel: 6.5,
+        brake_accel: 3.1,
+    },
     coast_at_open_gates: true,
 };
 const FIRMWARE_PACE: Pace = Pace {
@@ -43,23 +50,40 @@ const FIRMWARE_PACE: Pace = Pace {
         turn_accel: 11.5,
         brake_accel: 3.8,
     },
+    fast: LegLimits {
+        turn_accel: 23.,
+        brake_accel: 8.,
+    },
     split_s_turn_accel: 8.5,
+    split_s_exit: LegLimits {
+        turn_accel: 15.,
+        brake_accel: 8.,
+    },
     coast_at_open_gates: false,
 };
 
 impl Pace {
     fn limits_for_leg(&self, target: usize) -> LegLimits {
-        // Preserve the measured clearance through the chicane and the Ladder.
-        if matches!(target, 4 | 5) || is_ladder_leg(target) {
-            self.tight
-        } else {
-            self.open
+        match target {
+            2 | 3 | 9 => self.fast,
+            // Keep the approach limits through the chicane and the Ladder.
+            4 | 5 | 10 | 11 => self.tight,
+            6 | 7 => LegLimits {
+                turn_accel: self.split_s_turn_accel,
+                brake_accel: self.open.brake_accel,
+            },
+            8 => self.split_s_exit,
+            _ => self.open,
         }
     }
 }
 
 pub(super) fn is_ladder_leg(target: usize) -> bool {
     matches!(target, 10 | 11)
+}
+
+pub(super) fn is_fast_leg(target: usize) -> bool {
+    matches!(target, 2 | 3 | 8 | 9)
 }
 
 // Horizontal guide positions from FlyBy Fig. 5. Heights interpolate between
@@ -124,11 +148,7 @@ impl Line {
             let point = &mut points[index];
             point.curvature = curvature;
             let leg = index / SAMPLES_PER_LEG % gates.len();
-            let turn_accel = if (6..=8).contains(&leg) {
-                pace.split_s_turn_accel
-            } else {
-                pace.limits_for_leg(leg).turn_accel
-            };
+            let turn_accel = pace.limits_for_leg(leg).turn_accel;
             point.speed = (turn_accel / curvature.length().max(0.001))
                 .sqrt()
                 .min(pace.max_speed);
@@ -297,7 +317,7 @@ pub(super) fn track(race: &Race, firmware: bool) -> Option<(Vec3, Vec3)> {
         let alignment = (1. - correction.length() / 0.9).clamp(0., 1.);
         let straightness = (1. - here.curvature.length() / 0.22).clamp(0., 1.);
         let speed_deficit = (preview.speed - race.drone.velocity.dot(here.tangent)).clamp(0., 5.);
-        accel += here.tangent * (4. * speed_deficit * alignment * room * straightness);
+        accel += here.tangent * (7. * speed_deficit * alignment * room * straightness);
     }
     let toward_gate = (target.center - position).truncate().normalize_or_zero();
     let heading = preview.tangent.truncate();

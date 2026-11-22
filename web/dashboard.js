@@ -264,6 +264,16 @@ function renderStatus(info) {
   setText("finish-rate", percent(info.finish_rate));
   setText("collision-rate", percent(info.collision_rate));
   setText("best-time", quantity(info.best_two_lap_seconds, "s"));
+  const meanSpeed = info.mean_flight_speed_m_s;
+  byId("mean-speed").closest("div").hidden = !Number.isFinite(meanSpeed);
+  setText("mean-speed", quantity(meanSpeed, "m/s"));
+  const highThrottle = info.high_throttle_seconds;
+  const highFraction = info.high_throttle_fraction;
+  const throttleMeasured = Number.isFinite(highThrottle) && Number.isFinite(highFraction);
+  byId("high-throttle").closest("div").hidden = !throttleMeasured;
+  if (throttleMeasured) {
+    setText("high-throttle", `${(100 * highFraction).toFixed(1)}% · ${quantity(highThrottle, "s")}`);
+  }
   setText("crossing-speed", quantity(info.mean_gate_crossing_speed_m_s, "m/s"));
   setText("approach-delay", quantity(info.mean_gate_approach_delay_seconds, "s"));
 

@@ -336,7 +336,8 @@ def train(args, agent, lib):
                     agent.save(args.run_dir / "latest.pt")
                     last_eval = steps
                     achieved = record_evaluation(result, log)
-                save_after = args.checkpoint_every if last_save else min(25_000, args.checkpoint_every)
+                first_checkpoint = args.eval_every if protected else 25_000
+                save_after = args.checkpoint_every if last_save else min(first_checkpoint, args.checkpoint_every)
                 if args.checkpoint_every and (steps - last_save >= save_after or budget_reached or achieved):
                     path = args.run_dir / "training-state.zip"
                     checkpoint.save(path, agent, replay,

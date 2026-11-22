@@ -683,8 +683,8 @@ mod tests {
     #[test]
     fn forward_speed_bonus_requires_a_valid_crossing() {
         let run = |speed: f32, side: f32| {
-            let mut race = Race::default();
-            let gate = race.gates[0];
+            let mut race = Race::practice(2, 0., 0., 1.);
+            let gate = race.gates[race.next_gate()];
             let travel = gate.normal * (speed * DT);
             race.drone.position = gate.center - travel * 0.5 + gate.side * side;
             race.progress = 1.;

@@ -7,6 +7,7 @@ from pathlib import Path
 import shlex
 import signal
 import subprocess
+from tempfile import mkdtemp
 import time
 
 
@@ -23,7 +24,7 @@ def evaluate(args, weights, session, side):
     environment = os.environ | {
         "A2RL_COURSE": "2026-practice",
         "A2RL_ELODIN_ROOT": str(args.harness),
-        "A2RL_ELODIN_DB": str(session / "flight"),
+        "A2RL_ELODIN_DB": str(Path(mkdtemp(prefix="attempt-", dir=session)) / "flight"),
         "A2RL_ELODIN_FPV": str(session / "replay.mp4"),
         "A2RL_ELODIN_FLOW_TEACHER": "0",
         "A2RL_ELODIN_POLICY": str(weights),
@@ -86,11 +87,11 @@ def promote(args, file, weights):
 def watch(args):
     for phase, source, marker, target in (("IMITATION", "recovery/latest.pt", "imitation-qualified.pt", 30.),
                                           ("SPEED RL", "speed/best.pt", "speed-qualified.pt", 12.)):
-        if fetch(args, marker):
-            continue
         examined = set()
         while True:
             try:
+                if fetch(args, marker):
+                    break
                 raw = fetch(args, source)
                 digest = hashlib.sha256(raw).hexdigest()
                 if not raw or digest in examined:
@@ -126,10 +127,17 @@ def main():
     parser.add_argument("--elodin", required=True)
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args()
+    if args.host.startswith("-"):
+        parser.error("Use an SSH alias or hostname.")
     args.harness = args.harness.resolve()
     args.out = args.out.resolve()
     args.out.mkdir(parents=True, exist_ok=True)
+    signal.signal(signal.SIGTERM, stop)
     watch(args)
+
+
+def stop(_number, _frame):
+    raise SystemExit(0)
 
 
 if __name__ == "__main__":

@@ -1,11 +1,25 @@
-"""Generate the unbranded 2026 gate for the Elodin renderer."""
+"""Generate the 2026 gate and its printed artwork for the Elodin preview."""
+from io import BytesIO
 import json
+from pathlib import Path
 from struct import pack
+
+from PIL import Image
+
+
+def artwork_png():
+    alpha = Path(__file__).resolve().parents[1] / "assets/season2-gate-ink.a8"
+    ink = Image.frombytes("L", (256, 256), alpha.read_bytes())
+    image = Image.new("RGBA", ink.size, (236, 230, 245))
+    image.putalpha(ink)
+    png = BytesIO()
+    image.save(png, format="PNG")
+    return png.getvalue()
 
 
 def write_gate(path):
     half_opening, half_outer, half_depth = .75, 1.35, .40
-    positions = [[], []]
+    positions = [[], [], []]
 
     def panel(material, axis, plane, u0, u1, v0, v1):
         def point(u, v):
@@ -22,6 +36,8 @@ def write_gate(path):
         for low, high in [(-b, -a), (a, b)]:
             panel(0, 2, face, low, high, -b, b)
             panel(0, 2, face, -a, a, low, high)
+        artwork = face + (.002 if face > 0. else -.002)
+        panel(2, 2, artwork, -b, b, -b, b)
     for edge in (-b, -a, a, b):
         outer = abs(edge) == b
         end = b if outer else a
@@ -45,6 +61,20 @@ def write_gate(path):
         accessors.append({"bufferView": i, "componentType": 5126, "type": "VEC3", "count": len(vertices),
                           "min": [min(axis) for axis in axes], "max": [max(axis) for axis in axes]})
         primitives.append({"attributes": {"POSITION": i}, "material": i})
+    # The artwork uses the same front/rear UV mapping as the Rust renderer.
+    offset = len(binary)
+    for depth, side, height in positions[2]:
+        u = 0.5 + (side if depth > 0. else -side) / (2 * b)
+        v = 0.5 - height / (2 * b)
+        binary.extend(pack("<2f", u, v))
+    views.append({"buffer": 0, "byteOffset": offset, "byteLength": len(binary) - offset, "target": 34962})
+    accessors.append({"bufferView": len(views) - 1, "componentType": 5126,
+                      "type": "VEC2", "count": len(positions[2])})
+    primitives[2]["attributes"]["TEXCOORD_0"] = len(accessors) - 1
+    png = artwork_png()
+    views.append({"buffer": 0, "byteOffset": len(binary), "byteLength": len(png)})
+    binary.extend(png)
+    binary.extend(b"\0" * (-len(binary) % 4))
     metadata = {
         "asset": {"version": "2.0"}, "scene": 0, "scenes": [{"nodes": [0]}],
         "nodes": [{"mesh": 0}], "meshes": [{"primitives": primitives}],
@@ -53,7 +83,13 @@ def write_gate(path):
                                                          "metallicFactor": 0, "roughnessFactor": .85}},
             {"doubleSided": True, "emissiveFactor": [.86, .70, 1.0],
              "pbrMetallicRoughness": {"baseColorFactor": [.85, .70, 1.0, 1], "metallicFactor": 0}},
+            {"doubleSided": True, "alphaMode": "MASK", "alphaCutoff": .24,
+             "extensions": {"KHR_materials_unlit": {}},
+             "pbrMetallicRoughness": {"baseColorTexture": {"index": 0}, "metallicFactor": 0}},
         ],
+        "extensionsUsed": ["KHR_materials_unlit"],
+        "textures": [{"source": 0}],
+        "images": [{"bufferView": len(views) - 1, "mimeType": "image/png"}],
         "buffers": [{"byteLength": len(binary)}], "bufferViews": views, "accessors": accessors,
     }
     document = json.dumps(metadata, separators=(",", ":")).encode()

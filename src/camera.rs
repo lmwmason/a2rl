@@ -16,6 +16,7 @@ pub const LENS: [f32; 8] = [
     -0.00106689,
 ];
 const GATE_TEXTURE: &[u8; 256 * 256 * 3] = include_bytes!("../assets/grand-challenge-gate.rgb");
+const SEASON2_GATE_INK: &[u8; 256 * 256] = include_bytes!("../assets/season2-gate-ink.a8");
 const HALL_CEILING: f32 = 8.6;
 
 pub fn camera_pose(race: &Race) -> [Vec3; 4] {
@@ -85,12 +86,28 @@ fn floor(x: f32, y: f32) -> [u8; 3] {
     [level + 2, level + 1, level + 2]
 }
 
-fn gate_texture(side: f32, height: f32, rear: bool) -> [u8; 3] {
+fn gate_uv(side: f32, height: f32, rear: bool) -> (f32, f32) {
     let side = if rear { side } else { -side };
-    let u = ((side / 2.7 + 0.5) * 256.).clamp(0., 255.) as usize;
-    let v = ((0.5 - height / 2.7) * 256.).clamp(0., 255.) as usize;
-    let i = (v * 256 + u) * 3;
+    (
+        ((side / 2.7 + 0.5) * 256.).clamp(0., 255.),
+        ((0.5 - height / 2.7) * 256.).clamp(0., 255.),
+    )
+}
+
+fn gate_texture(side: f32, height: f32, rear: bool) -> [u8; 3] {
+    let (u, v) = gate_uv(side, height, rear);
+    let i = (v as usize * 256 + u as usize) * 3;
     [GATE_TEXTURE[i], GATE_TEXTURE[i + 1], GATE_TEXTURE[i + 2]]
+}
+
+fn season2_ink(contact: Vec3) -> f32 {
+    let (u, v) = gate_uv(contact.y, contact.z, contact.x > 0.);
+    let (x, y) = (u as usize, v as usize);
+    let (next_x, next_y) = ((x + 1).min(255), (y + 1).min(255));
+    let ink = |col, row| f32::from(SEASON2_GATE_INK[row * 256 + col]);
+    let top = ink(x, y) + (ink(next_x, y) - ink(x, y)) * u.fract();
+    let bottom = ink(x, next_y) + (ink(next_x, next_y) - ink(x, next_y)) * u.fract();
+    (top + (bottom - top) * v.fract()) / 255.
 }
 
 fn season2_gate_color(contact: Vec3) -> [u8; 3] {
@@ -103,7 +120,12 @@ fn season2_gate_color(contact: Vec3) -> [u8; 3] {
     } else if face {
         let grain = ((contact.y * 147.).floor() as i32 ^ (contact.z * 183.).floor() as i32) & 7;
         let lit = (5. * (contact.z + 1.35) + grain as f32 * 0.6) as u8;
-        [74 + lit, 25 + lit, 155 + lit]
+        let ink = season2_ink(contact);
+        let panel = [74 + lit, 25 + lit, 155 + lit];
+        std::array::from_fn(|i| {
+            let base = f32::from(panel[i]);
+            (base + (f32::from([236_u8, 230, 245][i]) - base) * ink) as u8
+        })
     } else {
         [51, 23, 105]
     }

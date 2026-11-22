@@ -1,7 +1,7 @@
 //! Training-only expert. Its state and gate path are never input to the RGB policy.
 use glam::{Mat3, Quat, Vec3};
 
-use crate::{Race, ARENA_MAX, ARENA_MIN, HOVER, START};
+use crate::{Course, Race, HOVER};
 
 const GRAVITY: f32 = 9.80665;
 // 55% arc-length anchors between consecutive gates in 4TU MonoRace Log 5,
@@ -82,11 +82,13 @@ impl Teacher {
 
         let position = race.drone.position;
         let depth = (position - gate.center).dot(gate.normal);
+        let (arena_min, arena_max) = race.course.bounds();
+        let season2 = race.course == Course::Season2Practice2026;
         if matches!(self.phase, Phase::Approach | Phase::Cross) && depth > 0.65 {
             let side = (position - gate.center).dot(gate.side).signum();
             let trial = gate.center + gate.side * side * 2.5;
             self.recovery_side =
-                if trial.cmpgt(ARENA_MAX - 0.4).any() || trial.cmplt(ARENA_MIN + 0.4).any() {
+                if trial.cmpgt(arena_max - 0.4).any() || trial.cmplt(arena_min + 0.4).any() {
                     -side
                 } else {
                     side
@@ -95,13 +97,16 @@ impl Teacher {
         }
         let (target, heading, speed_limit) = loop {
             let (point, direction, tolerance, speed, following) = match self.phase {
-                Phase::Launch => (
-                    START,
-                    Quat::from_rotation_z(13_f32.to_radians()) * Vec3::X,
-                    0.20,
-                    3.,
-                    Phase::Approach,
-                ),
+                Phase::Launch => {
+                    let (start, heading) = race.course.start();
+                    (
+                        start,
+                        Quat::from_rotation_z(heading.to_radians()) * Vec3::X,
+                        0.20,
+                        3.,
+                        Phase::Approach,
+                    )
+                }
                 Phase::Exit => (
                     previous.center + previous.normal * 2.0,
                     previous.normal,
@@ -114,7 +119,16 @@ impl Teacher {
                         self.phase = Phase::Approach;
                         continue;
                     }
-                    let anchor = LOG5_LINE[previous_index];
+                    let anchor = if season2 {
+                        // Travel clear of the lower gate before climbing into the stacked aperture.
+                        if (gate.center - previous.center).truncate().length() < 0.5 {
+                            Vec3::new(entry.x, entry.y, gate.center.z)
+                        } else {
+                            (previous.center + previous.normal * 2.0 + entry) * 0.5
+                        }
+                    } else {
+                        LOG5_LINE[previous_index]
+                    };
                     // Keep the split-S turn outside the frame while descending.
                     let delta = anchor - position;
                     let heading = Vec3::new(delta.x, delta.y, 0.)
@@ -182,12 +196,13 @@ impl Teacher {
             self.phase = following;
         };
 
-        let desired_velocity = if self.flow && carry && matches!(self.phase, Phase::Cross) {
-            let lateral = gate.center - position + gate.normal * depth;
-            gate.normal * speed_limit + lateral * 2.5
-        } else {
-            ((target - position) * 1.5).clamp_length_max(speed_limit)
-        };
+        let desired_velocity =
+            if self.flow && (carry || season2) && matches!(self.phase, Phase::Cross) {
+                let lateral = gate.center - position + gate.normal * depth;
+                gate.normal * speed_limit + lateral * 2.5
+            } else {
+                ((target - position) * 1.5).clamp_length_max(speed_limit)
+            };
         let error = (desired_velocity - race.drone.velocity) * 2.6;
         let accel = Vec3::new(error.x, error.y, 0.).clamp_length_max(if self.flow && carry {
             7.2
@@ -242,5 +257,16 @@ mod tests {
         }
         assert_eq!((race.status, race.passed), (Status::Finished, 22));
         assert!(race.official_seconds().unwrap() < 95.);
+    }
+
+    #[test]
+    fn season2_flow_teacher_finishes_both_laps() {
+        let mut race = Race::grand_challenge_on(Course::Season2Practice2026);
+        let mut teacher = Teacher::new(&race, false).with_flow(true);
+        while race.status == Status::Racing {
+            race.step(mode2_acro(teacher.action(&race))).unwrap();
+        }
+        assert_eq!((race.status, race.passed), (Status::Finished, 22));
+        assert!(race.official_seconds().unwrap() < 80.);
     }
 }

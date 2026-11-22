@@ -185,8 +185,10 @@ function startReplay() {
     setText("replay-result", firmwareCheck ? "Takeoff verified"
       : { 1: "Crash", 2: "Timed out", 3: "Stalled", 4: "Finished two laps" }[playing.status] || "—");
     setText("replay-physics", physicsLabel(playing));
-  } else if (playing) {
+  } else if (playing && !playing.archived) {
     camera.currentTime = 0;
+  } else {
+    return;
   }
   if (playing) camera.play().catch(() => {});
 }

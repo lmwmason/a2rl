@@ -1,12 +1,12 @@
 # A2RL simulator validation
 
-This report checks the 2025 Grand Challenge layout, the Mode 2 RC interface, the two rigid-body integrations, and acceleration against recorded competition flights.
+This report checks the 2025 Grand Challenge layout, the Mode 2 RC interface, firmware-in-the-loop takeoff, and acceleration against recorded competition flights.
 
 | Check | Result | Scope |
 | --- | --- | --- |
 | MSP RC interface | Four 1000–2000 µs AETR channels round-trip to Mode 2 commands with 1 µs resolution | MSP v1 command framing, channel mapping, and checksum |
-| Rust versus MuJoCo, six MSP input profiles | Maximum position, speed, and attitude differences of 0.96 µm, 0.00000078 m/s, and 0.000020° | Numerical agreement with shared actuator, controller, and contact models |
-| Complete race through MSP | 22 gates, two laps, 84.904 s on each backend | State-driven teacher on a standard start, timed from the first Gate 1 crossing |
+| Native 2026 practice flow teacher | 22 gates and two laps in each of three runs, fastest 66.11 s, mean crossing speed 5.00 m/s | State-driven teacher tested from three ground starts |
+| Elodin with Betaflight SITL, 2026 practice | Reached 0.96 m and exported 41 FPV frames at 820 × 616 | Scripted 1.4 s takeoff, no course completion |
 | MonoRace Log 8, late segment | Axial specific-force RMSE of 3.41 m/s², bias of +0.45 m/s², and peak error of 14.54 m/s² over 367 windows | Calibrated plant prediction using measured rotor speeds and estimated motion |
 | MonoRace Log 5, held-out flight | 1.57 m/s² forward and 1.99 m/s² lateral specific-force RMSE over 897 windows | Horizontal drag prediction using independent flight data |
 | MonoRace Log 7, held-out flight | 1.40 m/s² forward and 2.25 m/s² lateral specific-force RMSE over 881 windows | Horizontal drag prediction using independent flight data |
@@ -19,8 +19,8 @@ The simulator runs an MSP-compatible receiver boundary, then the project's Acro 
 
 ```bash
 cargo build --release --lib --no-default-features
-python -m pip install mujoco Pillow
-A2RL_TEACHER_PROFILE=flow python -m tools.compare_physics --msp --course
+python -m pip install Pillow
+A2RL_COURSE=2026-practice A2RL_TEACHER_PROFILE=flow python -m training.racing_school --device cpu --teacher-only --out runs/validation/native-flow
 python -m tools.prepare_monorace_demos runs/validation/monorace --validation-logs
 python -m tools.check_flight_log runs/validation/monorace/log8/imu.csv runs/validation/monorace/log8/ekf.csv
 python -m tools.check_lateral_drag \

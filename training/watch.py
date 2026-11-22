@@ -18,8 +18,9 @@ VIDEO_WIDTH, VIDEO_HEIGHT = 480, 360
 
 def replay_agent(weights, lib):
     params = torch.load(BytesIO(weights), map_location="cpu", weights_only=True)
-    stack = params["encoder"]["0.weight"].shape[1] // 3
-    agent = Agent(stack, "cpu", lib.sim_hover_stick(), with_imu="imu_encoder" in params)
+    stack = params["frame_stack"] if "frame_stack" in params else params["encoder"]["0.weight"].shape[1] // 3
+    agent = Agent(stack, "cpu", lib.sim_hover_stick(), with_imu="imu_encoder" in params,
+                  backbone=params.get("vision_backbone", "cnn"))
     agent.set_weights(params)
     return agent, stack
 

@@ -74,6 +74,60 @@ pub const LAYOUT: [[f32; 4]; 11] = [
     [9., 14., 1.47, 90.],
 ];
 
+// A2RL Season 2 practice reconstruction from AI Robotics @ Berkeley, revision 66138b7.
+// The source positions are translated back to hall coordinates; +1.47 m places the
+// lower aperture above the floor. The repeated lower gate mesh is not an extra pass.
+pub const LAYOUT_2026: [[f32; 4]; 11] = [
+    [14., 34., 1.47, 0.],
+    [20., 30., 1.47, -45.],
+    [21., 22., 1.47, -60.],
+    [21., 14., 1.47, -120.],
+    [19., 6., 1.47, 170.],
+    [14., 14., 1.47, 180.],
+    [9., 6., 1.47, -108.],
+    [9., 6., 3.97, 72.],
+    [8., 14., 1.47, 108.],
+    [6., 22., 1.47, 72.],
+    [8., 30., 1.47, 45.],
+];
+
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub enum Course {
+    #[default]
+    GrandChallenge2025,
+    Season2Practice2026,
+}
+
+impl Course {
+    pub fn layout(self) -> &'static [[f32; 4]; LAYOUT.len()] {
+        match self {
+            Self::GrandChallenge2025 => &LAYOUT,
+            Self::Season2Practice2026 => &LAYOUT_2026,
+        }
+    }
+
+    pub fn start(self) -> (Vec3, f32) {
+        match self {
+            Self::GrandChallenge2025 => (START, START_HEADING),
+            Self::Season2Practice2026 => (Vec3::new(10., 34., 1.47), 0.),
+        }
+    }
+
+    pub fn bounds(self) -> (Vec3, Vec3) {
+        match self {
+            Self::GrandChallenge2025 => (ARENA_MIN, ARENA_MAX),
+            Self::Season2Practice2026 => (Vec3::ZERO, Vec3::new(29., 41., 6.2)),
+        }
+    }
+
+    fn extra_frame(self) -> &'static Gate {
+        match self {
+            Self::GrandChallenge2025 => &LOWER_FRAME,
+            Self::Season2Practice2026 => &UPPER_FRAME_2026,
+        }
+    }
+}
+
 const W: f32 = 0.75;
 const H: f32 = 0.75;
 const BEAM: f32 = 0.60;
@@ -82,6 +136,19 @@ const LOWER_FRAME: Gate = Gate {
     center: Vec3::new(63., 20., 1.47),
     normal: Vec3::X,
     side: Vec3::Y,
+};
+const UPPER_FRAME_2026: Gate = Gate {
+    center: Vec3::new(8., 30., 3.97),
+    normal: Vec3::new(
+        std::f32::consts::FRAC_1_SQRT_2,
+        std::f32::consts::FRAC_1_SQRT_2,
+        0.,
+    ),
+    side: Vec3::new(
+        -std::f32::consts::FRAC_1_SQRT_2,
+        std::f32::consts::FRAC_1_SQRT_2,
+        0.,
+    ),
 };
 pub const BARS: [(Vec3, Vec3); 4] = [
     (
@@ -111,7 +178,11 @@ pub struct Gate {
 
 impl Gate {
     pub fn all() -> [Self; LAYOUT.len()] {
-        LAYOUT.map(|[x, y, z, yaw]| {
+        Self::on_course(Course::default())
+    }
+
+    fn on_course(course: Course) -> [Self; LAYOUT.len()] {
+        course.layout().map(|[x, y, z, yaw]| {
             let (sin, cos) = yaw.to_radians().sin_cos();
             Self {
                 center: Vec3::new(x, y, z),
@@ -310,6 +381,7 @@ enum RewardProfile {
 pub struct Race {
     pub drone: Drone,
     pub gates: [Gate; LAYOUT.len()],
+    pub course: Course,
     pub ticks: usize,
     pub passed: usize,
     pub laps: usize,
@@ -335,10 +407,21 @@ pub struct Race {
 
 impl Default for Race {
     fn default() -> Self {
-        let gates = Gate::all();
+        Self::on_course(Course::default())
+    }
+}
+
+impl Race {
+    fn on_course(course: Course) -> Self {
+        let gates = Gate::on_course(course);
+        let (position, yaw) = course.start();
+        let mut drone = Drone::new();
+        drone.position = position;
+        drone.rotation = Quat::from_rotation_z(yaw.to_radians());
         Self {
-            drone: Drone::new(),
+            drone,
             gates,
+            course,
             ticks: 0,
             passed: 0,
             laps: 0,
@@ -355,7 +438,7 @@ impl Default for Race {
             start_gate: 0,
             timed_lap: true,
             last_gate_tick: 0,
-            initial_distance: gates[0].center.distance(START),
+            initial_distance: gates[0].center.distance(position),
             progress: 0.,
             on_launch_pad: false,
             grand_challenge: false,
@@ -378,7 +461,11 @@ fn segment_pace_reward(previous: Gate, next: Gate, elapsed: f32) -> f32 {
 
 impl Race {
     pub fn grand_challenge() -> Self {
-        let mut race = Self::ground_start(0., 1.);
+        Self::grand_challenge_on(Course::default())
+    }
+
+    fn grand_challenge_on(course: Course) -> Self {
+        let mut race = Self::ground_start_on(course, 0., 1.);
         race.grand_challenge = true;
         race
     }
@@ -399,7 +486,9 @@ impl Race {
     }
 
     pub fn gate_frames(&self) -> impl Iterator<Item = &Gate> {
-        self.gates.iter().chain(std::iter::once(&LOWER_FRAME))
+        self.gates
+            .iter()
+            .chain(std::iter::once(self.course.extra_frame()))
     }
 
     pub fn next_gate(&self) -> usize {
@@ -434,14 +523,18 @@ impl Race {
             && (velocity - direction * forward_speed).length() < 2.0
             && up.dot(direction) > 0.14
             && position.z > 0.75
-            && position.z < ARENA_MAX.z - 1.8
+            && position.z < self.course.bounds().1.z - 1.8
             && velocity.z < 1.2
     }
 
     pub fn from_start(side: f32, height: f32, exposure: f32) -> Self {
+        Self::from_start_on(Course::default(), side, height, exposure)
+    }
+
+    fn from_start_on(course: Course, side: f32, height: f32, exposure: f32) -> Self {
         let mut race = Self {
             exposure,
-            ..Self::default()
+            ..Self::on_course(course)
         };
         race.drone.position.y += side;
         race.drone.position.z += height;
@@ -450,7 +543,11 @@ impl Race {
     }
 
     pub fn ground_start(side: f32, exposure: f32) -> Self {
-        let mut race = Self::from_start(side, 0., exposure);
+        Self::ground_start_on(Course::default(), side, exposure)
+    }
+
+    fn ground_start_on(course: Course, side: f32, exposure: f32) -> Self {
+        let mut race = Self::from_start_on(course, side, 0., exposure);
         race.drone.position.z = RADIUS;
         race.drone.rotors = [0.; 4];
         race.initial_distance = race.gates[0].center.distance(race.drone.position);
@@ -464,7 +561,23 @@ impl Race {
         height_offset: f32,
         exposure: f32,
     ) -> Self {
-        let mut race = Self::default();
+        Self::practice_on(
+            Course::default(),
+            start_gate,
+            side_offset,
+            height_offset,
+            exposure,
+        )
+    }
+
+    fn practice_on(
+        course: Course,
+        start_gate: usize,
+        side_offset: f32,
+        height_offset: f32,
+        exposure: f32,
+    ) -> Self {
+        let mut race = Self::on_course(course);
         race.start_gate = start_gate % race.gates.len();
         race.timed_lap = false;
         let gate = race.gates[race.start_gate];
@@ -483,8 +596,26 @@ impl Race {
         speed: f32,
         exposure: f32,
     ) -> Self {
+        Self::after_gate_on(
+            Course::default(),
+            gate_index,
+            side_offset,
+            height_offset,
+            speed,
+            exposure,
+        )
+    }
+
+    fn after_gate_on(
+        course: Course,
+        gate_index: usize,
+        side_offset: f32,
+        height_offset: f32,
+        speed: f32,
+        exposure: f32,
+    ) -> Self {
         let index = gate_index % LAYOUT.len();
-        let mut race = Self::practice(index + 1, 0., 0., exposure);
+        let mut race = Self::practice_on(course, index + 1, 0., 0., exposure);
         let gate = race.gates[index];
         race.drone.position =
             gate.center + 1.35 * gate.normal + side_offset * gate.side + height_offset * Vec3::Z;
@@ -541,7 +672,8 @@ impl Race {
             let target = self.next_gate();
             let mut passed = false;
 
-            if current.cmplt(ARENA_MIN + RADIUS).any() || current.cmpgt(ARENA_MAX - RADIUS).any() {
+            let (arena_min, arena_max) = self.course.bounds();
+            if current.cmplt(arena_min + RADIUS).any() || current.cmpgt(arena_max - RADIUS).any() {
                 self.status = Status::Boundary;
             } else {
                 let mut hit_frame = false;

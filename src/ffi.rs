@@ -1,7 +1,7 @@
 // Python owns the image buffer and one exclusive handle per environment.
 use crate::{
-    axial_specific_force, camera::Camera, mode2_acro, teacher::Teacher, Race, RewardProfile,
-    Status, DT, GRAVITY, HOVER_STICK, INERTIA, LAYOUT, MASS_KG, PACE_REWARD_VERSION,
+    axial_specific_force, camera::Camera, mode2_acro, teacher::Teacher, Course, Race,
+    RewardProfile, Status, HOVER_STICK, LAYOUT, MASS_KG, PACE_REWARD_VERSION,
     PHYSICS_MODEL_VERSION, REWARD_MODEL_VERSION,
 };
 
@@ -10,11 +10,79 @@ pub struct Environment {
     race: Race,
     teacher: Teacher,
     flow_teacher: bool,
+    course: Course,
 }
 
+fn course_from_flag(season2: bool) -> Course {
+    if season2 {
+        Course::Season2Practice2026
+    } else {
+        Course::default()
+    }
+}
 #[no_mangle]
 pub extern "C" fn sim_gate_count() -> usize {
     LAYOUT.len()
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn sim_course_gate_pose(
+    season2: bool,
+    index: usize,
+    out: *mut [f32; 4],
+) -> bool {
+    let course = course_from_flag(season2);
+    if let Some(pose) = course.layout().get(index) {
+        *out = *pose;
+        true
+    } else if index == LAYOUT.len() {
+        let frame = course.extra_frame();
+        let [x, y, z] = frame.center.to_array();
+        *out = [x, y, z, frame.normal.y.atan2(frame.normal.x).to_degrees()];
+        true
+    } else {
+        false
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn sim_course_segment(
+    season2: bool,
+    previous: *const [f32; 3],
+    current: *const [f32; 3],
+    target: usize,
+) -> i32 {
+    let a = glam::Vec3::from_array(*previous);
+    let b = glam::Vec3::from_array(*current);
+    let mut passed = false;
+    let course = course_from_flag(season2);
+    for (index, gate) in crate::Gate::on_course(course)
+        .iter()
+        .chain([course.extra_frame()])
+        .enumerate()
+    {
+        let (collision, crossed) = gate.progress(a, b);
+        if collision {
+            return -1;
+        }
+        passed |= crossed && index == target;
+    }
+    i32::from(passed)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn sim_course_environment(season2: bool, out: *mut [f32; 10]) {
+    let course = course_from_flag(season2);
+    let (start, heading) = course.start();
+    let (min, max) = course.bounds();
+    *out = [
+        start.x, start.y, start.z, heading, min.x, min.y, min.z, max.x, max.y, max.z,
+    ];
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn sim_set_season2_course(env: *mut Environment, season2: bool) {
+    (*env).course = course_from_flag(season2);
 }
 
 #[no_mangle]
@@ -80,6 +148,7 @@ pub extern "C" fn sim_create(width: usize, height: usize) -> *mut Environment {
         race,
         teacher,
         flow_teacher: false,
+        course: Course::default(),
     }))
 }
 
@@ -104,16 +173,16 @@ pub unsafe extern "C" fn sim_reset(
     let env = &mut *env;
     let reward_profile = env.race.reward_profile;
     env.race = if gate == -3 {
-        let mut race = Race::grand_challenge();
+        let mut race = Race::grand_challenge_on(env.course);
         race.drone.position.y += side;
         race.exposure = exposure;
         race
     } else if gate == -2 {
-        Race::ground_start(side, exposure)
+        Race::ground_start_on(env.course, side, exposure)
     } else if gate < 0 {
-        Race::from_start(side, height, exposure)
+        Race::from_start_on(env.course, side, height, exposure)
     } else {
-        Race::practice(gate as usize, side, height, exposure)
+        Race::practice_on(env.course, gate as usize, side, height, exposure)
     };
     env.race.reward_profile = reward_profile;
     env.teacher = Teacher::new(&env.race, false).with_flow(env.flow_teacher);
@@ -139,7 +208,7 @@ pub unsafe extern "C" fn sim_reset_after_gate(
 ) {
     let env = &mut *env;
     let reward_profile = env.race.reward_profile;
-    env.race = Race::after_gate(gate, side, height, speed, exposure);
+    env.race = Race::after_gate_on(env.course, gate, side, height, speed, exposure);
     env.race.reward_profile = reward_profile;
     env.teacher = Teacher::new(&env.race, true).with_flow(env.flow_teacher);
     env.race.video_breakup = video_breakup;
@@ -198,38 +267,25 @@ pub unsafe extern "C" fn sim_step(
     write_step(env, image, reward, value)
 }
 
-type RigidBodyStep = unsafe extern "C" fn(*const [f32; 13], *const [f32; 6], *mut [f32; 13]) -> i32;
-
-#[no_mangle]
-pub unsafe extern "C" fn sim_rigid_parameters(output: *mut [f32; 6]) {
-    *output = [DT, MASS_KG, INERTIA.x, INERTIA.y, INERTIA.z, GRAVITY];
-}
-
 #[no_mangle]
 pub unsafe extern "C" fn sim_rigid_state(env: *const Environment, output: *mut [f32; 13]) {
     *output = (&*env).race.drone.rigid_state();
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn sim_step_external(
+pub unsafe extern "C" fn sim_external_expert_action(
     env: *mut Environment,
-    action: *const [f32; 4],
-    image: *mut u8,
-    reward: *mut f32,
-    integrate: RigidBodyStep,
-) -> i32 {
+    state: *const [f32; 13],
+    passed: usize,
+    output: *mut [f32; 4],
+) -> bool {
     let env = &mut *env;
-    let Some(value) = env.race.step_with(mode2_acro(*action), |drone, input| {
-        let state = drone.rigid_state();
-        let (force, torque) = drone.body_wrench(input);
-        let torque = torque - drone.angular_damping();
-        let wrench = [force.x, force.y, force.z, torque.x, torque.y, torque.z];
-        let mut result = [0.; 13];
-        integrate(&state, &wrench, &mut result) == 0 && drone.set_rigid_state(result)
-    }) else {
-        return -1;
-    };
-    write_step(env, image, reward, value)
+    if passed >= env.race.gates.len() * 2 || !env.race.drone.set_rigid_state(*state) {
+        return false;
+    }
+    env.race.passed = passed;
+    *output = env.teacher.action(&env.race);
+    true
 }
 
 unsafe fn write_step(env: &mut Environment, image: *mut u8, reward: *mut f32, value: f32) -> i32 {

@@ -136,6 +136,9 @@ def stream_run(root, school, speed, mode):
                       for row in metrics]
             out.write(packet({"type": "meta", "active": active,
                               "phase": "SPEED RL" if run == speed else "IMITATION",
+                              "course": os.environ.get("A2RL_COURSE", "2025"),
+                              "physics_engine": os.environ.get("A2RL_PHYSICS_ENGINE", "rust"),
+                              "full_course": latest.get("full_course", False),
                               "round": latest.get("round", 0),
                               "steps": latest.get("steps", latest.get("transitions", 0)),
                               "target_gate": latest.get("target_gate", 0),
@@ -143,6 +146,8 @@ def stream_run(root, school, speed, mode):
                               "recent_finish_times": finish_time_history(metrics, run == speed),
                               "finish_rate": latest.get("two_lap_rate", 0.),
                               "collision_rate": latest.get("crash_rate", 0.),
+                              "mean_gate_crossing_speed_m_s": latest.get("mean_gate_crossing_speed_m_s"),
+                              "mean_gate_approach_delay_seconds": latest.get("mean_gate_approach_delay_seconds"),
                               "best_two_lap_seconds": min(times, default=None),
                               "target_two_lap_seconds": latest.get("target_two_lap_seconds"),
                               "target_beaten": (speed / "record.json").exists()}))
@@ -157,6 +162,8 @@ def stream_run(root, school, speed, mode):
                     if key != last_checkpoint:
                         out.write(packet({"type": "checkpoint", "best": checkpoint.name == "best.pt",
                                           "phase": "SPEED RL" if run == speed else "IMITATION",
+                                          "course": os.environ.get("A2RL_COURSE", "2025"),
+                                          "physics_engine": os.environ.get("A2RL_PHYSICS_ENGINE", "rust"),
                                           "round": latest.get("round", 0),
                                           "steps": latest.get("steps", latest.get("transitions", 0)),
                                           "version": str(key[1])}, stream.read()))

@@ -54,6 +54,30 @@ class Encoder(nn.Sequential):
         )
 
 
+class MobileNetEncoder(nn.Module):
+    """A pretrained per-frame visual stem with its spatial grid and frame order preserved."""
+
+    def __init__(self, stack, pretrained=False):
+        super().__init__()
+        from torchvision.models import MobileNet_V3_Small_Weights, mobilenet_v3_small
+
+        weights = MobileNet_V3_Small_Weights.IMAGENET1K_V1 if pretrained else None
+        self.visual = mobilenet_v3_small(weights=weights).features[:7].eval()
+        self.readout = nn.Sequential(nn.AdaptiveAvgPool2d((3, 4)), nn.Flatten())
+        frames = min(stack, 4)
+        self.projection = nn.Sequential(nn.Linear(frames * 40 * 3 * 4, 128), nn.LayerNorm(128), nn.Tanh())
+        self.register_buffer("indexes", torch.linspace(0, stack - 1, frames).round().long(), persistent=False)
+        self.register_buffer("mean", torch.tensor([.485, .456, .406])[None, :, None, None], persistent=False)
+        self.register_buffer("std", torch.tensor([.229, .224, .225])[None, :, None, None], persistent=False)
+
+    def forward(self, image):
+        batch, _, height, width = image.shape
+        frames = image.reshape(batch, -1, 3, height, width).index_select(1, self.indexes)
+        pixels = (frames.reshape(-1, 3, height, width) + .5 - self.mean) / self.std
+        features = self.readout(self.visual(pixels)).reshape(batch, -1)
+        return self.projection(features)
+
+
 class Critic(nn.Module):
     def __init__(self):
         super().__init__()
@@ -65,10 +89,17 @@ class Critic(nn.Module):
 
 
 class Agent:
-    def __init__(self, stack, device, hover_stick, with_imu=False):
+    def __init__(self, stack, device, hover_stick, with_imu=False, backbone="cnn", pretrained=False):
         self.device = device
         self.stack = stack
-        self.encoder = Encoder(stack).to(device, memory_format=torch.channels_last)
+        self.backbone = backbone
+        if backbone == "mobilenet-v3-small":
+            encoder = MobileNetEncoder(stack, pretrained)
+        elif backbone == "cnn":
+            encoder = Encoder(stack)
+        else:
+            raise ValueError(f"Unknown vision backbone: {backbone}")
+        self.encoder = encoder.to(device, memory_format=torch.channels_last)
         self.imu_encoder = (nn.Sequential(nn.Flatten(), nn.Linear(stack * 6, 64), nn.ReLU(),
                                           nn.Linear(64, 32), nn.LayerNorm(32)).to(device)
                             if with_imu else None)
@@ -160,11 +191,16 @@ class Agent:
                   "target": self.target.state_dict()}
         if self.imu_encoder is not None:
             params["imu_encoder"] = self.imu_encoder.state_dict()
+        if self.backbone != "cnn":
+            params["vision_backbone"] = self.backbone
+            params["frame_stack"] = self.stack
         return params
 
     def set_weights(self, params):
         if params.get("action_layout") != "mode2-acro-v1":
             raise ValueError("Checkpoint action layout does not match Mode 2 Acro.")
+        if params.get("vision_backbone", "cnn") != self.backbone:
+            raise ValueError("Checkpoint vision backbone does not match this policy.")
         self.encoder.load_state_dict(params["encoder"])
         if ("imu_encoder" in params) != (self.imu_encoder is not None):
             raise ValueError("Checkpoint sensor layout does not match this policy.")

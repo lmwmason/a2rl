@@ -1,0 +1,15 @@
+name = "A2RL 2025 Grand Challenge reference quad"
+mass_kg = 0.966
+inertia_kg_m2 = [0.0036, 0.0038, 0.0062]
+motor_arm_m = 0.155
+motor_limit_rad_s = 3100.0
+motor_time_constant_s = 0.030
+motor_thrust_coefficient = 0.000001436723
+motor_yaw_torque_m = 0.016
+linear_drag = [0.3935197, 0.7070415, 0.0]
+quadratic_drag = [0.002257, 0.0, 0.0]
+angular_drag = [0.002, 0.002, 0.003]
+camera_width = 820
+camera_height = 616
+camera_vertical_fov_deg = 115.0
+camera_up_tilt_deg = 51.33

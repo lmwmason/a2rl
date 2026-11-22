@@ -35,6 +35,7 @@ def main():
     parser.add_argument("--stack", type=int, default=4, help="Number of consecutive RGB frames per observation.")
     parser.add_argument("--official-eval", action="store_true")
     parser.add_argument("--imu", action="store_true", help="Fuse synchronized gyro and accelerometer samples with RGB.")
+    parser.add_argument("--backbone", choices=("cnn", "mobilenet-v3-small"), default="cnn")
     parser.add_argument("--eval-every", type=int, default=200)
     parser.add_argument("--eval-episodes", type=int, default=3)
     args = parser.parse_args()
@@ -49,7 +50,8 @@ def main():
 
     stack, height, width = args.stack, 72, 96
     lib = load_sim()
-    agent = Agent(stack, args.device, lib.sim_hover_stick(), with_imu=args.imu)
+    agent = Agent(stack, args.device, lib.sim_hover_stick(), with_imu=args.imu,
+                  backbone=args.backbone, pretrained=args.backbone != "cnn")
     demos = Demonstrations(args.real, args.sim, stack, height, width, args.seed, with_imu=args.imu)
     if {path.resolve() for path in args.real} & {path.resolve() for path in args.held_out}:
         parser.error("Hold out complete flights from training.")

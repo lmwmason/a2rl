@@ -1,14 +1,12 @@
 # A2RL FPV Drone Racing
 
-An indoor FPV racing simulator for the 2025 A2RL × DCL Grand Challenge. Fly the course in the Rust desktop app or train a policy using only RGB camera frames. The desktop and training environments share the same camera, course, gate scoring, and vehicle model.
+An indoor FPV racing research project with a Rust simulator for batch experiments and Elodin with Betaflight SITL for firmware validation. Pilots can use monocular RGB frames and synchronized IMU samples.
 
 [Open the English training dashboard](https://a2rl-fpv-dashboard.front.cbgpu.com/).
 
-![A2RL FPV training dashboard with checkpoint playback, evaluation metrics and a moving-average chart](docs/screenshots/training-dashboard.png)
+![Elodin FPV frame from the 2026 practice reconstruction](docs/screenshots/elodin-2026-fpv.png)
 
-![Simulator FPV capture on the 2025 Grand Challenge course](docs/screenshots/grand-challenge-fpv.png)
-
-The course image comes from a scripted simulation run. The dashboard capture uses GPU 4's round 144 evaluation and a frame from the corresponding student replay.
+The public dashboard shows the replay, its simulator, and evaluation histories. In the absence of an Elodin feed it plays the saved firmware takeoff check and shows **No live training**. The takeoff clip does not have an evaluation round.
 
 ## Fly the course
 
@@ -51,16 +49,14 @@ HDZero-style breakup approximates localized degradation on a weak digital link. 
 - [Competition aircraft specifications](https://onlinelibrary.wiley.com/doi/10.1002/rob.70371)
 - [HDZero pixel-level breakup](https://www.hd-zero.com/motion-clarity)
 
-### Physics validation and MuJoCo
+### Native physics validation
 
 The [simulator validation report](docs/simulator-validation.md) includes the MSP command path, the full-course check, and reproducible comparisons with held-out MonoRace flight logs.
 
-The default backend integrates the rigid body in Rust with glam. Python rollouts can also use MuJoCo while keeping the same motor model, body-rate controller, camera, scoring, and rewards. Parry performs swept sphere–box collision tests at gate frames for both backends. A regression test distinguishes a real corner contact from a near miss that previously touched the expanded bounding box.
+The Rust simulator integrates the rigid body with glam and uses Parry for swept sphere–box gate contacts. A regression test distinguishes a corner collision from a near miss.
 
 ```bash
 cargo build --release --lib --no-default-features
-python -m pip install mujoco
-python -m tools.compare_physics --course
 python -m tools.check_flight_log path/to/imu.csv path/to/ekf.csv
 python -m tools.check_lateral_drag --calibration log8/imu.csv log8/ekf.csv \
   --flight Log8-holdout log8/imu.csv log8/ekf.csv 62.4 69.8 \
@@ -70,17 +66,52 @@ python -m tools.check_lateral_drag --calibration log8/imu.csv log8/ekf.csv \
 
 | Check | Measured result |
 | --- | --- |
-| Six shared-input tests through two seconds | Rust–MuJoCo position and attitude differences were below 2 µm and 0.00005° |
-| Closed-loop teacher on both backends | Both passed all 22 gates in 111.496 s |
 | Held-out MonoRace Log 8 axial specific force | RMSE fell from 29.81 to 3.41 m/s² over 367 20 ms windows using measured motor speed and EKF inputs |
 
-Horizontal drag was fitted on 319 early windows from Log 8. On two separate flights withheld from fitting, forward/lateral acceleration RMSE fell from **5.79/4.50 to 1.57/1.99 m/s²** on Log 5 and from **3.26/9.16 to 1.40/2.25 m/s²** on Log 7. These comparisons use measured IMU and EKF data. The simulator agreement tests share the same actuator model. Real command-to-motor response, body rates, sustained trajectories, and physical gate contacts still need independent validation. The published M16 parameters supply the motor-speed limit and nominal 30 ms response lag.
+Horizontal drag was fitted on 319 early windows from Log 8. On two separate flights withheld from fitting, forward/lateral acceleration RMSE fell from **5.79/4.50 to 1.57/1.99 m/s²** on Log 5 and from **3.26/9.16 to 1.40/2.25 m/s²** on Log 7. These comparisons use recorded IMU and EKF data. Real command-to-motor response, body rates, sustained trajectories, and physical gate contacts require independent validation. The published M16 parameters supply the motor-speed limit and nominal 30 ms response lag.
 
-Set `A2RL_PHYSICS_ENGINE=mujoco` for a MuJoCo rollout. Use a new run directory when changing backends or vehicle models. Existing policy weights can initialize a new run. Resumable state includes the physics identity because replay buffers contain transitions from that environment. [MuJoCo documentation](https://mujoco.readthedocs.io/en/stable/) · [Parry queries](https://parry.rs/docs/user_guide/geometric_queries/)
+Use a new run directory when changing courses or the vehicle model. Existing policy weights can initialize a new run. Resumable state includes the physics identity because replay buffers contain transitions from that environment. [Parry queries](https://parry.rs/docs/user_guide/geometric_queries/)
+
+### Elodin and Betaflight flight validation
+
+The Elodin runner uses the A2RL 2025 reference airframe and supports the 2025 and 2026 practice layouts. Betaflight SITL runs its rate controller and mixer at 1 kHz in lockstep with the plant. The policy reads 30 Hz FPV and synchronized body-frame gyro and acceleration. It emits Mode 2 channels in AETR order. Elodin passes these channels to the firmware's SITL receiver via UDP. Batch training currently uses the Rust learner. An Elodin rollout is a separate validation run.
+
+Set `A2RL_COURSE=2026-practice` to use the 2026 layout reconstructed from UC Berkeley's simulator configuration. The route counts 11 gates per lap and uses a season-specific gate mesh with LED strips based on organizer photos. The organizer describes a 14-gate arena. Gate dimensions, lighting, and the full official event route still require authoritative specifications. [Open layout](https://github.com/airobotics-ucberkeley/isaac_drone_racer_public/blob/66138b7621f051ce6d31dc418a57edf5027f8381/tasks/drone_racer/drone_racer_a2rl_cfg_full.py) · [Organizer photo and 2026 report](https://a2rl.io/news/45/a2rl-drone-championship-sets-the-pace-for-ai-in-autonomous-fligh)
+
+The [airframe profile](assets/a2rl-2025-airframe.toml) describes the 966 g aircraft, inertia used in this project, motor response, drag fit, and reference camera dimensions. Set `A2RL_AIRFRAME` to a different TOML profile when a new airframe has been measured. Elodin uses a pinhole camera with the reference tilt and nominal field of view. Firmware rates, the 2027 aircraft, and the 2027 course require their own specifications.
+
+Build the Rust library and set up the external Elodin harness. The harness commit and Elodin release below pin the bridge and camera API. Install Git LFS before cloning to retrieve its visual assets.
+
+```bash
+cargo build --release --lib --no-default-features
+git clone https://github.com/elodin-sys/ai-grand-prix.git /path/to/elodin-agp
+git -C /path/to/elodin-agp checkout 13f9f9e3d5a3130f0ce0b65500d9f309cc1e11b2
+git -C /path/to/elodin-agp submodule update --init --depth 1 betaflight
+export A2RL_ELODIN_ROOT=/path/to/elodin-agp
+(cd "$A2RL_ELODIN_ROOT" && uv sync --locked --python 3.13 && bash scripts/build_betaflight.sh)
+source "$A2RL_ELODIN_ROOT/.venv/bin/activate"
+uv pip install elodin==0.17.3
+uv pip install --index-url https://download.pytorch.org/whl/cpu torch
+export ELODIN_ASSETS_DIR="$A2RL_ELODIN_ROOT/assets"
+export UV_NO_SYNC=1
+```
+
+Install the Elodin 0.17.3 CLI, then run a short takeoff check or evaluate an RGB+IMU checkpoint:
+
+```bash
+a2rl_root="$PWD"
+cd "$A2RL_ELODIN_ROOT"
+A2RL_COURSE=2026-practice A2RL_ELODIN_SECONDS=1.4 A2RL_ELODIN_DB="$(mktemp -d)/flight" \
+  elodin run "$a2rl_root/tools/elodin_a2rl.py"
+A2RL_COURSE=2026-practice A2RL_ELODIN_POLICY="$a2rl_root/runs/mck-imu-racing-v1/best.pt" \
+  A2RL_ELODIN_DB="$(mktemp -d)/flight" elodin editor "$a2rl_root/tools/elodin_a2rl.py"
+```
+
+Use a fresh `A2RL_ELODIN_DB` for every rollout. The runner reports contacts, ordered passes, and two-lap time for completed flights. The 2026 firmware smoke test reached 0.96 m altitude and exported 41 FPV frames at 820 × 616. A sustained two-lap flight in Elodin and flight-log agreement for the target airframe remain unverified. [Elodin release](https://github.com/elodin-sys/elodin/releases/tag/v0.17.3) · [Upstream lockstep bridge](https://github.com/elodin-sys/ai-grand-prix/blob/13f9f9e3d5a3130f0ce0b65500d9f309cc1e11b2/ARCHITECTURE.md)
 
 ## Policy and rewards
 
-A custom three-layer PyTorch CNN maps a stack of RGB frames to a 128-dimensional feature vector. A small MLP outputs left X, left Y, right X, and right Y in Mode 2 Acro order. The standard trainer defaults to four 96 × 72 RGB frames. The racing-school pipeline uses eight. The input contains camera frames only. Simulator state supplies teacher labels and reward calculations.
+A custom three-layer PyTorch CNN maps RGB frames to a 128-dimensional feature vector. A small MLP outputs four Mode 2 Acro axes. Racing-school runs can use eight 96 × 72 RGB frames and an IMU history with `--imu`. The optional `--backbone mobilenet-v3-small` initializes a truncated encoder with ImageNet weights using torchvision. The pretrained encoder passed a training smoke test. Its full-course performance still needs comparison against the CNN. Simulator state supplies teacher labels and reward calculations. [Torchvision MobileNetV3 Small](https://docs.pytorch.org/vision/stable/models/generated/torchvision.models.mobilenet_v3_small.html)
 
 - Gate progress is positive toward the next gate and negative for retreat. Each segment's progress contribution is bounded.
 - Passing a gate earns +2. Completing a lap earns +20, with up to +8 relative to a 24-second baseline. A session-best improvement earns up to +3.
@@ -109,7 +140,7 @@ Use `--device cpu` for local checks. Match frame size and stack depth when evalu
 
 The teacher follows an inter-gate racing line derived from MAVLab Log 5 and labels Mode 2 actions from its own runs and states visited by the student. The student observes RGB only. Each round uses the same three evaluation starts for comparison. A separate randomized panel checks candidate policies. The full-race progression runs without a round limit, trains for at least six more rounds after the first round that completes both panels, then requires two consecutive rounds of clean qualification without teacher control. Gate progression and optimizer state are saved in `imitation-state.zip`.
 
-`A2RL_TEACHER_PROFILE=flow` preserves forward speed through aligned gates while using the tighter approach controller around turns. In MuJoCo, the fastest of three clean validation runs improved from 111.50 s to 85.20 s. Training can also use synchronized human FPV footage and transmitter channels from TII Racing's Race Against the Machine v3 release. The human runs took place on trackRATM, so the A2RL simulator demonstrations still provide course-specific corrections. MCK's logged controls provide real-pilot labels, and a separate real flight can be held out to report stick error. [TII Racing v3 release](https://github.com/tii-racing/drone-racing-dataset/releases/tag/v3.0.0) · [Dataset and CC BY 4.0 license](https://github.com/tii-racing/drone-racing-dataset)
+`A2RL_TEACHER_PROFILE=flow` preserves forward speed through aligned gates while using the tighter approach controller around turns. Training can also use synchronized human FPV footage and transmitter channels from TII Racing's Race Against the Machine v3 release. The human runs took place on trackRATM, so the A2RL simulator demonstrations still provide course-specific corrections. MCK's logged controls provide real-pilot labels, and a separate real flight can be held out to report stick error. [TII Racing v3 release](https://github.com/tii-racing/drone-racing-dataset/releases/tag/v3.0.0) · [Dataset and CC BY 4.0 license](https://github.com/tii-racing/drone-racing-dataset)
 
 ```bash
 python -m tools.prepare_mck_demos --list
@@ -120,7 +151,7 @@ python -m tools.prepare_mck_demos --flight flight-15p-trackRATM --out runs/mck/h
 To train a fresh end-to-end policy on MCK alone, use the two synchronized flights for training and reserve the third for evaluation of stick prediction. The policy trains the RGB encoder, IMU encoder, and Mode 2 actor jointly from scratch. Gyroscope and accelerometer samples use rad/s and m/s² and are aligned at the RGB timestamps. For older RGB exports, rerun the preparation commands with `--imu-only` to add the IMU sidecars. The simulator evaluates transfer to A2RL without providing training samples.
 
 ```bash
-A2RL_PHYSICS_ENGINE=mujoco python -m training.imitate --device cuda --stack 8 --imu \
+python -m training.imitate --device cuda --stack 8 --imu \
   --real runs/mck/train/*.npz --held-out runs/mck/holdout/flight-15p-trackRATM.npz \
   --official-eval --out runs/mck-e2e-v1
 ```
@@ -128,13 +159,13 @@ A2RL_PHYSICS_ENGINE=mujoco python -m training.imitate --device cuda --stack 8 --
 To adapt that RGB+IMU policy to A2RL with simulator demonstrations and supervised corrections:
 
 ```bash
-A2RL_PHYSICS_ENGINE=mujoco A2RL_TEACHER_PROFILE=flow python -m training.racing_school \
+A2RL_TEACHER_PROFILE=flow python -m training.racing_school \
   --device cuda --imu --initialize runs/mck-e2e-v1/best.pt --teacher-warmup-rounds 5 \
   --human-demos runs/mck/train/*.npz --human-held-out runs/mck/holdout/flight-15p-trackRATM.npz \
   --out runs/mck-imu-racing-v1
 ```
 
-Evaluation and replay send the fused policy's four commands through the Betaflight-style MSP v1 RC boundary. The adapter encodes roll, pitch, throttle, and yaw in AETR order with `MSP_SET_RAW_RC`. The simulator decodes the frame, then uses its existing Acro controller, mixer, and MuJoCo rigid-body integration. This tests the command interface. Firmware timing, PID behavior, and hardware remain separate validation work. [Betaflight MSP documentation](https://betaflight.com/docs/wiki/guides/current/MSP-Companion-Computer-Control)
+Evaluation and replay send the fused policy's four commands through the Betaflight-style MSP v1 RC boundary. The adapter encodes roll, pitch, throttle, and yaw in AETR order with `MSP_SET_RAW_RC`. The simulator decodes the frame, then uses the native Acro controller and mixer for batch simulation. This tests the command interface. Firmware timing, PID behavior, and hardware remain separate validation work. [Betaflight MSP documentation](https://betaflight.com/docs/wiki/guides/current/MSP-Companion-Computer-Control)
 
 Pass these using `A2RL_HUMAN_DEMO_DIR` and `A2RL_HUMAN_HOLDOUT`. During speed RL, `A2RL_SPRINT_EXPLORATION_STEPS` enables full-throttle bursts of up to three control ticks on aligned straights with room before the next gate. The frequency fades to zero by the selected step. The evaluated RGB policy chooses all four sticks on its own.
 

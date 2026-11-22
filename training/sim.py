@@ -8,13 +8,24 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
 FLOAT_POINTER = ct.POINTER(ct.c_float)
-RIGID_STEP = ct.CFUNCTYPE(ct.c_int, FLOAT_POINTER, FLOAT_POINTER, FLOAT_POINTER)
 LEGACY_PHYSICS = {"engine": "rust", "model_version": 1}
 
 
-def physics_identity(lib, engine=None):
-    return {"engine": engine or os.environ.get("A2RL_PHYSICS_ENGINE", "rust"),
-            "model_version": lib.sim_physics_model_version()}
+def physics_identity(lib):
+    engine = os.environ.get("A2RL_PHYSICS_ENGINE", "rust")
+    if engine != "rust":
+        raise ValueError("Batch environments use Rust. Run tools/elodin_a2rl.py for Elodin validation.")
+    physics = {"engine": engine, "model_version": lib.sim_physics_model_version()}
+    if course_profile() != "2025":
+        physics["course"] = course_profile()
+    return physics
+
+
+def course_profile():
+    name = os.environ.get("A2RL_COURSE", "2025")
+    if name not in ("2025", "2026-practice"):
+        raise ValueError(f"Unknown course: {name}")
+    return name
 
 
 def reward_profile():
@@ -70,16 +81,15 @@ def load_sim():
     lib.sim_expert_action.restype = None
     lib.sim_set_flow_teacher.argtypes = [ct.c_void_p, ct.c_bool]
     lib.sim_set_flow_teacher.restype = None
+    if hasattr(lib, "sim_set_season2_course"):
+        lib.sim_set_season2_course.argtypes = [ct.c_void_p, ct.c_bool]
+        lib.sim_set_season2_course.restype = None
     lib.sim_sprint_window.argtypes = [ct.c_void_p]
     lib.sim_sprint_window.restype = ct.c_bool
     lib.sim_expert_features.argtypes = [ct.c_void_p, ct.c_void_p]
     lib.sim_expert_features.restype = None
     lib.sim_step.argtypes = [ct.c_void_p, ct.c_void_p, ct.c_void_p, ct.POINTER(ct.c_float)]
     lib.sim_step.restype = ct.c_int
-    lib.sim_step_external.argtypes = [ct.c_void_p, ct.c_void_p, ct.c_void_p, FLOAT_POINTER, RIGID_STEP]
-    lib.sim_step_external.restype = ct.c_int
-    lib.sim_rigid_parameters.argtypes = [FLOAT_POINTER]
-    lib.sim_rigid_parameters.restype = None
     lib.sim_rigid_state.argtypes = [ct.c_void_p, FLOAT_POINTER]
     lib.sim_rigid_state.restype = None
     lib.sim_lap_stats.argtypes = [ct.c_void_p, ct.POINTER(ct.c_uint32), ct.POINTER(ct.c_float)]
@@ -90,29 +100,26 @@ def load_sim():
 
 
 class Environment:
-    def __init__(self, lib, width, height, physics=None):
+    def __init__(self, lib, width, height):
         self.lib = lib
         profile = reward_profile()
         teacher = teacher_profile()
-        physics = physics_identity(lib, physics)["engine"]
-        self.body = None
-        if physics == "mujoco":
-            from .mujoco_body import MujocoBody
-            self.body = MujocoBody(lib)
-        elif physics != "rust":
-            raise ValueError(f"Unknown physics engine: {physics}")
+        physics_identity(lib)
         self.handle = lib.sim_create(width, height)
         if not self.handle:
             raise ValueError("Unsupported camera resolution.")
         lib.sim_set_reward_profile(self.handle, profile == "pace")
         lib.sim_set_flow_teacher(self.handle, teacher == "flow")
+        if course_profile() == "2026-practice":
+            if not hasattr(lib, "sim_set_season2_course"):
+                self.close()
+                raise ValueError("Build the simulator library with support for the 2026 course.")
+            lib.sim_set_season2_course(self.handle, True)
         self.image = np.empty((height, width, 3), dtype=np.uint8)
         self.reward = ct.c_float()
         self._imu = None
 
     def reset(self, gate=-1, side=0., height=0., exposure=1., breakup=0., video_seed=1):
-        if self.body is not None:
-            self.body.reset()
         self.lib.sim_reset(self.handle, gate, side, height, exposure, breakup, video_seed, self.image.ctypes.data)
         self._imu = None
         return self.image
@@ -128,8 +135,6 @@ class Environment:
         return None if np.isnan(value) else value
 
     def after_gate(self, gate=0, side=0., height=0., speed=0., exposure=1., breakup=0., video_seed=1):
-        if self.body is not None:
-            self.body.reset()
         self.lib.sim_reset_after_gate(self.handle, gate, side, height, speed, exposure,
                                       breakup, video_seed, self.image.ctypes.data)
         self._imu = None
@@ -157,13 +162,7 @@ class Environment:
         if native.shape != (4,):
             raise ValueError("Expected four policy action values.")
         previous = self.rigid_state() if self._imu is not None else None
-        args = self.handle, native.ctypes.data, self.image.ctypes.data, ct.byref(self.reward)
-        if self.body is None:
-            status = self.lib.sim_step(*args)
-        else:
-            status = self.lib.sim_step_external(*args, self.body.callback)
-            if self.body.error is not None:
-                raise RuntimeError("MuJoCo integration failed") from self.body.error
+        status = self.lib.sim_step(self.handle, native.ctypes.data, self.image.ctypes.data, ct.byref(self.reward))
         if status < 0:
             raise ValueError("Non-finite action or step after episode end.")
         if previous is not None:

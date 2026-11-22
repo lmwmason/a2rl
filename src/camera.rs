@@ -1,4 +1,4 @@
-use crate::{ray_box, Race, ARENA_MAX, ARENA_MIN, BARS};
+use crate::{ray_box, Course, Race, ARENA_MAX, ARENA_MIN, BARS};
 use glam::Vec3;
 
 pub const H_FOV: f32 = 155.;
@@ -93,6 +93,19 @@ fn gate_texture(side: f32, height: f32, rear: bool) -> [u8; 3] {
     [GATE_TEXTURE[i], GATE_TEXTURE[i + 1], GATE_TEXTURE[i + 2]]
 }
 
+fn season2_gate_color(contact: Vec3) -> [u8; 3] {
+    // Season 2 used continuous light strips along the aperture and the vertical outer edges.
+    let edge = contact.y.abs();
+    let aperture = edge.max(contact.z.abs());
+    if (contact.x.abs() > 0.38 && aperture < 0.79) || edge > 1.325 {
+        [236, 221, 255]
+    } else if contact.x.abs() > 0.38 {
+        [84, 30, 172]
+    } else {
+        [49, 18, 108]
+    }
+}
+
 impl Camera {
     pub fn new(width: usize, height: usize) -> Self {
         let mut rays = Vec::with_capacity(width * height);
@@ -127,7 +140,9 @@ impl Camera {
     pub fn render(&self, race: &Race, image: &mut [u8]) {
         let [sensor, right, up, forward] = camera_pose(race);
         let [px, py, pz] = sensor.to_array();
-        let [arena_min, arena_max] = hall_bounds().map(|limit| limit - sensor);
+        let (arena_min, arena_max) = race.course.bounds();
+        let arena_min = arena_min - sensor;
+        let arena_max = Vec3::new(arena_max.x, arena_max.y, HALL_CEILING) - sensor;
         let gates: Vec<_> = race
             .gate_frames()
             .map(|&gate| {
@@ -192,7 +207,9 @@ impl Camera {
                         continue;
                     };
                     let contact = origin + local * hit;
-                    color = if contact.x.abs() >= 0.395 {
+                    color = if race.course == Course::Season2Practice2026 {
+                        season2_gate_color(contact)
+                    } else if contact.x.abs() >= 0.395 {
                         gate_texture(contact.y, contact.z, contact.x > 0.)
                     } else {
                         [53, 30, 93]

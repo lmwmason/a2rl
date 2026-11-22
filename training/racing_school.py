@@ -143,9 +143,12 @@ def evaluate_student(agent, env, stack, seed, episodes, teacher=False):
 
 def evaluation_rank(result):
     lap_time = result["best_two_lap_s"]
+    crossing_speed = result["mean_gate_crossing_speed_m_s"]
     return (result["two_lap_rate"], min(result["gates"]),
             float(np.mean(result["gates"])), -result["crash_rate"],
-            -lap_time if lap_time is not None else -float("inf"))
+            -lap_time if lap_time is not None else -float("inf"),
+            -result["mean_gate_approach_delay_seconds"],
+            crossing_speed if crossing_speed is not None else 0.)
 
 
 def demonstration_loss(agent, demonstrations, batch):
@@ -178,18 +181,20 @@ def training_reset(env, index, rng, target, continuous=False):
 
 
 def collect(envs, workers, agent, buffer, obs, rng, ticks, teacher_probability, target, publisher=None,
-            continuous_env=None):
+            continuous_envs=(), full_course=False):
     ended = np.zeros(len(envs), dtype=bool)
     authority = np.ones(len(envs), dtype=bool)
     gate_count = np.zeros(len(envs), dtype=np.int32)
     delay = np.zeros(len(envs), dtype=np.float32)
     crossing_ticks = np.zeros(len(envs), dtype=np.int32)
     pace_assist_ticks = np.zeros(len(envs), dtype=np.int32)
-    if continuous_env is not None:
+    clean_indexes = list(continuous_envs)
+    pace_training = bool(continuous_envs) or full_course
+    if pace_training:
         for i, env in enumerate(envs):
             gate_count[i], _ = env.lap_stats()
             delay[i], _ = env.flow_stats()
-    accidents = pace_samples = 0
+    accidents = pace_samples = course_finishes = teacher_finishes = 0
     for tick in range(ticks):
         imu = np.stack([env.imu_window(buffer.stack) for env in envs]) if buffer.imu is not None else None
         labels = np.asarray([env.expert_action() for env in envs], dtype=np.float32)
@@ -208,9 +213,9 @@ def collect(envs, workers, agent, buffer, obs, rng, ticks, teacher_probability, 
         # Small disturbances create new camera states for exact corrective labels.
         if tick % 7 in (0, 1):
             action = (action + rng.normal(0., [.025, .014, .04, .04], action.shape)).clip(-1, 1).astype(np.float32)
-        if continuous_env is not None:
-            assisted[continuous_env] = True
-            action[continuous_env] = labels[continuous_env]
+        if clean_indexes:
+            assisted[clean_indexes] = True
+            action[clean_indexes] = labels[clean_indexes]
         if imu is not None:
             action = [decode_rc(encode_rc(command)) for command in action]
         following = np.empty_like(obs[:, -1])
@@ -220,10 +225,12 @@ def collect(envs, workers, agent, buffer, obs, rng, ticks, teacher_probability, 
             image, _, status = task.result()
             gates, _ = envs[i].lap_stats()
             threshold = target if i % 4 < 2 else 2
-            continuous = i == continuous_env
-            ended[i] = bool(status) or (not continuous and gates >= threshold)
+            continuous = i in continuous_envs
+            ended[i] = bool(status) or (not full_course and not continuous and gates >= threshold)
             accidents += int(status == 1)
-            if continuous_env is not None:
+            course_finishes += int(status == 4)
+            teacher_finishes += int(status == 4 and continuous)
+            if pace_training:
                 approach_delay, _ = envs[i].flow_stats()
                 slow = approach_delay - delay[i] > .006
                 crossed = gates > gate_count[i]
@@ -241,12 +248,12 @@ def collect(envs, workers, agent, buffer, obs, rng, ticks, teacher_probability, 
             if i == 0 and publisher is not None:
                 publisher.show(image, gates=gates, step=buffer.count * len(envs),
                                phase="IMITATION", status=status, driver="Teacher" if assisted[0] else "Student")
-            following[i] = training_reset(envs[i], i, rng, target, continuous) if ended[i] else image
+            following[i] = training_reset(envs[i], i, rng, target, full_course or continuous) if ended[i] else image
         buffer.append(obs[:, -1], labels, features, emphasis, ended, None if imu is None else imu[:, -1])
         obs[:, :-1] = obs[:, 1:]
         obs[:, -1] = following
         obs[ended] = following[ended, None]
-    return accidents, pace_samples
+    return accidents, pace_samples, course_finishes, teacher_finishes
 
 
 def main():
@@ -261,6 +268,7 @@ def main():
     parser.add_argument("--capacity", type=int, default=56_000)
     parser.add_argument("--stack", type=int, default=8)
     parser.add_argument("--imu", action="store_true", help="Use RGB and simulated gyro/acceleration history.")
+    parser.add_argument("--backbone", choices=("cnn", "mobilenet-v3-small"), default="cnn")
     parser.add_argument("--eval-episodes", type=int, default=3)
     parser.add_argument("--initialize", type=Path)
     parser.add_argument("--resume", type=Path)
@@ -268,6 +276,8 @@ def main():
     parser.add_argument("--save-every", type=int, default=10)
     parser.add_argument("--consolidation-rounds", type=int, default=6)
     parser.add_argument("--teacher-warmup-rounds", type=int, default=0)
+    parser.add_argument("--full-course", action="store_true",
+                        help="Train complete two-lap episodes from takeoff without gate-count resets.")
     parser.add_argument("--teacher-only", action="store_true")
     parser.add_argument("--human-demos", nargs="+", type=Path, default=[],
                         help="Synchronized RGB and real Mode 2 inputs used alongside simulator expert labels.")
@@ -327,7 +337,8 @@ def main():
         if args.teacher_only:
             return
 
-        agent = Agent(args.stack, args.device, lib.sim_hover_stick(), args.imu)
+        agent = Agent(args.stack, args.device, lib.sim_hover_stick(), args.imu, backbone=args.backbone,
+                      pretrained=args.backbone != "cnn" and not (args.initialize or args.resume))
         auxiliary = torch.nn.Linear(160 if args.imu else 128, 12).to(args.device)
         parameters = [*agent.encoder.parameters(), *agent.actor.parameters()]
         if agent.imu_encoder is not None:
@@ -339,7 +350,8 @@ def main():
         buffer = ExpertReplay(args.capacity // args.envs, args.envs, height, width, args.stack, args.imu)
         best = first_full = None
         qualified = first_round = 0
-        target = 1
+        n_gates = lib.sim_gate_count() * 2
+        target = n_gates if args.full_course else 1
         if args.initialize:
             agent.load(args.initialize)
         if args.resume:
@@ -348,6 +360,8 @@ def main():
                     or progress.get("teacher_profile", "standard") != teacher
                     or progress.get("teacher_warmup_rounds", 0) != args.teacher_warmup_rounds):
                 raise ValueError("Resume with the original teacher profile and flight datasets.")
+            if progress.get("full_course", False) != args.full_course:
+                raise ValueError("Use a new run initialized from model weights to change the curriculum.")
             if human_demo is not None:
                 human_demo.rng.bit_generator.state = progress["human_rng"]
             if monorace_demo is not None:
@@ -355,12 +369,12 @@ def main():
             best, first_full = progress["best"], progress["first_full"]
             qualified, first_round, target = progress["qualified"], progress["round"], progress["target"]
             seed_changed = progress.get("evaluation_seed") != EVALUATION_SEED
-            if seed_changed or (best is not None and len(best) == 4):
+            if seed_changed or (best is not None and len(best) != 7):
                 if seed_changed:
                     first_full, qualified = None, 0
                 saved_best = args.out / "best.pt"
                 if saved_best.is_file():
-                    previous = Agent(args.stack, args.device, lib.sim_hover_stick(), args.imu)
+                    previous = Agent(args.stack, args.device, lib.sim_hover_stick(), args.imu, backbone=args.backbone)
                     previous.load(saved_best)
                     best = evaluation_rank(evaluate_student(previous, test_env, args.stack,
                                                             EVALUATION_SEED, args.eval_episodes))
@@ -368,12 +382,15 @@ def main():
                 else:
                     best = None
         envs = [Environment(lib, width, height) for _ in range(args.envs)]
-        # Preserve a clean, uninterrupted race alongside student corrections and short gate practice.
-        continuous_env = 1 if teacher == "flow" and len(envs) > 1 else None
-        obs = np.asarray([fresh_stack(training_reset(env, i, rng, target, i == continuous_env), args.stack)
+        # Keep clean teacher races alongside mixed student/teacher rollouts.
+        if args.full_course:
+            continuous_envs = tuple(range(1, len(envs), 4))
+        else:
+            continuous_envs = (1,) if teacher == "flow" and len(envs) > 1 else ()
+        obs = np.asarray([fresh_stack(training_reset(env, i, rng, target,
+                                                    args.full_course or i in continuous_envs), args.stack)
                           for i, env in enumerate(envs)])
         publisher = FramePublisher(args.out) if args.live else None
-        n_gates = lib.sim_gate_count() * 2
         started = time.monotonic()
         try:
             with ThreadPoolExecutor(max_workers=args.envs) as workers, (
@@ -384,9 +401,9 @@ def main():
                         break
                     warmup = args.teacher_warmup_rounds
                     teacher_probability = 1. if round_no <= warmup else max(.19, .57 - .012 * (round_no - warmup - 1))
-                    accidents, pace_samples = collect(
+                    accidents, pace_samples, course_finishes, teacher_finishes = collect(
                         envs, workers, agent, buffer, obs, rng, args.collect_ticks,
-                        teacher_probability, target, publisher, continuous_env,
+                        teacher_probability, target, publisher, continuous_envs, args.full_course,
                     )
                     for _ in range(args.updates):
                         frames, labels, features, weights, *imu = buffer.sample(rng, args.batch)
@@ -422,8 +439,11 @@ def main():
                                   holdout_two_lap_rate=robustness["two_lap_rate"] if robustness else None,
                                   teacher_probability=teacher_probability, collection_crashes=accidents,
                                   pace_training_samples=pace_samples,
-                                  continuous_teacher_gates=envs[continuous_env].lap_stats()[0]
-                                  if continuous_env is not None else None,
+                                  collection_two_lap_finishes=course_finishes,
+                                  continuous_teacher_finishes=teacher_finishes,
+                                  full_course=args.full_course,
+                                  continuous_teacher_gates=max((envs[i].lap_stats()[0] for i in continuous_envs),
+                                                               default=None),
                                   imitation_loss=float(loss.detach()), seconds=round(time.monotonic() - started, 1))
                     if human_loss is not None:
                         result["human_training_loss"] = float(human_loss.detach())
@@ -448,7 +468,7 @@ def main():
                     if min(result["gates"]) >= target and target < n_gates:
                         target = min(n_gates, min(result["gates"]) + 1)
                         for i, env in enumerate(envs):
-                            if i != continuous_env:
+                            if i not in continuous_envs:
                                 obs[i] = fresh_stack(training_reset(env, i, rng, target), args.stack)
                                 buffer.next_start[i] = buffer.count
                     if round_no == 1 or round_no % args.save_every == 0 or round_no == args.rounds:
@@ -456,7 +476,7 @@ def main():
                                     {"round": round_no, "target": target, "best": best,
                                      "first_full": first_full, "qualified": qualified, "physics": physics,
                                      "evaluation_seed": EVALUATION_SEED, "human_ids": human_ids,
-                                     "teacher_warmup_rounds": args.teacher_warmup_rounds,
+                                     "teacher_warmup_rounds": args.teacher_warmup_rounds, "full_course": args.full_course,
                                      "teacher_profile": teacher, "monorace_ids": monorace_ids,
                                      "monorace_rng": monorace_demo.rng.bit_generator.state if monorace_demo else None,
                                      "human_rng": human_demo.rng.bit_generator.state if human_demo else None})

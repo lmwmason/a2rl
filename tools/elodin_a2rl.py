@@ -144,7 +144,7 @@ def configure_course(course, lib, season2, asset, camera_feed, report_path):
         print(f"[A2RL] gates={last + 1}/{len(path)} contact={contact} official_seconds={official}", flush=True)
         if camera_feed:
             camera_feed.close()
-            if finished and not contact:
+            if (finished and not contact) or (elodin_policy.shadow_expert and len(camera_feed.samples) >= 8):
                 camera_feed.save_demonstration()
         if report_path:
             from training.betaflight_link import timed_mean_throttle
@@ -247,8 +247,9 @@ def main():
     path = os.environ.get("A2RL_ELODIN_FPV")
     teacher = os.environ.get("A2RL_ELODIN_FLOW_TEACHER") == "1"
     dataset = os.environ.get("A2RL_ELODIN_DEMONSTRATION")
-    if dataset and (not teacher or Path(dataset).suffix != ".npz"):
-        raise ValueError("A2RL_ELODIN_DEMONSTRATION requires the flow teacher and a .npz path.")
+    policy = os.environ.get("A2RL_ELODIN_POLICY")
+    if dataset and (not (teacher or policy) or Path(dataset).suffix != ".npz"):
+        raise ValueError("A2RL_ELODIN_DEMONSTRATION requires a pilot and a .npz path.")
     if path or dataset or os.environ.get("A2RL_ELODIN_POLICY"):
         if not hasattr(lib, "sim_render_pose"):
             raise RuntimeError("Rebuild the simulator library for the shared FPV camera.")
@@ -263,9 +264,10 @@ def main():
     elodin_policy.contact, start, heading = configure_course(
         course, lib, season2, asset, elodin_policy.camera, report,
     )
-    if teacher:
-        if os.environ.get("A2RL_ELODIN_POLICY"):
-            raise ValueError("Select one pilot for Elodin validation.")
+    if teacher and policy:
+        raise ValueError("Select one pilot for Elodin validation.")
+    elodin_policy.shadow_expert = bool(policy and dataset)
+    if teacher or elodin_policy.shadow_expert:
         elodin_policy.configure_expert(lib, season2)
     heading = radians(heading)
     cfg.mass = profile["mass_kg"]

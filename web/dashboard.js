@@ -392,9 +392,17 @@ function selectPilot(view, refresh = true) {
 byId("show-teacher").addEventListener("click", () => selectPilot("teacher"));
 byId("show-student").addEventListener("click", () => selectPilot("student"));
 
+function canQueueReplay(info, selected) {
+  if (selected !== selection) return false;
+  if (!/^[0-9]+$/.test(info.version)) throw new Error("Invalid replay version");
+  const current = pending ?? playing;
+  if (!current) return true;
+  if (Boolean(info.archived) !== Boolean(current.archived)) return !info.archived;
+  return BigInt(info.version) > BigInt(current.version);
+}
+
 async function queueReplay({ url, value: info }, selected) {
-  if (selected !== selection) return;
-  if (info.version === playing?.version || info.version === pending?.version) return;
+  if (!canQueueReplay(info, selected)) return;
   if (!/^replay-[0-9]+\.mp4$/.test(info.url)) throw new Error("Invalid replay filename");
   const controlsRequest = /^controls-[0-9]+\.json$/.test(info.controls_url)
     ? requestData(new URL(info.controls_url, url)).then(({ value }) => (
@@ -404,7 +412,7 @@ async function queueReplay({ url, value: info }, selected) {
           && axes.every((axis) => Number.isFinite(axis) && Math.abs(axis) <= 1)) ? value : null
     )).catch(() => null) : null;
   const [video, controls] = await Promise.all([requestData(new URL(info.url, url), true), controlsRequest]);
-  if (selected !== selection || info.version === playing?.version || info.version === pending?.version) return;
+  if (!canQueueReplay(info, selected)) return;
   const blob = URL.createObjectURL(video.value.slice(0, video.value.size, "video/mp4"));
   if (pending) URL.revokeObjectURL(pending.blob);
   pending = { ...info, blob, controls };

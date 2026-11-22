@@ -281,7 +281,7 @@ def train(args, agent, lib):
                 result["initializer"] = True
                 best_rank = policy_rank(result, True)
                 agent.save(args.run_dir / "best.pt")
-                agent.save(args.run_dir / "latest.pt")
+                agent.save(args.run_dir / "latest.pt", steps=steps)
                 achieved = record_evaluation(result, log)
             while not achieved and (target is not None or steps < args.steps):
                 if protected:
@@ -373,7 +373,7 @@ def train(args, agent, lib):
                     if best_rank is None or rank > best_rank:
                         agent.save(args.run_dir / "best.pt")
                         best_rank = rank
-                    agent.save(args.run_dir / "latest.pt")
+                    agent.save(args.run_dir / "latest.pt", steps=steps)
                     last_eval = steps
                     achieved = record_evaluation(result, log)
                 first_checkpoint = args.eval_every if protected else 25_000

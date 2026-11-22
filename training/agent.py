@@ -226,9 +226,12 @@ class Agent:
                                              weight[:, 128:]), dim=1)
             model.load_state_dict(state)
 
-    def save(self, path):
+    def save(self, path, **training_progress):
         temp = path.with_suffix(".tmp")
-        torch.save(self.weights(), temp)
+        params = self.weights()
+        if training_progress:
+            params["training_progress"] = training_progress
+        torch.save(params, temp)
         temp.replace(path)
 
     def load(self, path):

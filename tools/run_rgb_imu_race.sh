@@ -34,8 +34,9 @@ PY
 )
     "$python" -u -m training.racing_school --device "$device" --imu --stack 8 --full-course \
         --external-qualification "${checkpoint[@]}" --human-demos "$@" --out "$imitation" \
+        --firmware-launch-demos "$run/firmware-launch" \
         --rounds "$((round + 2))" --envs 8 --collect-ticks 700 --updates 200 --batch 64 \
-        --eval-episodes 2 --save-every 2 --live
+        --eval-episodes 2 --save-every 2
 done
 
 export A2RL_REWARD_PROFILE=pace
@@ -63,6 +64,6 @@ PY
 )
     "$python" -u -m training.train --device "$device" --imu --stack 8 \
         "${checkpoint[@]}" --protect-qualified "$qualified" --demo-sim "$@" --run-dir "$speed" \
-        --steps "$((steps + 24000))" --envs 8 --batch 64 --update-every 32 --live \
+        --steps "$((steps + 24000))" --envs 8 --batch 64 --update-every 32 \
         --official-eval --eval-episodes 3 --eval-every 8000 --checkpoint-every 24000
 done

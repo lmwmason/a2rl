@@ -1,4 +1,4 @@
-"""Train an RGB-only pilot with exact simulator expert corrections before speed RL."""
+"""Train an FPV pilot with simulator expert corrections before speed RL."""
 import argparse
 from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
@@ -308,6 +308,8 @@ def main():
                         help="Synchronized RGB and real Mode 2 inputs used alongside simulator expert labels.")
     parser.add_argument("--human-held-out", nargs="+", type=Path, default=[],
                         help="Separate real-pilot flights used only to report action error.")
+    parser.add_argument("--firmware-launch-demos", type=Path,
+                        help="Directory containing completed RGB+IMU launch corrections from Betaflight SITL.")
     parser.add_argument("--monorace-demos", nargs="+", type=Path, default=[],
                         help="MonoRace FPV with estimated controls from the official autonomous flight logs.")
     parser.add_argument("--monorace-held-out", nargs="+", type=Path, default=[],
@@ -318,6 +320,8 @@ def main():
         parser.error("Training counts must be positive.")
     if args.initialize and args.resume:
         parser.error("Choose initialization or resumption.")
+    if args.firmware_launch_demos and not args.imu:
+        parser.error("Firmware launch corrections require an IMU policy.")
     if args.capacity < args.envs * args.stack:
         parser.error("Replay capacity must fit one observation stack per environment.")
     if args.device == "cuda" and not torch.cuda.is_available():
@@ -332,7 +336,7 @@ def main():
     teacher = teacher_profile()
     line_teacher = course_profile() == "2026-practice" and teacher == "flow"
     qualify_pace = args.full_course and line_teacher
-    teacher_revision = 4 if line_teacher else 1
+    teacher_revision = 5 if line_teacher else 1
     height, width = 72, 96
     human_demo = (Demonstrations(args.human_demos, [], args.stack, height, width, 213, args.imu)
                   if args.human_demos else None)
@@ -420,6 +424,12 @@ def main():
                                                     args.full_course or i in continuous_envs), args.stack)
                           for i, env in enumerate(envs)])
         publisher = FramePublisher(args.out) if args.live else None
+        launch_paths = []
+        if args.firmware_launch_demos:
+            complete = (path for path in args.firmware_launch_demos.glob("*.npz")
+                        if not path.name.endswith(".tmp.npz"))
+            launch_paths = sorted(complete, key=lambda path: path.stat().st_mtime)[-12:]
+        launch_demo = Demonstrations([], launch_paths, args.stack, height, width, 623, args.imu) if launch_paths else None
         started = time.monotonic()
         try:
             with ThreadPoolExecutor(max_workers=args.envs) as workers, (
@@ -451,6 +461,10 @@ def main():
                         if monorace_demo is not None:
                             monorace_loss = demonstration_loss(agent, monorace_demo, max(1, args.batch // 8))
                             loss = loss + .10 * monorace_loss
+                        launch_loss = None
+                        if launch_demo is not None:
+                            launch_loss = demonstration_loss(agent, launch_demo, max(1, args.batch // 2))
+                            loss = loss + 1.2 * launch_loss
                         optimizer.zero_grad(set_to_none=True)
                         loss.backward()
                         torch.nn.utils.clip_grad_norm_(parameters, 5.)
@@ -483,11 +497,14 @@ def main():
                         result["human_heldout_stick_mae"] = demonstration_error(agent, human_validation)
                     if monorace_loss is not None:
                         result["monorace_training_loss"] = float(monorace_loss.detach())
+                    if launch_loss is not None:
+                        result["firmware_launch_loss"] = float(launch_loss.detach())
+                        result["firmware_launch_clips"] = len(launch_paths)
                     if monorace_validation is not None:
                         result["monorace_heldout_proxy_mae"] = demonstration_error(agent, monorace_validation)
                     print(json.dumps(result), flush=True)
                     log.write(json.dumps(result) + "\n")
-                    agent.save(args.out / "latest.pt")
+                    agent.save(args.out / "latest.pt", round=round_no, steps=result["transitions"])
                     rank = evaluation_rank(result)
                     if best is None or rank > best:
                         agent.save(args.out / "best.pt")

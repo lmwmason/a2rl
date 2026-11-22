@@ -22,6 +22,7 @@ frames = imu = None
 held = RCCommand()
 last_command = held
 expert = None
+shadow_expert = False
 camera = None
 
 
@@ -78,14 +79,16 @@ class CameraFeed:
             self.samples.append((frame, inertial, update.t, mode2_sticks(command)))
 
     def save_demonstration(self):
-        if self.dataset:
+        if self.dataset and self.samples:
             frames, inertial, times, actions = zip(*self.samples)
             self.dataset.parent.mkdir(parents=True, exist_ok=True)
-            np.savez_compressed(self.dataset, frames=np.asarray(frames),
+            np.save(self.dataset.with_suffix(".imu.npy"), np.asarray(inertial, dtype=np.float32))
+            temporary = self.dataset.with_suffix(".tmp.npz")
+            np.savez_compressed(temporary, frames=np.asarray(frames),
                                 actions=np.asarray(actions, dtype=np.float32),
                                 timestamps=np.asarray(times),
                                 weights=np.ones(len(times), dtype=np.float32))
-            np.save(self.dataset.with_suffix(".imu.npy"), np.asarray(inertial, dtype=np.float32))
+            temporary.replace(self.dataset)
             print(f"[A2RL] Saved {len(times)} RGB/IMU/Mode 2 samples to {self.dataset}", flush=True)
 
     def close(self):
@@ -120,10 +123,6 @@ def configure_expert(lib, season2):
         state[:] = rigid_state(update)
         if not lib.sim_external_expert_action(handle, state, update.last_gate_passed + 1, command):
             return RCCommand()
-        # The firmware and rotor lag carry thrust through the launch command
-        # transition. Limit the initial pulse for the low first gate.
-        if update.last_gate_passed < 0 and state[2] < .55:
-            command[1] = min(command[1], .1)
         return rc_command(command)
 
     expert = action
@@ -157,8 +156,11 @@ def autopilot(update):
     if ended and camera is not None:
         camera.close()
     last_command = choose_command(update, image, ended)
-    if image is not None and expert is not None:
-        camera.record_demonstration(image, update, last_command)
+    if image is not None and expert is not None and not ended:
+        if not shadow_expert:
+            camera.record_demonstration(image, update, last_command)
+        elif .75 <= update.t <= 3.75 and update.last_gate_passed < 0:
+            camera.record_demonstration(image, update, expert(update))
     return last_command
 
 
@@ -169,7 +171,7 @@ def choose_command(update, image, ended):
     if update.t < .75:
         held = RCCommand(arm=1800)
         return held
-    if expert is not None:
+    if expert is not None and not shadow_expert:
         sample = int(update.t * control_rate + 1e-6)
         if sample != last_expert_sample:
             held = expert(update)

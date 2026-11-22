@@ -1,6 +1,7 @@
 """Run firmware evaluations and authorize the 30 s and 12 s milestones."""
 import argparse
 import hashlib
+from io import BytesIO
 import json
 import os
 from pathlib import Path
@@ -17,7 +18,7 @@ STARTS = (0., -.03, .03)
 SSH = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=12"]
 
 
-def evaluate(args, weights, session, side):
+def evaluate(args, weights, session, side, correction=None):
     session.mkdir(parents=True, exist_ok=True)
     report = session / "replay.result.json"
     if report.is_file():
@@ -40,6 +41,8 @@ def evaluate(args, weights, session, side):
         "ELODIN_ASSETS_DIR": str(args.out / "assets"),
         "A2RL_SIM_LIB": str(ROOT / "target/release/liba2rl_sim.so"),
     }
+    if correction is not None:
+        environment["A2RL_ELODIN_DEMONSTRATION"] = str(correction)
     (args.out / "assets").mkdir(exist_ok=True)
     with (session / "flight.log").open("wb") as log:
         script = str(ROOT / "tools/elodin_a2rl.py")
@@ -100,7 +103,7 @@ def promote(args, file, weights):
                    input=weights, check=True, timeout=45)
 
 
-def publish_replay(directory, session, phase, result):
+def publish_replay(directory, session, phase, result, progress):
     if directory is None:
         return
     report = session / "replay.result.json"
@@ -117,6 +120,7 @@ def publish_replay(directory, session, phase, result):
     copyfile(session / "replay.controls.json", directory / controls)
     temporary = manifest.with_suffix(".tmp")
     temporary.write_text(json.dumps({
+        **{key: progress[key] for key in ("round", "steps") if key in progress},
         "version": version, "phase": phase, "kind": "student-evaluation",
         "url": video, "controls_url": controls, "course": result["course"],
         "physics_engine": result["physics_engine"], "gates": result["gates"],
@@ -132,6 +136,9 @@ def publish_replay(directory, session, phase, result):
 
 
 def watch(args):
+    if args.public:
+        import torch
+
     for phase, source, marker, target in (("IMITATION", "recovery/latest.pt", "imitation-qualified.pt", 30.),
                                           ("SPEED RL", "speed/latest.pt", "speed-qualified.pt", 12.)):
         examined = set()
@@ -142,16 +149,20 @@ def watch(args):
                 raw = fetch(args, source)
                 digest = hashlib.sha256(raw).hexdigest()
                 if not raw or digest in examined:
-                    time.sleep(30)
+                    time.sleep(3)
                     continue
+                progress = (torch.load(BytesIO(raw), map_location="cpu", weights_only=True)
+                            .get("training_progress", {}) if args.public else {})
                 weights = args.out / (digest + ".pt")
                 weights.write_bytes(raw)
                 qualified = True
                 for index, side in enumerate(STARTS):
                     session = args.out / digest / str(index)
-                    result = evaluate(args, weights, session, side)
+                    correction = (args.launch_corrections / f"{digest}.npz"
+                                  if args.launch_corrections and phase == "IMITATION" and index == 0 else None)
+                    result = evaluate(args, weights, session, side, correction)
                     if index == 0:
-                        publish_replay(args.public, session, phase, result)
+                        publish_replay(args.public, session, phase, result, progress)
                     if args.public is not None:
                         for name in ("replay.mp4", "replay.controls.json"):
                             (session / name).unlink(missing_ok=True)
@@ -179,6 +190,7 @@ def main():
     source.add_argument("--local-run", type=Path)
     parser.add_argument("--remote-run")
     parser.add_argument("--public", type=Path, help="Publish rendered student evaluation artifacts here.")
+    parser.add_argument("--launch-corrections", type=Path, help="Record teacher corrections on student launches.")
     parser.add_argument("--harness", type=Path, required=True)
     parser.add_argument("--elodin")
     parser.add_argument("--in-process", action="store_true", help="Run the Elodin JAX model without a telemetry database.")
@@ -192,6 +204,8 @@ def main():
         args.local_run = args.local_run.resolve()
     if args.public:
         args.public = args.public.resolve()
+    if args.launch_corrections:
+        args.launch_corrections = args.launch_corrections.resolve()
     args.harness = args.harness.resolve()
     args.out = args.out.resolve()
     args.out.mkdir(parents=True, exist_ok=True)

@@ -93,11 +93,9 @@ impl Teacher {
                     self.sprint(race, &mut command);
                     line::gate_height_guard(race, accel, &mut command);
                 }
-                // Use full launch thrust while there is room to arrest the climb.
-                let height = race.drone.position.z;
-                let climb = race.drone.velocity.z.max(0.);
-                if race.passed == 0 && height < 0.55 && height + climb * climb / 16. < 0.95 {
-                    command[1] = 1.;
+                // The low first gate leaves little room to arrest a launch pulse.
+                if race.passed == 0 && race.drone.position.z < 0.55 {
+                    command[1] = command[1].min(0.1);
                 }
                 return command;
             }
@@ -414,6 +412,9 @@ mod tests {
     fn season2_flow_teacher_finishes_both_laps() {
         let mut race = Race::grand_challenge_on(Course::Season2Practice2026);
         let mut teacher = Teacher::new(&race, false).with_flow(true);
+        assert!(teacher.action(&race)[1] <= 0.1);
+        let mut firmware_teacher = Teacher::new(&race, false).with_flow(true);
+        assert!(firmware_teacher.external_action(&race)[1] <= 0.1);
         let mut approach_pitch = [0.; 8];
         let mut tick = 0;
         while race.status == Status::Racing {

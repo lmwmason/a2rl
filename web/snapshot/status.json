@@ -9,6 +9,7 @@
   "recent_gates": [
     24,
     24,
+    24,
     24
   ],
   "recent_finish_times": [
@@ -26,10 +27,15 @@
       "at": 3,
       "standard_s": null,
       "comparison_s": 34.87500000000001
+    },
+    {
+      "at": 4,
+      "standard_s": null,
+      "comparison_s": 34.689
     }
   ],
-  "best_two_lap_seconds": 34.87500000000001,
+  "best_two_lap_seconds": 34.689,
   "finish_rate": 1.0,
   "collision_rate": 0.0,
-  "mean_gate_crossing_speed_m_s": 5.835953825329245
+  "mean_gate_crossing_speed_m_s": 5.86060742024326
 }

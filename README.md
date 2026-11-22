@@ -86,6 +86,8 @@ A custom three-layer PyTorch CNN maps a stack of RGB frames to a 128-dimensional
 - Time costs 0.20 per second. A collision costs 18. Fourteen seconds without gate progress incurs a cost of 10 and ends the episode. Practice races can continue for up to 180 seconds.
 - Camera observations, lap time, collision rate, and completion are evaluated through the same simulator interface. Evaluation logs retain individual round results and the dashboard also shows an eight-evaluation moving average.
 
+The optional `A2RL_REWARD_PROFILE=pace` compares each completed gate segment against a pace reference based on its distance and change in heading. It adds a two-lap completion bonus, raises the time, collision, and stall penalties, and removes the reward for beating a driver's earlier lap within the same episode. Start from policy weights in a new run when switching reward profiles. Replay snapshots retain their original reward version.
+
 ## Train and evaluate
 
 Install a CUDA-compatible PyTorch build for the GPU environment. The training stack uses PyTorch and NumPy. FFmpeg encodes dashboard replays.

@@ -12,6 +12,7 @@ use parry3d::{
 pub const PHYSICS_HZ: usize = 240;
 pub const PHYSICS_MODEL_VERSION: u32 = 2;
 pub const REWARD_MODEL_VERSION: u32 = 2;
+pub const PACE_REWARD_VERSION: u32 = 3;
 pub const CONTROL_HZ: usize = 30;
 pub const GRAND_CHALLENGE_LAPS: usize = 2;
 const DT: f32 = 1.0 / PHYSICS_HZ as f32;
@@ -299,6 +300,13 @@ pub enum Status {
     Finished = 5,
 }
 
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+enum RewardProfile {
+    #[default]
+    Standard,
+    Pace,
+}
+
 pub struct Race {
     pub drone: Drone,
     pub gates: [Gate; LAYOUT.len()],
@@ -314,6 +322,7 @@ pub struct Race {
     pub video_seed: u32,
     pub approach_delay_seconds: f32,
     pub gate_speed_sum: f32,
+    reward_profile: RewardProfile,
     start_gate: usize,
     timed_lap: bool,
     last_gate_tick: usize,
@@ -342,6 +351,7 @@ impl Default for Race {
             video_seed: 1,
             approach_delay_seconds: 0.,
             gate_speed_sum: 0.,
+            reward_profile: RewardProfile::default(),
             start_gate: 0,
             timed_lap: true,
             last_gate_tick: 0,
@@ -357,6 +367,13 @@ impl Default for Race {
 fn lap_reward(elapsed: f32, best: Option<f32>) -> f32 {
     let improvement = best.map_or(0., |best| (best - elapsed).max(0.));
     20. + 8. * ((24. - elapsed) / 24.).clamp(-1., 1.) + (improvement * 0.18).min(3.)
+}
+
+fn segment_pace_reward(previous: Gate, next: Gate, elapsed: f32) -> f32 {
+    let distance = previous.center.distance(next.center);
+    let heading_change = (1. - previous.normal.dot(next.normal)).clamp(0., 2.);
+    let reference = (distance / 9.).max(0.35) + 0.8 * heading_change;
+    0.9 * (reference / elapsed.max(DT)).ln().clamp(-1.6, 1.6)
 }
 
 impl Race {
@@ -468,6 +485,7 @@ impl Race {
             action[2].clamp(-1., 1.),
             action[3].clamp(-1., 1.),
         ];
+        let pace = self.reward_profile == RewardProfile::Pace;
         let mut reward = 0.;
         for _ in 0..(PHYSICS_HZ / CONTROL_HZ) {
             let previous = self.drone.position;
@@ -486,7 +504,7 @@ impl Race {
                 }
             }
             self.ticks += 1;
-            reward -= 0.20 * DT;
+            reward -= if pace { 0.32 } else { 0.20 } * DT;
             let current = self.drone.position;
             let target = self.next_gate();
             let mut passed = false;
@@ -508,7 +526,7 @@ impl Race {
                 }
             }
             if self.status != Status::Racing {
-                reward -= 18.;
+                reward -= if pace { 24. } else { 18. };
                 break;
             }
 
@@ -530,6 +548,11 @@ impl Race {
                 let speed_fraction = (crossing_speed / FLOW_CROSSING_SPEED_CAP).min(1.);
                 reward +=
                     FLOW_CROSSING_BONUS * speed_fraction * flow_alignment(outgoing, gate.normal);
+                if pace && self.passed > 0 {
+                    let previous_gate = (target + self.gates.len() - 1) % self.gates.len();
+                    let elapsed = (self.ticks - self.last_gate_tick) as f32 * DT;
+                    reward += segment_pace_reward(self.gates[previous_gate], gate, elapsed);
+                }
                 if self.passed == 0 && self.grand_challenge {
                     self.first_gate_tick = Some(self.ticks);
                     self.lap_start = self.ticks;
@@ -545,11 +568,14 @@ impl Race {
                 if target + 1 == self.gates.len() {
                     if self.timed_lap {
                         let elapsed = (self.ticks - self.lap_start) as f32 * DT;
-                        reward += lap_reward(elapsed, self.best_lap);
+                        reward += lap_reward(elapsed, if pace { None } else { self.best_lap });
                         self.best_lap =
                             Some(self.best_lap.map_or(elapsed, |best| best.min(elapsed)));
                         self.last_lap = Some(elapsed);
                         self.laps += 1;
+                        if pace && self.laps == GRAND_CHALLENGE_LAPS {
+                            reward += 12.;
+                        }
                     }
                     self.lap_start = self.ticks;
                     self.timed_lap = true;
@@ -568,7 +594,7 @@ impl Race {
             }
             if self.ticks - self.last_gate_tick >= 14 * PHYSICS_HZ {
                 self.status = Status::Stalled;
-                reward -= 10.;
+                reward -= if pace { 12. } else { 10. };
                 break;
             }
             if self.ticks >= 180 * PHYSICS_HZ {
@@ -678,6 +704,37 @@ mod tests {
             ),
             0.
         );
+    }
+
+    #[test]
+    fn pace_scores_shorter_segments_and_allows_time_for_reversal() {
+        let gates = Gate::all();
+        assert!(
+            segment_pace_reward(gates[1], gates[2], 2.)
+                > segment_pace_reward(gates[1], gates[2], 4.)
+        );
+        let reversed = gates[5];
+        let straight = Gate {
+            normal: gates[4].normal,
+            ..reversed
+        };
+        assert!(
+            segment_pace_reward(gates[4], reversed, 2.)
+                > segment_pace_reward(gates[4], straight, 2.)
+        );
+        assert!(segment_pace_reward(gates[1], gates[2], 0.) < 1.5);
+    }
+
+    #[test]
+    fn reward_profile_changes_time_cost_without_changing_dynamics() {
+        let mut normal = Race::default();
+        let mut pace = Race::default();
+        pace.reward_profile = RewardProfile::Pace;
+        let action = [HOVER, 0., 0., 0.];
+        let standard_reward = normal.step(action).unwrap();
+        let pace_reward = pace.step(action).unwrap();
+        assert_eq!(normal.drone.rigid_state(), pace.drone.rigid_state());
+        assert!((standard_reward - pace_reward - 0.12 / CONTROL_HZ as f32).abs() < 1e-6);
     }
 
     #[test]

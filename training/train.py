@@ -14,7 +14,7 @@ from . import checkpoint
 from .agent import Agent
 from .demonstrations import Demonstrations
 from .replay import Replay
-from .sim import Environment, LEGACY_PHYSICS, load_sim, physics_identity
+from .sim import Environment, LEGACY_PHYSICS, load_sim, physics_identity, reward_profile
 from .telemetry import FramePublisher
 
 def options():
@@ -171,7 +171,8 @@ def initial_exploration(rng, previous):
 def train(args, agent, lib):
     rng = np.random.default_rng(args.seed)
     physics = physics_identity(lib)
-    reward_version = lib.sim_reward_model_version()
+    reward_name = reward_profile()
+    reward_version = lib.sim_pace_reward_version() if reward_name == "pace" else lib.sim_reward_model_version()
     protected = args.protect_qualified is not None
     anchor_digest = hashlib.sha256(args.protect_qualified.read_bytes()).hexdigest() if protected else None
     args.run_dir.mkdir(parents=True, exist_ok=True)
@@ -211,7 +212,7 @@ def train(args, agent, lib):
         print(json.dumps({"restored_steps": steps, "restored_updates": updates,
                           "restored_replay_rows": min(replay.count, replay.rows)}), flush=True)
     (args.run_dir / "config.json").write_text(
-        json.dumps(vars(args) | {"physics": physics, "reward_version": reward_version},
+        json.dumps(vars(args) | {"physics": physics, "reward_profile": reward_name, "reward_version": reward_version},
                    default=str, indent=2) + "\n", encoding="utf-8")
     last_report_steps = initial_steps = last_save = steps
     envs = [Environment(lib, args.width, args.height) for _ in range(args.envs)]

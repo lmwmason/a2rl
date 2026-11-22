@@ -10,7 +10,7 @@ from training.agent import Agent
 from training.demonstrations import Clip
 from training.replay import Replay
 from training.sim import Environment, load_sim
-from training.telemetry import FramePublisher, read_packet
+from training.telemetry import FramePublisher, finish_time_history, read_packet
 from training.train import beats_record
 
 
@@ -72,6 +72,15 @@ class TelemetryTest(unittest.TestCase):
             info, pixels = read_packet(BytesIO(publisher.path.read_bytes()))
         self.assertEqual((info["width"], info["height"], info["driver"], info["gates"]), (3, 2, "Student", 2))
         self.assertEqual(pixels, image.tobytes())
+
+    def test_finish_history_keeps_unfinished_evaluations_as_gaps(self):
+        series = finish_time_history([{"steps": 0, "official_start_seconds": 111.7},
+                                      {"steps": 8000},
+                                      {"steps": 16000, "official_mean_seconds": 110.2}], speed=True)
+        self.assertEqual(series[1], {"at": 8000, "standard_s": None, "comparison_s": None})
+        self.assertEqual(series[2], {"at": 16000, "standard_s": None, "comparison_s": 110.2})
+        self.assertEqual(finish_time_history([{"round": 9, "best_two_lap_s": 113.5}], speed=False),
+                         [{"at": 9, "standard_s": None, "comparison_s": 113.5}])
 
 
 class RecordTargetTest(unittest.TestCase):

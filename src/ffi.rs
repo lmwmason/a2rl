@@ -1,7 +1,8 @@
 // Python owns the image buffer and one exclusive handle per environment.
 use crate::{
-    axial_specific_force, camera::Camera, mode2_acro, teacher::Teacher, Race, Status, DT, GRAVITY,
-    HOVER_STICK, INERTIA, LAYOUT, MASS_KG, PHYSICS_MODEL_VERSION, REWARD_MODEL_VERSION,
+    axial_specific_force, camera::Camera, mode2_acro, teacher::Teacher, Race, RewardProfile,
+    Status, DT, GRAVITY, HOVER_STICK, INERTIA, LAYOUT, MASS_KG, PACE_REWARD_VERSION,
+    PHYSICS_MODEL_VERSION, REWARD_MODEL_VERSION,
 };
 
 pub struct Environment {
@@ -28,6 +29,20 @@ pub extern "C" fn sim_physics_model_version() -> u32 {
 #[no_mangle]
 pub extern "C" fn sim_reward_model_version() -> u32 {
     REWARD_MODEL_VERSION
+}
+
+#[no_mangle]
+pub extern "C" fn sim_pace_reward_version() -> u32 {
+    PACE_REWARD_VERSION
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn sim_set_reward_profile(env: *mut Environment, pace: bool) {
+    (&mut *env).race.reward_profile = if pace {
+        RewardProfile::Pace
+    } else {
+        RewardProfile::Standard
+    };
 }
 
 #[no_mangle]
@@ -85,6 +100,7 @@ pub unsafe extern "C" fn sim_reset(
     image: *mut u8,
 ) {
     let env = &mut *env;
+    let reward_profile = env.race.reward_profile;
     env.race = if gate == -3 {
         let mut race = Race::grand_challenge();
         race.drone.position.y += side;
@@ -97,6 +113,7 @@ pub unsafe extern "C" fn sim_reset(
     } else {
         Race::practice(gate as usize, side, height, exposure)
     };
+    env.race.reward_profile = reward_profile;
     env.teacher = Teacher::new(&env.race, false);
     env.race.video_breakup = video_breakup;
     env.race.video_seed = video_seed;
@@ -119,7 +136,9 @@ pub unsafe extern "C" fn sim_reset_after_gate(
     image: *mut u8,
 ) {
     let env = &mut *env;
+    let reward_profile = env.race.reward_profile;
     env.race = Race::after_gate(gate, side, height, speed, exposure);
+    env.race.reward_profile = reward_profile;
     env.teacher = Teacher::new(&env.race, true);
     env.race.video_breakup = video_breakup;
     env.race.video_seed = video_seed;

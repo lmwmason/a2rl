@@ -17,6 +17,13 @@ def physics_identity(lib, engine=None):
             "model_version": lib.sim_physics_model_version()}
 
 
+def reward_profile():
+    profile = os.environ.get("A2RL_REWARD_PROFILE", "standard")
+    if profile not in ("standard", "pace"):
+        raise ValueError(f"Unknown reward profile: {profile}")
+    return profile
+
+
 def load_sim():
     if sys.platform == "darwin":
         filename = "liba2rl_sim.dylib"
@@ -36,6 +43,10 @@ def load_sim():
     lib.sim_physics_model_version.restype = ct.c_uint32
     lib.sim_reward_model_version.argtypes = []
     lib.sim_reward_model_version.restype = ct.c_uint32
+    lib.sim_pace_reward_version.argtypes = []
+    lib.sim_pace_reward_version.restype = ct.c_uint32
+    lib.sim_set_reward_profile.argtypes = [ct.c_void_p, ct.c_bool]
+    lib.sim_set_reward_profile.restype = None
     lib.sim_flow_stats.argtypes = [ct.c_void_p, FLOAT_POINTER]
     lib.sim_flow_stats.restype = None
     lib.sim_create.argtypes = [ct.c_size_t, ct.c_size_t]
@@ -71,6 +82,7 @@ def load_sim():
 class Environment:
     def __init__(self, lib, width, height, physics=None):
         self.lib = lib
+        profile = reward_profile()
         physics = physics_identity(lib, physics)["engine"]
         self.body = None
         if physics == "mujoco":
@@ -81,6 +93,7 @@ class Environment:
         self.handle = lib.sim_create(width, height)
         if not self.handle:
             raise ValueError("Unsupported camera resolution.")
+        lib.sim_set_reward_profile(self.handle, profile == "pace")
         self.image = np.empty((height, width, 3), dtype=np.uint8)
         self.reward = ct.c_float()
 

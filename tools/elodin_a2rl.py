@@ -88,6 +88,8 @@ def configure_plant(physics, profile):
 def configure_course(course, lib, season2, asset, camera_feed, report_path):
     import numpy as np
 
+    from tools import elodin_policy
+
     pointer = ct.POINTER(ct.c_float)
     lib.sim_course_gate_pose.argtypes = [ct.c_bool, ct.c_size_t, pointer]
     lib.sim_course_gate_pose.restype = ct.c_bool

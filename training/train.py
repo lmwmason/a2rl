@@ -327,7 +327,7 @@ def train(args, agent, lib):
                     if idx == reference_count and publisher is not None:
                         publisher.show(frame, gates=envs[idx].lap_stats()[0], step=steps,
                                        phase="SPEED RL", status=1 if crash else 2 if timeout else 0)
-                next_imu = np.stack([env.imu_window(1)[0] for env in envs]) if args.imu else None
+                next_imu = np.stack([env.imu_window(args.stack)[-1] for env in envs]) if args.imu else None
                 replay.append(starts[:, -1], actions, rewards, flags, next_frames,
                               imu[:, -1] if args.imu else None, next_imu)
                 for idx in np.flatnonzero(flags):
@@ -387,7 +387,7 @@ def train(args, agent, lib):
                                      "sprint_exploration_steps": args.sprint_exploration_steps,
                                      "full_throttle_steps": full_throttle_steps},
                                     starts[:, -1], demonstrations,
-                                    np.stack([env.imu_window(1)[0] for env in envs]) if args.imu else None)
+                                    np.stack([env.imu_window(args.stack)[-1] for env in envs]) if args.imu else None)
                     last_save = steps
                     print(json.dumps({"saved_training_state": str(path), "steps": steps}), flush=True)
         elapsed = time.monotonic() - started

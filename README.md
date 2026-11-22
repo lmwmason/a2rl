@@ -205,7 +205,9 @@ bash tools/run_rgb_imu_race.sh runs/target-12 runs/target-12/seed/latest.pt runs
 Run the verifier on a machine with the pinned Elodin harness, a release simulator library, and PyTorch installed in the harness environment.
 
 ```bash
-python3 -m tools.evaluate_rgb_imu_race --host cbgpu-gpu4   --remote-run /root/a2rl-target-12/runs/target-12 --harness "$A2RL_ELODIN_ROOT"   --elodin "$(command -v elodin)" --out runs/target-12/firmware
+python3 -m tools.evaluate_rgb_imu_race --host cbgpu-gpu4 \
+  --remote-run /root/a2rl-target-12/runs/target-12 --harness "$A2RL_ELODIN_ROOT" \
+  --elodin "$(command -v elodin)" --out runs/target-12/firmware
 ```
 
 The worker collects student rollouts with corrective expert labels in Rust. The verifier uses real Betaflight SITL and accepts a checkpoint after three clean full-course starts at or below 30 seconds. That checkpoint starts speed reinforcement learning with the same RGB and IMU input. The verifier applies a 12-second time limit to all three starts before marking the speed phase complete. The GPU worker and verifier can run on separate hosts. The worker continues training while the verifier is offline, and the phase gate waits for the verifier to return.

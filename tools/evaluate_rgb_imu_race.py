@@ -29,6 +29,7 @@ def evaluate(args, weights, session, side):
         "A2RL_ELODIN_DB": str(database / "flight"),
         "A2RL_ELODIN_FPV": str(session / "replay.mp4"),
         "A2RL_ELODIN_FLOW_TEACHER": "0",
+        "A2RL_ELODIN_IN_PROCESS": "1" if args.in_process else "0",
         "A2RL_ELODIN_POLICY": str(weights),
         "A2RL_ELODIN_START_SIDE": str(side),
         "A2RL_ELODIN_SECONDS": "35",
@@ -41,8 +42,9 @@ def evaluate(args, weights, session, side):
     }
     (args.out / "assets").mkdir(exist_ok=True)
     with (session / "flight.log").open("wb") as log:
-        child = subprocess.Popen([args.elodin, "run", str(ROOT / "tools/elodin_a2rl.py")],
-                                 cwd=args.harness, env=environment, stdout=log,
+        script = str(ROOT / "tools/elodin_a2rl.py")
+        command = [str(args.harness / ".venv/bin/python"), script] if args.in_process else [args.elodin, "run", script]
+        child = subprocess.Popen(command, cwd=args.harness, env=environment, stdout=log,
                                  stderr=subprocess.STDOUT, start_new_session=True)
         try:
             for _ in range(220):
@@ -131,7 +133,7 @@ def publish_replay(directory, session, phase, result):
 
 def watch(args):
     for phase, source, marker, target in (("IMITATION", "recovery/latest.pt", "imitation-qualified.pt", 30.),
-                                          ("SPEED RL", "speed/best.pt", "speed-qualified.pt", 12.)):
+                                          ("SPEED RL", "speed/latest.pt", "speed-qualified.pt", 12.)):
         examined = set()
         while True:
             try:
@@ -178,9 +180,12 @@ def main():
     parser.add_argument("--remote-run")
     parser.add_argument("--public", type=Path, help="Publish rendered student evaluation artifacts here.")
     parser.add_argument("--harness", type=Path, required=True)
-    parser.add_argument("--elodin", required=True)
+    parser.add_argument("--elodin")
+    parser.add_argument("--in-process", action="store_true", help="Run the Elodin JAX model without a telemetry database.")
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args()
+    if not (args.elodin or args.in_process):
+        parser.error("Select an Elodin executable or --in-process.")
     if args.host and (args.host.startswith("-") or not args.remote_run):
         parser.error("--host requires an SSH alias or hostname and --remote-run.")
     if args.local_run:

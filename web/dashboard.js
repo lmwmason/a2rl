@@ -21,9 +21,10 @@ let pending = null;
 let displayedControl = -1;
 let pilot = "teacher";
 let selection = 0;
-let studentView = "live";
+let studentView = "evaluation";
 let liveUrl = null;
 let liveDriver = null;
+let liveAge = 0;
 const hosted = !["127.0.0.1", "localhost", "[::1]"].includes(window.location.hostname);
 const feeds = hosted ? [
   "https://beam-snapshot-down-museums.trycloudflare.com/",
@@ -403,6 +404,7 @@ function updateStudentFeed(origin, info) {
   const changed = liveUrl !== next;
   liveUrl = next;
   liveDriver = info.live_driver || null;
+  liveAge = info.live_age_seconds ?? 0;
   setText("live-gates", count(info.live_gates) + " / " + count(info.gates_per_race));
   applyStudentView();
   if (changed && liveUrl) refreshLiveFrame();
@@ -427,7 +429,8 @@ function applyStudentView() {
   byId("replay-result").hidden = showLive;
   if (showLive) {
     camera.pause();
-    setText("live-stage", liveDriver ? `Live training · ${liveDriver} · Rust` : "Live training · Rust");
+    const source = liveAge > 3 ? "Last training frame" : "Live training";
+    setText("live-stage", liveDriver ? `${source} · ${liveDriver} · Rust` : `${source} · Rust`);
   }
 }
 

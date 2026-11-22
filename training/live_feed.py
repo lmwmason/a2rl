@@ -36,12 +36,13 @@ def live_frame(folder):
     path = folder / "live-frame.bin"
     with path.open("rb") as stream:
         frame = path.stat()
-        if time.time() - frame.st_mtime > 3.:
+        age = max(0., time.time() - frame.st_mtime)
+        if age > 60.:
             raise FileNotFoundError("No recent live frame")
         result = read_packet(stream)
         if result is None:
             raise ValueError("Empty frame packet")
-    return result
+    return (*result, age)
 
 
 def encode_png(metadata, pixels):
@@ -87,8 +88,9 @@ def status(run, media):
         "target_beaten": (run / "speed-qualified.pt").is_file(),
     }
     try:
-        frame, _ = live_frame(folder)
-        snapshot.update(live_url="/live.png", live_driver=frame["driver"], live_gates=frame["gates"])
+        frame, _, age = live_frame(folder)
+        snapshot.update(live_url="/live.png", live_driver=frame["driver"], live_gates=frame["gates"],
+                        live_age_seconds=age)
     except (OSError, ValueError):
         pass
     try:
@@ -111,7 +113,7 @@ class Feed(BaseHTTPRequestHandler):
                 body = json.dumps(status(self.run, self.media)).encode()
                 self.send("application/json", BytesIO(body), len(body))
             elif path_info == "/live.png":
-                metadata, pixels = live_frame(phase_folder(self.run)[1])
+                metadata, pixels, _ = live_frame(phase_folder(self.run)[1])
                 body = encode_png(metadata, pixels)
                 self.send("image/png", BytesIO(body), len(body))
             elif MEDIA.fullmatch(path_info):

@@ -207,14 +207,14 @@ Run the evaluator and loopback replay feed on the GPU host. Install the pinned E
 ```bash
 python3 -m tools.evaluate_rgb_imu_race \
   --local-run runs/target-12 --harness "$A2RL_ELODIN_ROOT" \
-  --elodin "$(command -v elodin)" --out runs/target-12/firmware \
+  --in-process --out runs/target-12/firmware \
   --public runs/target-12/public
 python3 -m training.live_feed --run runs/target-12 --media runs/target-12/public --port 8766
 ```
 
-The worker collects student rollouts with corrective expert labels in Rust. The evaluator uses real Betaflight SITL and accepts a checkpoint after three clean full-course starts at or below 30 seconds. That checkpoint starts speed reinforcement learning with the same RGB and IMU input. The evaluator applies a 12-second time limit to all three starts before marking the speed phase complete. Use `--host` and `--remote-run` if the worker and evaluator are on separate hosts.
+The worker collects student rollouts with corrective expert labels in Rust. The evaluator steps the Elodin JAX plant directly in the container and uses real Betaflight SITL. It accepts a checkpoint after three clean full-course starts at or below 30 seconds. That checkpoint starts speed reinforcement learning with the same RGB and IMU input. The evaluator applies a 12-second time limit to all three starts before marking the speed phase complete. Use `--host` and `--remote-run` if the worker and evaluator are on separate hosts.
 
-The dashboard's Student view shows GPU training metrics and sampled FPV frames from Rust. Evaluation shows the latest Elodin + Betaflight student recording with its matching stick inputs. The loopback feed serves only the status, current FPV frame, and published replay assets. An HTTPS tunnel connects the public dashboard to this feed on GPU 4.
+The dashboard's Student view opens the latest Elodin + Betaflight student recording with its matching stick inputs. Live FPV shows sampled training frames from Rust. The loopback feed serves only the status, current FPV frame, and published replay assets. An HTTPS tunnel connects the public dashboard to this feed on GPU 4.
 
 ### Reproduce the demonstration and gate-transition experiments
 

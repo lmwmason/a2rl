@@ -6,6 +6,7 @@ from math import cos, radians, sin
 import os
 from pathlib import Path
 import runpy
+import subprocess
 import sys
 import tomllib
 
@@ -152,6 +153,7 @@ def configure_course(course, lib, season2, asset, camera_feed, report_path):
                 if finished and camera_feed else None
             report_path.write_text(json.dumps({
                 "physics_engine": "elodin",
+                "execution": "jax-in-process" if os.environ.get("A2RL_ELODIN_IN_PROCESS") == "1" else "jax-server",
                 "course": "2026-practice" if season2 else "2025",
                 "gates": last + 1,
                 "gates_per_race": len(path),
@@ -165,6 +167,49 @@ def configure_course(course, lib, season2, asset, camera_feed, report_path):
     course.detect_gate_pass = detect
     course.print_summary = summary
     return (lambda: contact), start, heading
+
+
+class InProcessContext:
+    """Bridge the upstream lockstep callback to the in-process JAX state."""
+
+    def __init__(self, simulation):
+        self.simulation = simulation
+        self.components = {name: index for _, index, name in simulation.map}
+        self.slots = {}
+
+    def indexes(self, pair):
+        if pair not in self.slots:
+            entity, component = pair.split(".", 1)
+            try:
+                slot = self.components[component]
+                ident = self.simulation.entity_dict[entity]
+                entities = self.simulation.component_entity_dict[component]
+                row = entities.index(ident)
+                if len(entities) == 1 and self.simulation.state[slot].ndim <= 1:
+                    row = None
+            except (KeyError, ValueError) as error:
+                raise RuntimeError(f"Unknown simulation component {pair}") from error
+            self.slots[pair] = slot, row
+        return self.slots[pair]
+
+    def read_component(self, pair):
+        slot, row = self.indexes(pair)
+        value = self.simulation.state[slot]
+        return value if row is None else value[row]
+
+    def component_batch_operation(self, reads):
+        return {pair: self.read_component(pair) for pair in reads}
+
+    def write_component(self, pair, value):
+        import numpy as np
+
+        slot, row = self.indexes(pair)
+        component = np.array(self.simulation.state[slot], copy=True)
+        if row is None:
+            component[...] = value
+        else:
+            component[row] = value
+        self.simulation.state[slot] = component
 
 
 def main():
@@ -194,6 +239,7 @@ def main():
 
         asset = "a2rl-season2-gate.glb"
         assets = Path(os.environ.get("ELODIN_ASSETS_DIR", root / "assets")).resolve()
+        assets.mkdir(parents=True, exist_ok=True)
         os.environ["ELODIN_ASSETS_DIR"] = str(assets)
         lib.sim_course_gate_half_depth.argtypes = [ct.c_bool]
         lib.sim_course_gate_half_depth.restype = ct.c_float
@@ -276,12 +322,11 @@ def main():
     world_schematic = el.World.schematic
     world_recipe = el.World.recipe
 
-    def recipe(world, _original):
-        firmware = root / "betaflight/obj/main/betaflight_SITL.elf"
-        cli = ROOT / "assets/a2rl-betaflight-sitl.cli"
-        work = Path(os.environ.get("A2RL_ELODIN_DB", ROOT / "runs/elodin/flight")).expanduser().resolve().parent
-        work.mkdir(parents=True, exist_ok=True)
-        launch = """dir=$(mktemp -d "$3/.betaflight-XXXXXX")
+    firmware = root / "betaflight/obj/main/betaflight_SITL.elf"
+    cli = ROOT / "assets/a2rl-betaflight-sitl.cli"
+    work = Path(os.environ.get("A2RL_ELODIN_DB", ROOT / "runs/elodin/flight")).expanduser().resolve().parent
+    work.mkdir(parents=True, exist_ok=True)
+    launch = """dir=$(mktemp -d "$3/.betaflight-XXXXXX")
 cd "$dir"
 if ! "$1" --config "$2" > configuration.log 2>&1 ||
    grep -q '###ERROR IN' configuration.log ||
@@ -291,11 +336,30 @@ if ! "$1" --config "$2" > configuration.log 2>&1 ||
 fi
 exec "$1"
 """
+    firmware_args = ["-eu", "-c", launch, "a2rl-sitl", str(firmware), str(cli), str(work)]
+
+    def recipe(world, _original):
         return world_recipe(world, el.s10.PyRecipe.process(
-            name="Betaflight SITL", cmd="sh",
-            args=["-eu", "-c", launch, "a2rl-sitl", str(firmware), str(cli), str(work)],
-            cwd=str(work),
+            name="Betaflight SITL", cmd="sh", args=firmware_args, cwd=str(work),
         ))
+
+    def in_process(world, system, *, simulation_rate, max_ticks, post_step, **_kwargs):
+        simulation = world.to_jax(system, simulation_rate=simulation_rate, max_ticks=max_ticks)
+        context = InProcessContext(simulation)
+        with subprocess.Popen(["sh", *firmware_args], cwd=work) as flight_controller:
+            try:
+                for tick in range(max_ticks):
+                    if flight_controller.poll() is not None:
+                        raise RuntimeError("Betaflight SITL exited during the rollout.")
+                    simulation.step(1)
+                    post_step(tick, context)
+            finally:
+                if flight_controller.poll() is None:
+                    flight_controller.terminate()
+                    try:
+                        flight_controller.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        flight_controller.kill()
 
     def schematic(world, content, name):
         # The upstream Crazyflie preview mesh would block this aircraft's FPV image.
@@ -310,6 +374,8 @@ exec "$1"
         sys.argv[0] = str(Path(__file__).resolve())
         if database := os.environ.get("A2RL_ELODIN_DB"):
             kwargs["db_path"] = str(Path(database).expanduser().resolve())
+        if os.environ.get("A2RL_ELODIN_IN_PROCESS") == "1":
+            return in_process(world, *args, **kwargs)
         kwargs["backend"] = "jax-cpu"
         return world_run(world, *args, **kwargs)
 

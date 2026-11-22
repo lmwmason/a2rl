@@ -42,6 +42,8 @@ def options():
     parser.add_argument("--resume", type=Path, help="Restore a saved training state, including optimizer and replay.")
     parser.add_argument("--protect-qualified", type=Path,
                         help="Retain a qualified RGB policy as the reference during speed fine-tuning.")
+    parser.add_argument("--sprint-exploration-steps", type=int, default=0,
+                        help="Try short full-throttle bursts on aligned straights, fading out by this step.")
     parser.add_argument("--checkpoint-every", type=int, default=0, help="Training steps between resumable snapshots.")
     parser.add_argument("--focus-gate-two", action="store_true", help="Practice the turn from gate 1 to gate 2.")
     parser.add_argument("--official-eval", action="store_true", help="Rank speed by the official two-lap time.")
@@ -55,7 +57,7 @@ def options():
         parser.error("Choose evaluation, weight initialization or training-state resume.")
     positive = (args.steps, args.envs, args.width, args.height, args.stack, args.replay, args.batch,
                 args.update_every, args.n_step, args.eval_every, args.eval_episodes)
-    if (min(positive) <= 0 or min(args.warmup, args.checkpoint_every) < 0
+    if (min(positive) <= 0 or min(args.warmup, args.checkpoint_every, args.sprint_exploration_steps) < 0
             or not 0 < args.gamma <= 1 or not 0 <= args.hdzero_max <= 1):
         parser.error("Counts must be positive, warmup nonnegative and gamma and HDZero strength must be in range.")
     if args.target_two_lap_seconds is not None and (
@@ -184,6 +186,9 @@ def train(args, agent, lib):
     flags = np.zeros(args.envs, np.uint8)
     next_frames = np.empty((args.envs, *shape), np.uint8)
     exploration = np.zeros((args.envs, 4), np.float32)
+    sprint_cooldown = np.zeros(args.envs, np.int32)
+    sprint_remaining = np.zeros(args.envs, np.int32)
+    full_throttle_steps = 0
     trim = np.array([0., lib.sim_hover_stick(), 0., 0.], dtype=np.float32)
     starts = np.zeros((args.envs, args.stack, *shape), np.uint8)
     gate_practice = np.linspace(0.80, 0.25, 101)
@@ -206,6 +211,9 @@ def train(args, agent, lib):
             raise ValueError("Use the original reward to resume, or initialize a new run from weights.")
         if progress.get("anchor_digest") != anchor_digest:
             raise ValueError("Resume with the original qualified checkpoint or initialize a new run.")
+        if progress.get("sprint_exploration_steps", 0) != args.sprint_exploration_steps:
+            raise ValueError("Resume with the original sprint exploration schedule.")
+        full_throttle_steps = progress.get("full_throttle_steps", 0)
         steps, updates = progress["steps"], progress["updates"]
         last_eval, best_rank = progress["last_eval"], progress["best_rank"]
         warm_started = progress["warm_started"]
@@ -286,6 +294,26 @@ def train(args, agent, lib):
                     actions = agent.action(starts, noise)
                 if reference_count:
                     actions[:reference_count] = agent.action(starts[:reference_count], reference=True)
+                if steps < args.sprint_exploration_steps:
+                    probability = .16 * (1. - steps / args.sprint_exploration_steps)
+                    for idx in range(reference_count, args.envs):
+                        if sprint_cooldown[idx] > 0:
+                            sprint_cooldown[idx] -= 1
+                            continue
+                        starting = sprint_remaining[idx] == 0
+                        if starting and rng.random() >= probability:
+                            continue
+                        if envs[idx].sprint_window():
+                            # Recheck the available space before each full-throttle command.
+                            sprint_remaining[idx] = 3 if starting else sprint_remaining[idx]
+                            actions[idx, 1] = 1.
+                            sprint_remaining[idx] -= 1
+                            full_throttle_steps += 1
+                            if sprint_remaining[idx] == 0:
+                                sprint_cooldown[idx] = 10
+                        elif not starting:
+                            sprint_remaining[idx] = 0
+                            sprint_cooldown[idx] = 10
                 tasks = [workers.submit(env.step, action) for env, action in zip(envs, actions)]
                 for idx, task in enumerate(tasks):
                     frame, reward, crash, timeout = task.result()
@@ -299,6 +327,8 @@ def train(args, agent, lib):
                     next_frames[idx] = reset(idx, steps)
                     starts[idx] = next_frames[idx]
                     exploration[idx] = 0
+                    sprint_cooldown[idx] = 0
+                    sprint_remaining[idx] = 0
                 starts[:, :-1] = starts[:, 1:]
                 starts[:, -1] = next_frames
                 previous_steps = steps
@@ -317,6 +347,8 @@ def train(args, agent, lib):
                 if now - last_report > 10:
                     record = {"steps": steps, "updates": updates, "fps": round((steps - initial_steps) / (now - started), 1),
                               "window_fps": round((steps - last_report_steps) / (now - last_report), 1)}
+                    if args.sprint_exploration_steps:
+                        record["full_throttle_steps"] = full_throttle_steps
                     if losses is not None:
                         record["critic_loss"], record["actor_loss"] = (float(loss) for loss in losses)
                     print(json.dumps(record), flush=True)
@@ -344,7 +376,9 @@ def train(args, agent, lib):
                     checkpoint.save(path, agent, replay,
                                     {"steps": steps, "updates": updates, "last_eval": last_eval,
                                      "best_rank": best_rank, "warm_started": warm_started, "physics": physics,
-                                     "reward_version": reward_version, "anchor_digest": anchor_digest},
+                                     "reward_version": reward_version, "anchor_digest": anchor_digest,
+                                     "sprint_exploration_steps": args.sprint_exploration_steps,
+                                     "full_throttle_steps": full_throttle_steps},
                                     starts[:, -1], demonstrations)
                     last_save = steps
                     print(json.dumps({"saved_training_state": str(path), "steps": steps}), flush=True)

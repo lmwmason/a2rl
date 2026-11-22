@@ -24,6 +24,12 @@ def reward_profile():
     return profile
 
 
+def teacher_profile():
+    profile = os.environ.get("A2RL_TEACHER_PROFILE", "standard")
+    if profile not in ("standard", "flow"):
+        raise ValueError(f"Unknown teacher profile: {profile}")
+    return profile
+
 def load_sim():
     if sys.platform == "darwin":
         filename = "liba2rl_sim.dylib"
@@ -62,6 +68,10 @@ def load_sim():
     lib.sim_reset_after_gate.restype = None
     lib.sim_expert_action.argtypes = [ct.c_void_p, ct.c_void_p]
     lib.sim_expert_action.restype = None
+    lib.sim_set_flow_teacher.argtypes = [ct.c_void_p, ct.c_bool]
+    lib.sim_set_flow_teacher.restype = None
+    lib.sim_sprint_window.argtypes = [ct.c_void_p]
+    lib.sim_sprint_window.restype = ct.c_bool
     lib.sim_expert_features.argtypes = [ct.c_void_p, ct.c_void_p]
     lib.sim_expert_features.restype = None
     lib.sim_step.argtypes = [ct.c_void_p, ct.c_void_p, ct.c_void_p, ct.POINTER(ct.c_float)]
@@ -83,6 +93,7 @@ class Environment:
     def __init__(self, lib, width, height, physics=None):
         self.lib = lib
         profile = reward_profile()
+        teacher = teacher_profile()
         physics = physics_identity(lib, physics)["engine"]
         self.body = None
         if physics == "mujoco":
@@ -94,6 +105,7 @@ class Environment:
         if not self.handle:
             raise ValueError("Unsupported camera resolution.")
         lib.sim_set_reward_profile(self.handle, profile == "pace")
+        lib.sim_set_flow_teacher(self.handle, teacher == "flow")
         self.image = np.empty((height, width, 3), dtype=np.uint8)
         self.reward = ct.c_float()
 
@@ -124,6 +136,9 @@ class Environment:
         action = np.empty(4, dtype=np.float32)
         self.lib.sim_expert_action(self.handle, action.ctypes.data)
         return action
+
+    def sprint_window(self):
+        return bool(self.lib.sim_sprint_window(self.handle))
 
     def expert_features(self):
         targets = np.empty(12, dtype=np.float32)

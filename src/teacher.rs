@@ -35,6 +35,7 @@ pub struct Teacher {
     passed: usize,
     phase: Phase,
     recovery_side: f32,
+    flow: bool,
 }
 
 impl Teacher {
@@ -50,7 +51,13 @@ impl Teacher {
             passed: race.passed,
             phase,
             recovery_side: 1.,
+            flow: false,
         }
+    }
+
+    pub fn with_flow(mut self, flow: bool) -> Self {
+        self.flow = flow;
+        self
     }
 
     pub fn action(&mut self, race: &Race) -> [f32; 4] {
@@ -58,6 +65,15 @@ impl Teacher {
         let gate = race.gates[next];
         let previous_index = (next + race.gates.len() - 1) % race.gates.len();
         let previous = race.gates[previous_index];
+        let incoming = (gate.center - previous.center).normalize_or_zero();
+        let straight = incoming.dot(previous.normal).min(incoming.dot(gate.normal)) > 0.65;
+        let following = race.gates[(next + 1) % race.gates.len()];
+        let outgoing = (following.center - gate.center).normalize_or_zero();
+        let carry = straight
+            && outgoing
+                .dot(gate.normal)
+                .min(outgoing.dot(following.normal))
+                > 0.65;
         let entry = gate.center - gate.normal * 2.6;
         if race.passed != self.passed {
             self.passed = race.passed;
@@ -94,16 +110,38 @@ impl Teacher {
                     Phase::Transit,
                 ),
                 Phase::Transit => {
+                    if self.flow && straight {
+                        self.phase = Phase::Approach;
+                        continue;
+                    }
                     let anchor = LOG5_LINE[previous_index];
                     // Keep the split-S turn outside the frame while descending.
                     let delta = anchor - position;
                     let heading = Vec3::new(delta.x, delta.y, 0.)
                         .try_normalize()
                         .unwrap_or(gate.normal);
-                    (anchor, heading, 0.8, 5.3, Phase::Approach)
+                    (
+                        anchor,
+                        heading,
+                        if self.flow { 1.45 } else { 0.8 },
+                        5.3,
+                        Phase::Approach,
+                    )
                 }
-                Phase::Approach => (entry, gate.normal, 0.29, 6., Phase::Cross),
-                Phase::Cross => break (gate.center + 2.0 * gate.normal, gate.normal, 6.),
+                Phase::Approach => (
+                    entry,
+                    gate.normal,
+                    0.29,
+                    if self.flow && carry { 8. } else { 6. },
+                    Phase::Cross,
+                ),
+                Phase::Cross => {
+                    break (
+                        gate.center + 2.0 * gate.normal,
+                        gate.normal,
+                        if self.flow && carry { 7.5 } else { 6. },
+                    )
+                }
                 Phase::RecoverOutside => (
                     gate.center + gate.side * self.recovery_side * 2.5 + gate.normal * 1.8,
                     gate.normal,
@@ -120,17 +158,35 @@ impl Teacher {
                 ),
             };
             let passed_exit = matches!(self.phase, Phase::Exit)
-                && (position - previous.center).dot(previous.normal) > 2.05;
-            if position.distance(point) > tolerance && !passed_exit {
+                && (position - previous.center).dot(previous.normal)
+                    > if self.flow && straight { 0.95 } else { 2.05 };
+            let lateral = gate.center - position + gate.normal * depth;
+            let lateral_velocity =
+                race.drone.velocity - gate.normal * race.drone.velocity.dot(gate.normal);
+            let aligned_approach = self.flow
+                && carry
+                && matches!(self.phase, Phase::Approach)
+                && depth > -3.4
+                && lateral.length() < 0.29
+                && lateral_velocity.length() < 1.0;
+            if position.distance(point) > tolerance && !passed_exit && !aligned_approach {
                 break (point, direction, speed);
             }
             self.phase = following;
         };
 
-        let desired_velocity = ((target - position) * 1.5).clamp_length_max(speed_limit);
+        let desired_velocity = if self.flow && carry && matches!(self.phase, Phase::Cross) {
+            let lateral = gate.center - position + gate.normal * depth;
+            gate.normal * speed_limit + lateral * 2.5
+        } else {
+            ((target - position) * 1.5).clamp_length_max(speed_limit)
+        };
         let error = (desired_velocity - race.drone.velocity) * 2.6;
-        let accel = Vec3::new(error.x, error.y, 0.).clamp_length_max(5.2)
-            + Vec3::Z * (GRAVITY + error.z.clamp(-5.5, 6.0));
+        let accel = Vec3::new(error.x, error.y, 0.).clamp_length_max(if self.flow && carry {
+            7.2
+        } else {
+            5.2
+        }) + Vec3::Z * (GRAVITY + error.z.clamp(-5.5, 6.0));
         let up = accel.normalize();
         let left = up.cross(heading).normalize();
         let desired = Quat::from_mat3(&Mat3::from_cols(left.cross(up), left, up));
@@ -167,5 +223,17 @@ mod tests {
             race.drone.position
         );
         assert_eq!(race.passed, 22);
+    }
+
+    #[test]
+    fn flow_teacher_finishes_the_course_while_carrying_speed() {
+        let mut race = Race::grand_challenge();
+        let mut teacher = Teacher::new(&race, false).with_flow(true);
+        while race.status == Status::Racing {
+            let action = teacher.action(&race);
+            race.step(mode2_acro(action)).unwrap();
+        }
+        assert_eq!((race.status, race.passed), (Status::Finished, 22));
+        assert!(race.official_seconds().unwrap() < 95.);
     }
 }

@@ -4,6 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
 from itertools import count
 import json
+import hashlib
 from pathlib import Path
 import time
 from zipfile import ZipFile
@@ -13,7 +14,8 @@ import torch
 
 from . import checkpoint
 from .agent import Agent, pixel_tensor, random_shift, stick_loss
-from .sim import Environment, LEGACY_PHYSICS, load_sim, physics_identity
+from .demonstrations import Demonstrations
+from .sim import Environment, LEGACY_PHYSICS, load_sim, physics_identity, teacher_profile
 from .telemetry import FramePublisher
 from .train import fresh_stack
 
@@ -127,8 +129,16 @@ def evaluate_student(agent, env, stack, seed, episodes, teacher=False):
 
 
 def evaluation_rank(result):
+    lap_time = result["best_two_lap_s"]
     return (result["two_lap_rate"], min(result["gates"]),
-            float(np.mean(result["gates"])), -result["crash_rate"])
+            float(np.mean(result["gates"])), -result["crash_rate"],
+            -lap_time if lap_time is not None else -float("inf"))
+
+
+def demonstration_loss(agent, demonstrations, batch):
+    frames, controls, confidence = demonstrations.sample(batch)
+    pixels = random_shift(pixel_tensor(frames, agent.device).float() / 255. - .5, pad=1)
+    return stick_loss(agent.actor(agent.encoder(pixels)).tanh(), controls, confidence)
 
 
 def training_reset(env, index, rng, target):
@@ -206,6 +216,14 @@ def main():
     parser.add_argument("--save-every", type=int, default=10)
     parser.add_argument("--consolidation-rounds", type=int, default=6)
     parser.add_argument("--teacher-only", action="store_true")
+    parser.add_argument("--human-demos", nargs="+", type=Path, default=[],
+                        help="Synchronized RGB and real Mode 2 inputs used alongside simulator expert labels.")
+    parser.add_argument("--human-held-out", nargs="+", type=Path, default=[],
+                        help="Separate real-pilot flights used only to report action error.")
+    parser.add_argument("--monorace-demos", nargs="+", type=Path, default=[],
+                        help="MonoRace FPV with estimated controls from the official autonomous flight logs.")
+    parser.add_argument("--monorace-held-out", nargs="+", type=Path, default=[],
+                        help="Separate MonoRace flights used only to report estimated control error.")
     args = parser.parse_args()
     if min(args.envs, args.collect_ticks, args.updates, args.batch, args.stack, args.eval_episodes,
            args.save_every) <= 0 or min(args.rounds, args.consolidation_rounds) < 0:
@@ -223,7 +241,26 @@ def main():
     rng = np.random.default_rng(74)
     lib = load_sim()
     physics = physics_identity(lib)
+    teacher = teacher_profile()
     height, width = 72, 96
+    human_demo = (Demonstrations(args.human_demos, [], args.stack, height, width, 213)
+                  if args.human_demos else None)
+    human_validation = (Demonstrations(args.human_held_out, [], args.stack, height, width, 917).sample(192)
+                        if args.human_held_out else None)
+    monorace_demo = (Demonstrations(args.monorace_demos, [], args.stack, height, width, 614)
+                     if args.monorace_demos else None)
+    monorace_validation = (Demonstrations(args.monorace_held_out, [], args.stack, height, width, 918).sample(192)
+                           if args.monorace_held_out else None)
+    demo_ids = {}
+    train_paths = args.human_demos + args.monorace_demos
+    validation_paths = args.human_held_out + args.monorace_held_out
+    for path in train_paths + validation_paths:
+        with path.open("rb") as stream:
+            demo_ids[str(path)] = hashlib.file_digest(stream, "sha256").hexdigest()
+    if {demo_ids[str(path)] for path in train_paths} & {demo_ids[str(path)] for path in validation_paths}:
+        parser.error("Keep demonstration and held-out flights separate.")
+    human_ids = {str(path): demo_ids[str(path)] for path in args.human_demos + args.human_held_out}
+    monorace_ids = {str(path): demo_ids[str(path)] for path in args.monorace_demos + args.monorace_held_out}
     test_env = Environment(lib, width, height)
     args.out.mkdir(parents=True, exist_ok=True)
     try:
@@ -248,10 +285,19 @@ def main():
             agent.load(args.initialize)
         if args.resume:
             progress = restore_school(args.resume, agent, auxiliary, optimizer, buffer, rng, physics)
+            if (progress.get("human_ids", {}) != human_ids or progress.get("monorace_ids", {}) != monorace_ids
+                    or progress.get("teacher_profile", "standard") != teacher):
+                raise ValueError("Resume with the original teacher profile and flight datasets.")
+            if human_demo is not None:
+                human_demo.rng.bit_generator.state = progress["human_rng"]
+            if monorace_demo is not None:
+                monorace_demo.rng.bit_generator.state = progress["monorace_rng"]
             best, first_full = progress["best"], progress["first_full"]
             qualified, first_round, target = progress["qualified"], progress["round"], progress["target"]
-            if progress.get("evaluation_seed") != EVALUATION_SEED:
-                first_full, qualified = None, 0
+            seed_changed = progress.get("evaluation_seed") != EVALUATION_SEED
+            if seed_changed or (best is not None and len(best) == 4):
+                if seed_changed:
+                    first_full, qualified = None, 0
                 saved_best = args.out / "best.pt"
                 if saved_best.is_file():
                     previous = Agent(args.stack, args.device, lib.sim_hover_stick())
@@ -285,6 +331,14 @@ def main():
                         pose_loss = torch.nn.functional.smooth_l1_loss(
                             auxiliary(embedding), torch.from_numpy(features).to(args.device))
                         loss = stick_loss(action, labels, weights) + .4 * pose_loss
+                        human_loss = None
+                        if human_demo is not None:
+                            human_loss = demonstration_loss(agent, human_demo, max(1, args.batch // 4))
+                            loss = loss + .35 * human_loss
+                        monorace_loss = None
+                        if monorace_demo is not None:
+                            monorace_loss = demonstration_loss(agent, monorace_demo, max(1, args.batch // 8))
+                            loss = loss + .10 * monorace_loss
                         optimizer.zero_grad(set_to_none=True)
                         loss.backward()
                         torch.nn.utils.clip_grad_norm_([*agent.encoder.parameters(), *agent.actor.parameters()], 5.)
@@ -302,6 +356,16 @@ def main():
                                   holdout_two_lap_rate=robustness["two_lap_rate"] if robustness else None,
                                   teacher_probability=teacher_probability, collection_crashes=accidents,
                                   imitation_loss=float(loss.detach()), seconds=round(time.monotonic() - started, 1))
+                    if human_loss is not None:
+                        result["human_training_loss"] = float(human_loss.detach())
+                    if human_validation is not None:
+                        real, controls, _ = human_validation
+                        result["human_heldout_stick_mae"] = float(np.abs(agent.action(real) - controls).mean())
+                    if monorace_loss is not None:
+                        result["monorace_training_loss"] = float(monorace_loss.detach())
+                    if monorace_validation is not None:
+                        real, controls, _ = monorace_validation
+                        result["monorace_heldout_proxy_mae"] = float(np.abs(agent.action(real) - controls).mean())
                     print(json.dumps(result), flush=True)
                     log.write(json.dumps(result) + "\n")
                     agent.save(args.out / "latest.pt")
@@ -323,7 +387,10 @@ def main():
                         save_school(args.out / "imitation-state.zip", agent, auxiliary, optimizer, buffer, rng,
                                     {"round": round_no, "target": target, "best": best,
                                      "first_full": first_full, "qualified": qualified, "physics": physics,
-                                     "evaluation_seed": EVALUATION_SEED})
+                                     "evaluation_seed": EVALUATION_SEED, "human_ids": human_ids,
+                                     "teacher_profile": teacher, "monorace_ids": monorace_ids,
+                                     "monorace_rng": monorace_demo.rng.bit_generator.state if monorace_demo else None,
+                                     "human_rng": human_demo.rng.bit_generator.state if human_demo else None})
                     if qualified >= 2 and round_no - first_full >= args.consolidation_rounds:
                         agent.save(args.out / "qualified.pt")
                         print(json.dumps({"qualified": True, "verified_two_lap_evaluations": 4 * args.eval_episodes}), flush=True)

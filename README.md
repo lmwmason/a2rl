@@ -107,6 +107,18 @@ Use `--device cpu` for local checks. Match frame size and stack depth when evalu
 
 The teacher follows an inter-gate racing line derived from MAVLab Log 5 and labels Mode 2 actions from its own runs and states visited by the student. The student observes RGB only. Each round uses the same three evaluation starts for comparison. A separate randomized panel checks candidate policies. The full-race progression runs without a round limit, trains for at least six more rounds after the first round that completes both panels, then requires two consecutive rounds of clean qualification without teacher control. Gate progression and optimizer state are saved in `imitation-state.zip`.
 
+`A2RL_TEACHER_PROFILE=flow` preserves forward speed through aligned gates while using the tighter approach controller around turns. In MuJoCo, the fastest of three clean validation runs improved from 111.50 s to 85.20 s. Training can also use synchronized human FPV footage and transmitter channels from TII Racing's Race Against the Machine v3 release. The human runs took place on trackRATM, so the A2RL simulator demonstrations still provide course-specific corrections. MCK's logged controls provide real-pilot labels, and a separate real flight can be held out to report stick error. [TII Racing v3 release](https://github.com/tii-racing/drone-racing-dataset/releases/tag/v3.0.0) · [Dataset and CC BY 4.0 license](https://github.com/tii-racing/drone-racing-dataset)
+
+```bash
+python -m tools.prepare_mck_demos --list
+python -m tools.prepare_mck_demos --flight flight-13p-trackRATM --flight flight-14p-trackRATM --out runs/mck/train
+python -m tools.prepare_mck_demos --flight flight-15p-trackRATM --out runs/mck/holdout
+```
+
+Pass these using `A2RL_HUMAN_DEMO_DIR` and `A2RL_HUMAN_HOLDOUT`. During speed RL, `A2RL_SPRINT_EXPLORATION_STEPS` enables full-throttle bursts of up to three control ticks on aligned straights with room before the next gate. The frequency fades to zero by the selected step. The evaluated RGB policy chooses all four sticks on its own.
+
+The [MAVLab race video](https://www.youtube.com/watch?v=yz2in2eFATE) shows the TU Delft autonomous competitor. Its [published MonoRace data](https://doi.org/10.4121/039abd82-094c-4c93-baa1-e7446f562e0e) supplies original onboard frames, motor speeds, and body-rate measurements. In racing school, use `A2RL_MONORACE_DEMO=runs/monorace/log5.npz` and `A2RL_MONORACE_HOLDOUT=runs/monorace/log7.npz` after generating the files below. Estimated Mode 2 labels from the autonomous run enter the loss at weight 0.10, compared with 0.35 for synchronized human transmitter inputs. Each source reports its own held-out error.
+
 ```bash
 bash tools/run_race_training.sh
 ```

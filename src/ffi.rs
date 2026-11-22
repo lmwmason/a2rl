@@ -9,6 +9,7 @@ pub struct Environment {
     camera: Camera,
     race: Race,
     teacher: Teacher,
+    flow_teacher: bool,
 }
 
 #[no_mangle]
@@ -78,6 +79,7 @@ pub extern "C" fn sim_create(width: usize, height: usize) -> *mut Environment {
         camera: Camera::new(width, height),
         race,
         teacher,
+        flow_teacher: false,
     }))
 }
 
@@ -114,7 +116,7 @@ pub unsafe extern "C" fn sim_reset(
         Race::practice(gate as usize, side, height, exposure)
     };
     env.race.reward_profile = reward_profile;
-    env.teacher = Teacher::new(&env.race, false);
+    env.teacher = Teacher::new(&env.race, false).with_flow(env.flow_teacher);
     env.race.video_breakup = video_breakup;
     env.race.video_seed = video_seed;
     env.camera.render(
@@ -139,7 +141,7 @@ pub unsafe extern "C" fn sim_reset_after_gate(
     let reward_profile = env.race.reward_profile;
     env.race = Race::after_gate(gate, side, height, speed, exposure);
     env.race.reward_profile = reward_profile;
-    env.teacher = Teacher::new(&env.race, true);
+    env.teacher = Teacher::new(&env.race, true).with_flow(env.flow_teacher);
     env.race.video_breakup = video_breakup;
     env.race.video_seed = video_seed;
     env.camera.render(
@@ -149,9 +151,20 @@ pub unsafe extern "C" fn sim_reset_after_gate(
 }
 
 #[no_mangle]
+pub unsafe extern "C" fn sim_set_flow_teacher(env: *mut Environment, enabled: bool) {
+    let env = &mut *env;
+    env.flow_teacher = enabled;
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn sim_expert_action(env: *mut Environment, out: *mut [f32; 4]) {
     let env = &mut *env;
     *out = env.teacher.action(&env.race);
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn sim_sprint_window(env: *const Environment) -> bool {
+    (&*env).race.sprint_window()
 }
 
 #[no_mangle]

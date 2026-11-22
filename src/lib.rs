@@ -406,6 +406,38 @@ impl Race {
         (self.passed + self.start_gate) % self.gates.len()
     }
 
+    fn sprint_window(&self) -> bool {
+        if self.status != Status::Racing || self.on_launch_pad {
+            return false;
+        }
+        let target = self.next_gate();
+        let gate = self.gates[target];
+        let previous = self.gates[(target + self.gates.len() - 1) % self.gates.len()];
+        let leg = gate.center - previous.center;
+        let direction = leg.normalize_or_zero();
+        let position = self.drone.position;
+        let velocity = self.drone.velocity;
+        let up = self.drone.rotation * Vec3::Z;
+        let forward_speed = velocity.dot(direction);
+        let distance = (gate.center - position).dot(direction);
+        let offset = (gate.center - position) - direction * distance;
+        // Full thrust is tried only during training. Reserve room to correct before the gate.
+        direction
+            .dot(previous.normal)
+            .min(direction.dot(gate.normal))
+            > 0.75
+            && (position - previous.center).dot(previous.normal) > 1.5
+            && distance > 6. + forward_speed * 0.45
+            && distance < leg.length()
+            && offset.length() < 2.0
+            && forward_speed > 1.8
+            && (velocity - direction * forward_speed).length() < 2.0
+            && up.dot(direction) > 0.14
+            && position.z > 0.75
+            && position.z < ARENA_MAX.z - 1.8
+            && velocity.z < 1.2
+    }
+
     pub fn from_start(side: f32, height: f32, exposure: f32) -> Self {
         let mut race = Self {
             exposure,

@@ -69,10 +69,10 @@ python -m tools.check_lateral_drag --calibration log8/imu.csv log8/ekf.csv \
 | Check | Measured result |
 | --- | --- |
 | Six shared-input tests through two seconds | Rust–MuJoCo position and attitude differences were below 2 µm and 0.00005° |
-| Closed-loop teacher on both backends | Both passed all 22 gates |
+| Closed-loop teacher on both backends | Both passed all 22 gates in 111.496 s |
 | Held-out MonoRace Log 8 axial specific force | RMSE fell from 29.81 to 3.41 m/s² over 367 20 ms windows using measured motor speed and EKF inputs |
 
-Horizontal drag was fitted on 319 early windows from Log 8. On two separate flights withheld from fitting, forward/lateral acceleration RMSE fell from **5.79/4.50 to 1.57/1.99 m/s²** on Log 5 and from **3.26/9.16 to 1.40/2.26 m/s²** on Log 7. These comparisons use measured IMU and EKF data. The simulator agreement tests share the same actuator model. Real command-to-motor response, body rates, sustained trajectories, and physical gate contacts still need independent validation. The published M16 parameters supply the motor-speed limit and nominal 30 ms response lag.
+Horizontal drag was fitted on 319 early windows from Log 8. On two separate flights withheld from fitting, forward/lateral acceleration RMSE fell from **5.79/4.50 to 1.57/1.99 m/s²** on Log 5 and from **3.26/9.16 to 1.40/2.25 m/s²** on Log 7. These comparisons use measured IMU and EKF data. The simulator agreement tests share the same actuator model. Real command-to-motor response, body rates, sustained trajectories, and physical gate contacts still need independent validation. The published M16 parameters supply the motor-speed limit and nominal 30 ms response lag.
 
 Set `A2RL_PHYSICS_ENGINE=mujoco` for a MuJoCo rollout. Use a new run directory when changing backends or vehicle models. Existing policy weights can initialize a new run. Resumable state includes the physics identity because replay buffers contain transitions from that environment. [MuJoCo documentation](https://mujoco.readthedocs.io/en/stable/) · [Parry queries](https://parry.rs/docs/user_guide/geometric_queries/)
 

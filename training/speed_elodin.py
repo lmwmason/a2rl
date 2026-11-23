@@ -8,6 +8,7 @@ import math
 import os
 from pathlib import Path
 from statistics import mean
+import time
 from types import SimpleNamespace
 
 import torch
@@ -156,7 +157,13 @@ def main():
     torch.set_num_threads(1)
     with (args.run / "training.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        train(args)
+        while True:
+            try:
+                train(args)
+                break
+            except (OSError, RuntimeError) as error:
+                print(f"Retrying the speed round after a rollout error: {error}", flush=True)
+                time.sleep(10)
 
 
 if __name__ == "__main__":

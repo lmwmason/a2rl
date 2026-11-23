@@ -177,7 +177,10 @@ def configure_course(course, lib, season2, asset, camera_feed, report_path):
                 details.update(took_off=bool(elodin_policy.heat_airborne),
                                aircraft_contact=elodin_policy.peer_contact)
             if elodin_policy.assisted_rollout:
-                details.update(assisted=True, student_influence_frames=elodin_policy.student_influence_frames)
+                details.update(assisted=True, student_influence_frames=elodin_policy.student_influence_frames,
+                               reduced_assistance_frames=elodin_policy.reduced_assistance_frames)
+            if elodin_policy.completion_profile:
+                details["completion_profile"] = elodin_policy.completion_profile
             temporary = report_path.with_suffix(".tmp")
             temporary.write_text(json.dumps(details, indent=2) + "\n")
             temporary.replace(report_path)
@@ -310,6 +313,7 @@ def main():
     elodin_policy.shadow_expert = bool(policy and dataset)
     elodin_policy.record_full_rollout = os.environ.get("A2RL_ELODIN_CORRECTION_SCOPE") == "rollout"
     elodin_policy.assisted_rollout = os.environ.get("A2RL_ELODIN_ASSISTED") == "1"
+    elodin_policy.completion_profile = json.loads(os.environ.get("A2RL_ELODIN_COMPLETION_PROFILE", "{}"))
     if elodin_policy.assisted_rollout and not (elodin_policy.shadow_expert and elodin_policy.record_full_rollout):
         raise ValueError("Assisted rollouts require a policy and full-rollout correction recording.")
     if teacher or elodin_policy.shadow_expert:

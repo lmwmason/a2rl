@@ -1,5 +1,6 @@
 """Run firmware evaluations and authorize the 30 s and 12 s milestones."""
 import argparse
+from collections import Counter
 import hashlib
 from io import BytesIO
 import json
@@ -18,7 +19,17 @@ STARTS = (0., -.03, .03)
 SSH = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=12"]
 
 
-def evaluate(args, weights, session, side, correction=None, *, assisted=False, seconds=35):
+def completion_profile(history):
+    recent = history[-8:]
+    failures = Counter(row["gates"] for row in recent if row["status"] in (1, 2, 3) and row["gates"] < 24)
+    focus = min(failures, key=lambda gate: (-failures[gate], gate), default=None)
+    reliable = 0
+    if len(recent) >= 4:
+        reliable = sum(4 * sum(row["gates"] > gate for row in recent) >= 3 * len(recent) for gate in range(24))
+    return {"focus_gate": focus, "reliable_gates": reliable, "evaluation_count": len(recent)}
+
+
+def evaluate(args, weights, session, side, correction=None, *, assisted=False, seconds=35, profile=None):
     session.mkdir(parents=True, exist_ok=True)
     report = session / "replay.result.json"
     if report.is_file():
@@ -36,6 +47,7 @@ def evaluate(args, weights, session, side, correction=None, *, assisted=False, s
         "A2RL_ELODIN_SECONDS": str(seconds),
         "A2RL_FPV_BREAKUP": "0",
         "A2RL_ELODIN_ASSISTED": "1" if assisted else "0",
+        "A2RL_ELODIN_COMPLETION_PROFILE": json.dumps(profile or {}),
         "OMP_NUM_THREADS": "1",
         "OPENBLAS_NUM_THREADS": "1",
         "UV_NO_SYNC": "1",
@@ -73,7 +85,8 @@ def evaluate(args, weights, session, side, correction=None, *, assisted=False, s
 
 def succeeds(result, threshold):
     return (result["physics_engine"] == "elodin" and result["finished"]
-            and not result["contact"] and result["gates"] == result["gates_per_race"] == 24
+            and not result.get("assisted") and not result["contact"]
+            and result["gates"] == result["gates_per_race"] == 24
             and 0 < result["official_seconds"] <= threshold)
 
 
@@ -165,10 +178,15 @@ def watch(args):
                             .get("training_progress", {}) if args.public else {})
                 weights = args.out / (digest + ".pt")
                 weights.write_bytes(raw)
+                profile = None
+                if args.adaptive_completion and phase == "IMITATION":
+                    replay = args.public / "replay.json"
+                    history = json.loads(replay.read_text()).get("history", []) if replay.is_file() else []
+                    profile = completion_profile([row for row in history if row["phase"] == phase])
                 if phase == "IMITATION" and args.completion_rollouts:
                     session = args.out / digest / "assisted"
                     clip = args.rollout_corrections / f"{digest}-assisted.npz"
-                    result = evaluate(args, weights, session, 0., clip, assisted=True)
+                    result = evaluate(args, weights, session, 0., clip, assisted=True, profile=profile)
                     for name in ("replay.mp4", "replay.controls.json"):
                         (session / name).unlink(missing_ok=True)
                     print(json.dumps({"phase": phase, "checkpoint": digest, **result}), flush=True)
@@ -179,7 +197,7 @@ def watch(args):
                     correction = (correction_folder / f"{digest}.npz"
                                   if correction_folder and phase == "IMITATION" and index == 0 else None)
                     seconds = 50 if phase == "IMITATION" else 35
-                    result = evaluate(args, weights, session, side, correction, seconds=seconds)
+                    result = evaluate(args, weights, session, side, correction, seconds=seconds, profile=profile)
                     if result.get("assisted"):
                         raise ValueError("Assisted rollouts cannot count toward qualification.")
                     if index == 0:
@@ -216,6 +234,8 @@ def main():
     corrections.add_argument("--rollout-corrections", type=Path, help="Record teacher labels throughout a student's flight.")
     parser.add_argument("--completion-rollouts", action="store_true",
                         help="Collect teacher-assisted rollouts before independent imitation evaluations.")
+    parser.add_argument("--adaptive-completion", action="store_true",
+                        help="Target repeated failures and ease coaching on reliably passed gates.")
     parser.add_argument("--harness", type=Path, required=True)
     parser.add_argument("--elodin")
     parser.add_argument("--in-process", action="store_true", help="Run the Elodin JAX model without a telemetry database.")
@@ -235,6 +255,8 @@ def main():
         args.rollout_corrections = args.rollout_corrections.resolve()
     if args.completion_rollouts and not args.rollout_corrections:
         parser.error("Completion rollouts require a full-rollout correction directory.")
+    if args.adaptive_completion and not (args.completion_rollouts and args.public):
+        parser.error("Adaptive completion requires completion rollouts and an independent evaluation history.")
     args.harness = args.harness.resolve()
     args.out = args.out.resolve()
     args.out.mkdir(parents=True, exist_ok=True)

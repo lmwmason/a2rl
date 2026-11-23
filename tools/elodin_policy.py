@@ -25,8 +25,10 @@ expert = None
 shadow_expert = False
 record_full_rollout = False
 assisted_rollout = False
+completion_profile = {}
 reference_command = None
 student_influence_frames = 0
+reduced_assistance_frames = 0
 camera = None
 heat = None
 heat_sample = -1
@@ -96,18 +98,18 @@ class CameraFeed:
     def record_demonstration(self, image, update, command, weight=1.):
         if self.dataset and update.t >= .75 and command.arm >= 1700:
             frame, inertial = policy_observation(image, update)
-            self.samples.append((frame, inertial, update.t, mode2_sticks(command), weight))
+            self.samples.append((frame, inertial, update.t, mode2_sticks(command), weight, update.next_gate_index))
 
     def save_demonstration(self):
         if self.dataset and self.samples:
-            frames, inertial, times, actions, weights = zip(*self.samples)
+            frames, inertial, times, actions, weights, gates = zip(*self.samples)
             self.dataset.parent.mkdir(parents=True, exist_ok=True)
             np.save(self.dataset.with_suffix(".imu.npy"), np.asarray(inertial, dtype=np.float32))
             temporary = self.dataset.with_suffix(".tmp.npz")
             np.savez_compressed(temporary, frames=np.asarray(frames),
                                 actions=np.asarray(actions, dtype=np.float32),
                                 timestamps=np.asarray(times),
-                                weights=np.asarray(weights, dtype=np.float32))
+                                weights=np.asarray(weights, dtype=np.float32), next_gate=np.asarray(gates, dtype=np.int16))
             temporary.replace(self.dataset)
             print(f"[A2RL] Saved {len(times)} RGB/IMU/Mode 2 samples to {self.dataset}", flush=True)
 
@@ -191,13 +193,16 @@ def autopilot(update):
             camera.record_demonstration(image, update, last_command)
         elif update.t >= .75 and (record_full_rollout or (update.t <= 3.75 and update.last_gate_passed < 0)):
             weight = 2. if record_full_rollout and update.last_gate_passed >= 0 else 1.
+            if update.next_gate_index == completion_profile.get("focus_gate"):
+                weight *= 2.
             target = reference_command if assisted_rollout else expert(update)
             camera.record_demonstration(image, update, target, weight)
     return last_command
 
 
 def choose_command(update, image, ended):
-    global pilot, frames, imu, held, last_expert_sample, reference_command, student_influence_frames
+    global pilot, frames, imu, held, last_expert_sample, reference_command
+    global student_influence_frames, reduced_assistance_frames
     if ended or update.t < heat_arm_time:
         return RCCommand()
     if update.t < heat_arm_time + .25:
@@ -240,10 +245,17 @@ def choose_command(update, image, ended):
         # Give the learner brief control perturbations after takeoff while the
         # expert keeps the rollout close enough to reach the rest of the course.
         sample = int(update.t * control_rate + 1e-6)
-        if update.last_gate_passed >= 0 and sample % 6 == 0:
+        reliable = update.next_gate_index < completion_profile.get("reliable_gates", 0)
+        relieved = reliable and update.t >= 1.2
+        if (update.last_gate_passed >= 0 or relieved) and sample % (3 if relieved else 6) == 0:
             reference = np.asarray(mode2_sticks(reference_command))
             limit = np.asarray([.05, .03, .07, .07])
-            held = rc_command(reference + np.clip(sticks - reference, -limit, limit))
+            delta = sticks - reference
+            if relieved and np.all(np.abs(delta) <= 2 * limit):
+                held = rc_command(sticks)
+                reduced_assistance_frames += 1
+            else:
+                held = rc_command(reference + np.clip(delta, -limit, limit))
             student_influence_frames += 1
         return held
     held = rc_command(sticks)

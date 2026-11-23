@@ -27,6 +27,7 @@ let raceEndTimer = null;
 let countdownTimer = null;
 let sound = null;
 let soundEnabled = false;
+let gateAudioTime = null;
 const countdown = byId("race-countdown");
 let displayedControl = -1;
 let pilot = null;
@@ -129,6 +130,28 @@ function updateReplayOverlays(time = camera.currentTime) {
   showSticks(time);
   showRaceTimer(time);
   updateMotorSound();
+  updateGateSound();
+}
+
+function updateGateSound() {
+  const timing = playing?.timing;
+  if (!Array.isArray(timing?.gate_seconds) || !Number.isFinite(camera.currentTime)) return;
+  const timestamp = camera.currentTime + timing.video_start_seconds;
+  const previous = gateAudioTime;
+  gateAudioTime = timestamp;
+  if (!soundEnabled || camera.seeking || (camera.paused && !camera.ended)
+      || previous === null || timestamp <= previous || timestamp - previous > .8 * Math.max(1, camera.playbackRate)) return;
+  let delay = 0;
+  timing.gate_seconds.forEach((crossing, index) => {
+    if (previous >= crossing || crossing > timestamp) return;
+    if (playing.status === 4 && index + 1 === playing.gates_per_race) {
+      playFinishSound(delay);
+    } else {
+      playTone(660, .085, .095, delay, "triangle");
+      playTone(880, .12, .07, delay + .045);
+      delay += .13;
+    }
+  });
 }
 
 function updateMotorSound() {
@@ -157,6 +180,9 @@ byId("race-sound").addEventListener("click", async () => {
     const context = new Audio();
     const volume = context.createGain();
     volume.gain.value = 0;
+    const effects = context.createGain();
+    effects.gain.value = 0;
+    effects.connect(context.destination);
     const filter = context.createBiquadFilter();
     filter.frequency.value = 1250;
     filter.connect(volume).connect(context.destination);
@@ -167,27 +193,41 @@ byId("race-sound").addEventListener("click", async () => {
       motor.start();
       return motor;
     });
-    sound = { context, volume, motors };
+    sound = { context, volume, effects, motors };
   }
   soundEnabled = !soundEnabled;
+  sound.effects.gain.setTargetAtTime(soundEnabled ? 1 : 0, sound.context.currentTime, .015);
   if (soundEnabled) await sound.context.resume().catch(() => {});
   button.setAttribute("aria-pressed", String(soundEnabled));
   setText("race-sound", soundEnabled ? "Sound on" : "Sound off");
   updateMotorSound();
 });
 
-function countdownBeep(go) {
+function playTone(frequency, duration, level, delay = 0, type = "sine") {
   if (!soundEnabled || sound?.context.state !== "running") return;
-  const { context } = sound;
+  const { context, effects } = sound;
   const oscillator = context.createOscillator();
   const volume = context.createGain();
-  const now = context.currentTime;
-  oscillator.frequency.value = go ? 920 : 490;
-  volume.gain.setValueAtTime(.16, now);
-  volume.gain.exponentialRampToValueAtTime(.001, now + .17);
-  oscillator.connect(volume).connect(context.destination);
+  const now = context.currentTime + delay;
+  oscillator.type = type;
+  oscillator.frequency.value = frequency;
+  volume.gain.setValueAtTime(.001, now);
+  volume.gain.exponentialRampToValueAtTime(level, now + .008);
+  volume.gain.exponentialRampToValueAtTime(.001, now + duration);
+  oscillator.connect(volume).connect(effects);
   oscillator.start(now);
-  oscillator.stop(now + .18);
+  oscillator.stop(now + duration + .01);
+}
+
+function playFinishSound(delay) {
+  [523.25, 659.25, 783.99].forEach((frequency, index) => {
+    playTone(frequency, .17, .11, delay + index * .09, "triangle");
+  });
+  [523.25, 783.99, 1046.5].forEach(frequency => playTone(frequency, .44, .065, delay + .27));
+}
+
+function countdownBeep(go) {
+  playTone(go ? 920 : 490, .17, .16);
 }
 
 function cancelCountdown() {
@@ -361,6 +401,7 @@ function startReplay(replay, resumeTime = 0, autoplay = true) {
   const previous = playing;
   if (previous?.version !== replay.version) cancelCountdown();
   playing = replay;
+  gateAudioTime = null;
   camera.src = playing.blob;
   updateCameraButtons();
   if (resumeTime > 0) {
@@ -458,6 +499,7 @@ camera.addEventListener("ended", () => {
 });
 
 camera.addEventListener("seeking", () => {
+  gateAudioTime = null;
   if (camera.currentTime < camera.duration - .1) cancelRaceEnd();
 });
 

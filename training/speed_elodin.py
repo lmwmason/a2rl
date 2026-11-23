@@ -20,6 +20,8 @@ from .race_reward import REWARD_VERSION, clean_finish, matched_improvement, rewa
 STARTS = (0., -.03, .03)
 # These are pre-tanh offsets on the Mode 2 throttle channel.
 THROTTLE_PROBE_SCALES = (.025, .05, .09)
+FINE_THROTTLE_PROBE_SCALES = (.005, .010, .018)
+INSTALLATION_STARTS = (-.045, -.015, .015, .045)
 THROTTLE_CHANNEL = 1
 
 
@@ -57,6 +59,20 @@ def save_checkpoint(path, policy):
     temporary.replace(path)
 
 
+def installation_check(candidate, incumbent):
+    if len(candidate) != len(INSTALLATION_STARTS) or len(incumbent) != len(candidate):
+        return False
+    candidate_count = sum(map(clean_finish, candidate))
+    incumbent_count = sum(map(clean_finish, incumbent))
+    if candidate_count < max(3, incumbent_count):
+        return False
+    paired_gains = [base["official_seconds"] - trial["official_seconds"]
+                    for trial, base in zip(candidate, incumbent)
+                    if clean_finish(trial) and clean_finish(base)]
+    return (bool(paired_gains) and min(paired_gains) >= -.15
+            and (candidate_count > incumbent_count or mean(paired_gains) >= .015))
+
+
 def train(args):
     from tools.evaluate_rgb_imu_race import evaluate
 
@@ -83,6 +99,9 @@ def train(args):
     if args.exit_progress_weight:
         gates = "-".join(map(str, exit_gates)) or "all"
         variant = f"-gate-exit-v2-{gates}"
+    if args.robust_search:
+        variant += "-installation-v1"
+    scales = FINE_THROTTLE_PROBE_SCALES if args.robust_search else THROTTLE_PROBE_SCALES
     while (not args.stop_after_round or iteration < args.stop_after_round) and not (args.run / SPEED_MARKER).is_file():
         iteration += 1
         side = STARTS[(iteration - 1) % len(STARTS)]
@@ -97,13 +116,14 @@ def train(args):
                 sample = perturb(policy, torch.Generator().manual_seed(seed), radius, sign)
                 save_checkpoint(paths[index], sample)
         # Sweep the offset independently of the launch offset, which also cycles every three rounds.
-        throttle_scale = THROTTLE_PROBE_SCALES[((iteration - 1) // len(STARTS)) % len(THROTTLE_PROBE_SCALES)]
+        throttle_scale = scales[((iteration - 1) // len(STARTS)) % len(scales)]
         for path, delta in zip(paths[random_population:], (throttle_scale, -throttle_scale)):
             save_checkpoint(path, shift_throttle(policy, delta))
 
-        def flight(path, start, index, name):
+        def flight(path, start, index, name, course_variant=None):
             report = evaluate(settings, path, experiment / name, start, seconds=FINISH_WINDOW,
-                              port_offset=args.port_offset + 100 * index, max_gate_gap=9.)
+                              port_offset=args.port_offset + 100 * index, max_gate_gap=9.,
+                              course_variant=course_variant)
             if report["physics_engine"] != "elodin" or report.get("assisted") or report["policy_steps"] <= 0:
                 raise RuntimeError("Speed training requires an independent flight with recorded policy actions.")
             trace = report.get("reward_trace", {})
@@ -111,9 +131,12 @@ def train(args):
                 raise RuntimeError("Missing or incomplete speed reward trace.")
             if args.exit_progress_weight and len(trace.get("exit_progress_m", ())) != report["gates"]:
                 raise RuntimeError("Missing or incomplete gate exit trace.")
+            if report.get("course_variant") != course_variant:
+                raise RuntimeError("The rollout report does not match the scheduled gate installation.")
             return report
 
-        with ThreadPoolExecutor(max_workers=len(paths)) as pool:
+        installation = []
+        with ThreadPoolExecutor(max_workers=max(len(paths), 8 if args.robust_search else 0)) as pool:
             futures = [pool.submit(flight, path, side, i, f"candidate-{i}") for i, path in enumerate(paths)]
             population = [future.result() for future in futures]
             incumbent = population[0]
@@ -133,15 +156,25 @@ def train(args):
                 checks = [future.result() for future in futures]
                 for base, trial in zip(checks[::2], checks[1::2]):
                     scores.extend((score(base, base), score(trial, base)))
-        accepted = bool(checks) and matched_improvement(
-            [population[winner], *checks[1::2]], [incumbent, *checks[::2]])
-        outcomes = [*population, *checks]
+            accepted = bool(checks) and matched_improvement(
+                [population[winner], *checks[1::2]], [incumbent, *checks[::2]])
+            if accepted and args.robust_search:
+                futures = []
+                for i, start in enumerate(INSTALLATION_STARTS):
+                    layout = dict(seed=args.seed + iteration * len(INSTALLATION_STARTS) + i,
+                                  xy_m=.06, z_m=.025, yaw_deg=2.)
+                    futures.extend(pool.submit(flight, paths[index], start, 2*i+j, f"installation-{i}-{j}", layout)
+                                   for j, index in enumerate((0, winner)))
+                installation = [future.result() for future in futures]
+                accepted = installation_check(installation[1::2], installation[::2])
+        nominal_outcomes = [*population, *checks]
+        outcomes = [*nominal_outcomes, *installation]
         if accepted:
             policy = torch.load(paths[winner], weights_only=True, map_location="cpu")
         steps += sum(result["policy_steps"] for result in outcomes)
         episodes += len(outcomes)
         radius = min(args.radius * 3., radius * 1.08) if accepted else max(args.radius * .35, radius * .96)
-        finished = [result["official_seconds"] for result in outcomes if clean_finish(result)]
+        finished = [result["official_seconds"] for result in nominal_outcomes if clean_finish(result)]
         metrics = {
             "physics_engine": "elodin", "curriculum_stage": "speed", "round": iteration,
             "steps": steps, "rollouts": episodes, "algorithm": "Antithetic evolutionary policy search",
@@ -150,12 +183,17 @@ def train(args):
             "exit_progress_gates": exit_gates,
             "mean_return": mean(sum(terms.values()) for terms in scores),
             "reward_components": {key: mean(terms[key] for terms in scores) for key in scores[0]},
-            "accepted": accepted, "gates_mean": mean(result["gates"] for result in outcomes),
-            "two_lap_rate": len(finished) / len(outcomes),
-            "crash_rate": mean(result["contact"] for result in outcomes),
+            "accepted": accepted, "gates_mean": mean(result["gates"] for result in nominal_outcomes),
+            "two_lap_rate": len(finished) / len(nominal_outcomes),
+            "crash_rate": mean(result["contact"] for result in nominal_outcomes),
             "official_start_seconds": population[0]["official_seconds"] if side == 0. else None,
             "official_mean_seconds": mean(finished) if finished else None,
             "best_two_lap_s": min(finished, default=None),
+            "installation_check": {
+                "baseline_clean": sum(map(clean_finish, installation[::2])),
+                "candidate_clean": sum(map(clean_finish, installation[1::2])),
+                "paired_layouts": len(installation) // 2,
+            } if installation else None,
             "throttle_probe_logit": throttle_scale,
             "throttle_probe_outcomes": [
                 {"delta": delta, "clean_finish": clean_finish(trial),
@@ -190,9 +228,12 @@ def main():
                         help="Optional weight for progress into the following gate after crossing.")
     parser.add_argument("--exit-progress-gates", type=int, nargs="+", default=[],
                         help="Restrict the exit bonus to these 1-based gate numbers on each lap.")
+    parser.add_argument("--robust-search", action="store_true",
+                        help="Use small throttle probes and check shifted installations before promotion.")
     args = parser.parse_args()
     args.run, args.harness, args.firmware = (path.resolve() for path in (args.run, args.harness, args.firmware))
-    if (not 1 <= args.directions <= 8 or not 1 <= args.port_offset <= 49800 - 200 * args.directions
+    last_port_slot = max(2 * args.directions + 2, 7 if args.robust_search else 0)
+    if (not 1 <= args.directions <= 8 or not 1 <= args.port_offset <= 50000 - 100 * last_port_slot
             or not 0 < args.radius <= .01):
         parser.error("Use a valid exploration radius and a non-overlapping SITL port range.")
     if not (args.run / PACE_MARKER).is_file() or not os.access(args.firmware, os.X_OK):

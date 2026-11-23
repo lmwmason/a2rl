@@ -1,6 +1,6 @@
 // Python owns the image buffer and one exclusive handle per environment.
 use crate::{
-    axial_specific_force, camera::Camera, teacher::Teacher, Course, Race, LAYOUT, MASS_KG,
+    axial_specific_force, camera::Camera, teacher::Teacher, Course, Gate, Race, LAYOUT, MASS_KG,
 };
 use glam::Vec3;
 
@@ -65,14 +65,60 @@ pub unsafe extern "C" fn sim_course_segment(
     current: *const [f32; 3],
     target: usize,
 ) -> i32 {
-    let a = glam::Vec3::from_array(*previous);
-    let b = glam::Vec3::from_array(*current);
-    let mut passed = false;
     let course = course_from_flag(season2);
-    for (index, gate) in crate::Gate::on_course(course)
-        .chain(course.extra_frames().iter().copied())
-        .enumerate()
-    {
+    segment(
+        course,
+        Gate::on_course(course).chain(course.extra_frames().iter().copied()),
+        Vec3::from_array(*previous),
+        Vec3::from_array(*current),
+        target,
+    )
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn sim_set_gate_poses(
+    env: *mut RenderScene,
+    poses: *const [f32; 4],
+    count: usize,
+) -> bool {
+    let race = &mut (*env).race;
+    if poses.is_null() || count != race.gates.len() {
+        return false;
+    }
+    let poses = std::slice::from_raw_parts(poses, count);
+    if !poses.iter().flatten().all(|value| value.is_finite()) {
+        return false;
+    }
+    race.gates = poses.iter().copied().map(Gate::from_pose).collect();
+    true
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn sim_scene_segment(
+    env: *const RenderScene,
+    previous: *const [f32; 3],
+    current: *const [f32; 3],
+    target: usize,
+) -> i32 {
+    let race = &(*env).race;
+    segment(
+        race.course,
+        race.gate_frames().copied(),
+        Vec3::from_array(*previous),
+        Vec3::from_array(*current),
+        target,
+    )
+}
+
+fn segment(
+    course: Course,
+    gates: impl Iterator<Item = Gate>,
+    a: Vec3,
+    b: Vec3,
+    target: usize,
+) -> i32 {
+    let mut passed = false;
+    for (index, gate) in gates.enumerate() {
         let (collision, crossed) = gate.progress(a, b, course);
         if collision {
             return -1;
@@ -251,4 +297,33 @@ pub unsafe extern "C" fn sim_external_expert_action(
     env.race.passed = passed;
     *output = env.teacher.external_action(&env.race);
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shifted_gate_scene_updates_image_and_contact() {
+        let env = sim_create(96, 72);
+        let state = [15.7, 2., 1.47, 0., 0., 0., 0., 0., 1., 0., 0., 0., 0.];
+        let previous = [13.5, 2.65, 1.47];
+        let current = [11.5, 2.65, 1.47];
+        let mut nominal = vec![0; 96 * 72 * 3];
+        let mut shifted = nominal.clone();
+        let mut poses = crate::LAYOUT_2026;
+        poses[0][1] += 0.25;
+        unsafe {
+            sim_set_season2_course(env, true);
+            sim_configure_scene(env, 0., 1., 0., 1);
+            assert_eq!(sim_scene_segment(env, &previous, &current, 0), -1);
+            assert!(sim_render_pose(env, &state, 1., nominal.as_mut_ptr()));
+            assert!(sim_set_gate_poses(env, poses.as_ptr(), poses.len()));
+            assert_eq!(sim_scene_segment(env, &previous, &current, 0), 1);
+            assert_eq!(sim_course_segment(true, &previous, &current, 0), -1);
+            assert!(sim_render_pose(env, &state, 1., shifted.as_mut_ptr()));
+            sim_destroy(env);
+        }
+        assert_ne!(nominal, shifted);
+    }
 }

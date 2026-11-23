@@ -1,14 +1,16 @@
 from types import SimpleNamespace
 import json
 
+import numpy as np
 import torch
 
 from tools import evaluate_rgb_imu_race as evaluator
 from tools.evaluate_rgb_imu_race import completion_profile, handoff_schedule, replay_timing, succeeds
 from tools.replay_export import race_summary
 from training.curriculum import FINISH_MARKER, PACE_MARKER, SPEED_MARKER, SPEED_RUN
+from training.course_layout import varied_gate_poses
 from training.live_feed import status
-from training.speed_elodin import perturb
+from training.speed_elodin import installation_check, perturb
 from training.race_reward import GateTrace, matched_improvement, reward_terms
 
 
@@ -119,6 +121,25 @@ def test_gate_exit_progress_scores_only_completed_transitions():
     assert "gate_exit" not in reward_terms(result, reference)
     missed = result | {"gates": 1, "contact": True, "gate_times": [1.]}
     assert reward_terms(missed, reference, exit_progress_weight=.35)["gate_exit"] == 0.
+
+
+def test_installation_offsets_keep_stacked_apertures_on_the_same_mount():
+    poses = np.array([[1., 2., 4., 40.], [1., 2., 1.5, -140.], [3., 4., 1.5, 10.]])
+    settings = dict(seed=7, xy_m=.06, z_m=.025, yaw_deg=2.)
+    changed = varied_gate_poses(poses, **settings)
+    np.testing.assert_array_equal(changed, varied_gate_poses(poses, **settings))
+    np.testing.assert_allclose(changed[0] - changed[1], poses[0] - poses[1])
+    assert np.all(np.abs(changed - poses) <= np.array([.06, .06, .025, 2.]))
+    assert not np.array_equal(changed, poses)
+
+
+def test_installation_check_retains_robust_completion_and_paired_pace():
+    complete = {"finished": True, "contact": False, "gates": 24, "official_seconds": 28.5}
+    dnf = complete | {"finished": False, "contact": True, "gates": 20}
+    faster = complete | {"official_seconds": 28.3}
+    assert installation_check([faster] * 3 + [dnf], [complete] * 3 + [dnf])
+    assert not installation_check([faster] * 3 + [dnf], [complete] * 4)
+    assert not installation_check([faster] * 2 + [dnf] * 2, [complete] * 2 + [dnf] * 2)
 
 
 def test_speed_policy_perturbations_are_paired_and_keep_the_encoders():

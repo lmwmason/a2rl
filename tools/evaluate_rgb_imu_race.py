@@ -61,7 +61,8 @@ def handoff_schedule(history, log_path):
     return plan
 
 
-def evaluate(args, weights, session, side, correction=None, *, assisted=False, seconds=35, profile=None, port_offset=0, max_gate_gap=0.):
+def evaluate(args, weights, session, side, correction=None, *, assisted=False, seconds=35, profile=None,
+             port_offset=0, max_gate_gap=0., course_variant=None):
     session.mkdir(parents=True, exist_ok=True)
     report = session / "replay.result.json"
     if report.is_file():
@@ -91,6 +92,7 @@ def evaluate(args, weights, session, side, correction=None, *, assisted=False, s
         "A2RL_AIRFRAME": str(ROOT / "assets/a2rl-2025-airframe.toml"),
         "A2RL_ELODIN_ASSISTED": "1" if assisted else "0",
         "A2RL_ELODIN_COMPLETION_PROFILE": json.dumps(profile or {}),
+        "A2RL_ELODIN_COURSE_VARIANT": json.dumps(course_variant),
         "OMP_NUM_THREADS": "1",
         "OPENBLAS_NUM_THREADS": "1",
         "UV_NO_SYNC": "1",

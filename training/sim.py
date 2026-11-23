@@ -79,6 +79,15 @@ class CameraRenderer:
         lib.sim_set_season2_course(self.handle, season2)
         lib.sim_configure_scene(self.handle, self.mount_pitch, exposure, breakup, video_seed)
 
+    def place_gates(self, poses):
+        function = self.lib.sim_set_gate_poses
+        function.argtypes = [ct.c_void_p, FLOAT_POINTER, ct.c_size_t]
+        function.restype = ct.c_bool
+        poses = np.ascontiguousarray(poses, dtype=np.float32)
+        if poses.ndim != 2 or poses.shape[1] != 4 or not function(
+                self.handle, poses.ctypes.data_as(FLOAT_POINTER), len(poses)):
+            raise ValueError("Invalid gate poses for the camera scene.")
+
     def render_pose(self, state, elapsed, peers=(), *, chase=False):
         pose = np.ascontiguousarray(state, dtype=np.float32)
         if pose.shape != (13,):

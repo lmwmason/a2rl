@@ -113,6 +113,21 @@ def configure_course(course, lib, season2, asset, camera_feed, report_path):
             frames.append(course.Gate(i, tuple(pose[:3]), pose[3]))
         elif i < n:
             raise RuntimeError(f"Cannot read A2RL gate {i}")
+    variant = json.loads(os.environ.get("A2RL_ELODIN_COURSE_VARIANT", "null"))
+    check_segment = partial(lib.sim_course_segment, season2)
+    if variant is not None:
+        from training.course_layout import varied_gate_poses
+
+        if not season2 or camera_feed is None or len(frames) != n:
+            raise ValueError("Gate installation variation requires the 2026 RGB course.")
+        poses = varied_gate_poses([(*gate.center, gate.yaw_deg) for gate in frames], **variant).astype(np.float32)
+        frames = [course.Gate(i, tuple(map(float, pose[:3])), float(pose[3])) for i, pose in enumerate(poses)]
+        camera_feed.env.place_gates(poses)
+        if camera_feed.chase:
+            camera_feed.chase.place_gates(poses)
+        lib.sim_scene_segment.argtypes = [ct.c_void_p, pointer, pointer, ct.c_size_t]
+        lib.sim_scene_segment.restype = ct.c_int
+        check_segment = partial(lib.sim_scene_segment, camera_feed.env.handle)
     course.EASY_COURSE = tuple(replace(frame, index=lap * n + frame.index)
                                for lap in range(2) for frame in frames[:n])
     if camera_feed:
@@ -150,7 +165,7 @@ def configure_course(course, lib, season2, asset, camera_feed, report_path):
             contact_kind = "invalid_state"
             print("[A2RL] invalid rigid-body state", flush=True)
             return None
-        hit = lib.sim_course_segment(season2, previous, current, target % n)
+        hit = check_segment(previous, current, target % n)
         outside = np.any(np.asarray(end) < low) or np.any(np.asarray(end) > high)
         if trace is not None:
             trace.observe(target, start, end, elapsed, crossed=hit == 1 and not outside)
@@ -197,6 +212,8 @@ def configure_course(course, lib, season2, asset, camera_feed, report_path):
             }
             if trace is not None:
                 details["reward_trace"] = trace.report()
+            if variant is not None:
+                details["course_variant"] = variant
             if elodin_policy.heat is not None:
                 details.update(took_off=bool(elodin_policy.heat_airborne),
                                aircraft_contact=elodin_policy.peer_contact)
@@ -326,6 +343,8 @@ def main():
     teacher = os.environ.get("A2RL_ELODIN_FLOW_TEACHER") == "1"
     dataset = os.environ.get("A2RL_ELODIN_DEMONSTRATION")
     policy = os.environ.get("A2RL_ELODIN_POLICY")
+    if (dataset or teacher) and json.loads(os.environ.get("A2RL_ELODIN_COURSE_VARIANT", "null")) is not None:
+        raise ValueError("The fixed-route teacher cannot label shifted gate installations.")
     if dataset and (not (teacher or policy) or Path(dataset).suffix != ".npz"):
         raise ValueError("A2RL_ELODIN_DEMONSTRATION requires a pilot and a .npz path.")
     if path or dataset or os.environ.get("A2RL_ELODIN_POLICY"):

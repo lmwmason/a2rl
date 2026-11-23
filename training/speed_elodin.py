@@ -17,6 +17,9 @@ from .race_reward import REWARD_VERSION, clean_finish, matched_improvement, rewa
 
 
 STARTS = (0., -.03, .03)
+# These are pre-tanh offsets on the Mode 2 throttle channel.
+THROTTLE_PROBE_SCALES = (.025, .05, .09)
+THROTTLE_CHANNEL = 1
 
 
 def perturb(policy, generator, radius, sign):
@@ -35,6 +38,16 @@ def perturb(policy, generator, radius, sign):
                 updated[key] = value
         trial[name] = updated
     return trial
+
+
+def shift_throttle(policy, delta):
+    actor = dict(policy["actor"])
+    bias = max((key for key in actor if key.endswith(".bias")),
+               key=lambda key: int(key.split(".")[0]))
+    actor[bias] = actor[bias].clone()
+    # The forecast is relative to the current actor output, so this also shifts its throttle.
+    actor[bias][THROTTLE_CHANNEL] += delta
+    return {**policy, "actor": actor}
 
 
 def save_checkpoint(path, policy):
@@ -64,15 +77,20 @@ def train(args):
     while not (args.run / SPEED_MARKER).is_file():
         iteration += 1
         side = STARTS[(iteration - 1) % len(STARTS)]
-        experiment = output / "rounds" / f"{iteration}-reward-v{REWARD_VERSION}"
+        experiment = output / "rounds" / f"{iteration}-reward-v{REWARD_VERSION}-throttle-v1"
         experiment.mkdir(parents=True, exist_ok=True)
-        paths = [experiment / f"policy-{index}.pt" for index in range(1 + 2 * args.directions)]
+        random_population = 1 + 2 * args.directions
+        paths = [experiment / f"policy-{index}.pt" for index in range(random_population + 2)]
         save_checkpoint(paths[0], policy)
         for direction in range(args.directions):
             seed = args.seed + args.directions * iteration + direction
             for index, sign in enumerate((1, -1), start=1 + 2 * direction):
                 sample = perturb(policy, torch.Generator().manual_seed(seed), radius, sign)
                 save_checkpoint(paths[index], sample)
+        # Sweep the offset independently of the launch offset, which also cycles every three rounds.
+        throttle_scale = THROTTLE_PROBE_SCALES[((iteration - 1) // len(STARTS)) % len(THROTTLE_PROBE_SCALES)]
+        for path, delta in zip(paths[random_population:], (throttle_scale, -throttle_scale)):
+            save_checkpoint(path, shift_throttle(policy, delta))
 
         def flight(path, start, index, name):
             report = evaluate(settings, path, experiment / name, start, seconds=FINISH_WINDOW,
@@ -125,6 +143,14 @@ def train(args):
             "official_start_seconds": population[0]["official_seconds"] if side == 0. else None,
             "official_mean_seconds": mean(finished) if finished else None,
             "best_two_lap_s": min(finished, default=None),
+            "throttle_probe_logit": throttle_scale,
+            "throttle_probe_outcomes": [
+                {"delta": delta, "clean_finish": clean_finish(trial),
+                 "gates": trial["gates"], "contact": trial["contact"],
+                 "time_s": trial["official_seconds"], "throttle_fraction": trial.get("mean_throttle_fraction")}
+                for delta, trial in zip((0., throttle_scale, -throttle_scale),
+                                        (population[0], *population[random_population:]))
+            ],
         }
         policy["training_progress"] = metrics
         save_checkpoint(latest, policy)
@@ -147,7 +173,7 @@ def main():
     parser.add_argument("--seed", type=int, default=2026)
     args = parser.parse_args()
     args.run, args.harness, args.firmware = (path.resolve() for path in (args.run, args.harness, args.firmware))
-    if (not 1 <= args.directions <= 8 or not 1 <= args.port_offset <= 50000 - 200 * args.directions
+    if (not 1 <= args.directions <= 8 or not 1 <= args.port_offset <= 49800 - 200 * args.directions
             or not 0 < args.radius <= .01):
         parser.error("Use a valid exploration radius and a non-overlapping SITL port range.")
     if not (args.run / PACE_MARKER).is_file() or not os.access(args.firmware, os.X_OK):

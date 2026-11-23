@@ -136,8 +136,7 @@ class CameraFeed:
             self.chase_failure = error
 
     def record_command(self, command):
-        if self.path:
-            self.actions.append(mode2_sticks(command))
+        self.actions.append(mode2_sticks(command))
 
     def record_demonstration(self, image, update, command, weight=1., executed=None):
         if self.dataset and update.t >= .75 and command.arm >= 1700:

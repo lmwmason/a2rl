@@ -17,7 +17,6 @@ const trend = { values: [], key: "", limit: 22 };
 const finishChart = byId("finish-history");
 const finishTrend = { values: [], key: "", speed: false };
 let playing = null;
-let pending = null;
 let displayedControl = -1;
 let pilot = "teacher";
 let selection = 0;
@@ -185,59 +184,52 @@ function drawFinishHistory() {
   }
 }
 
-function startReplay() {
-  if (pending) {
-    if (playing) URL.revokeObjectURL(playing.blob);
-    playing = pending;
-    pending = null;
-    camera.src = playing.blob;
-    camera.muted = true;
-    camera.loop = true;
-    camera.hidden = false;
-    byId("mode2-sticks").hidden = !playing.controls;
-    displayedControl = -1;
-    showSticks(0);
-    const download = byId("download-replay");
-    download.href = playing.blob;
-    const firmwareCheck = playing.kind === "takeoff-check";
-    const teacher = playing.kind === "teacher-evaluation";
-    const season = playing.course === "2026-practice" ? "2026-practice" : "2025";
-    const progress = playing.phase === "SPEED RL" ? playing.steps : playing.round;
-    download.download = teacher ? `a2rl-${season}-flow-teacher.mp4`
-      : firmwareCheck ? `a2rl-${season}-elodin-takeoff.mp4`
-      : !Number.isFinite(progress) ? `a2rl-${season}-student-${playing.version}.mp4`
-      : playing.phase === "SPEED RL" ? `a2rl-${season}-rl-${playing.steps}.mp4`
-      : `a2rl-${season}-imitation-round-${playing.round}.mp4`;
-    download.hidden = false;
-    byId("waiting").hidden = true;
-    const stage = teacher ? "Flow teacher evaluation"
-      : firmwareCheck ? "Firmware takeoff check"
-      : playing.phase === "SPEED RL" ? (Number.isFinite(playing.steps)
-        ? "Reinforcement learning · " + count(playing.steps) + " steps" : "Reinforcement learning checkpoint")
-      : playing.round ? "Imitation · Round " + count(playing.round) : "Imitation checkpoint";
-    setText("replay-stage", stage);
-    setText("flight-gates", count(playing.gates) + " / " + count(playing.gates_per_race ?? 22));
-    setText("replay-result", firmwareCheck ? "Takeoff verified"
-      : { 1: "Crash", 2: "Timed out", 3: "Stalled", 4: "Finished two laps" }[playing.status] || "—");
-    setText("replay-physics", physicsLabel(playing));
-    const recorded = byId("replay-recorded");
-    const recordedDate = new Date(Number(playing.version) / 1_000_000);
-    if (Number.isFinite(recordedDate.getTime())) {
-      recorded.dateTime = recordedDate.toISOString();
-      recorded.textContent = dateTime.format(recordedDate);
-      recorded.closest("div").hidden = false;
-    } else {
-      recorded.closest("div").hidden = true;
-    }
-    if (pilot === "student") renderStudentEvaluation();
-  } else if (playing) {
-    camera.currentTime = 0;
+function startReplay(replay) {
+  const previous = playing;
+  playing = replay;
+  camera.src = playing.blob;
+  camera.muted = true;
+  camera.loop = true;
+  camera.hidden = false;
+  byId("mode2-sticks").hidden = !playing.controls;
+  displayedControl = -1;
+  showSticks(0);
+  const download = byId("download-replay");
+  download.href = playing.blob;
+  const firmwareCheck = playing.kind === "takeoff-check";
+  const teacher = playing.kind === "teacher-evaluation";
+  const season = playing.course === "2026-practice" ? "2026-practice" : "2025";
+  const progress = playing.phase === "SPEED RL" ? playing.steps : playing.round;
+  download.download = teacher ? `a2rl-${season}-flow-teacher.mp4`
+    : firmwareCheck ? `a2rl-${season}-elodin-takeoff.mp4`
+    : !Number.isFinite(progress) ? `a2rl-${season}-student-${playing.version}.mp4`
+    : playing.phase === "SPEED RL" ? `a2rl-${season}-rl-${playing.steps}.mp4`
+    : `a2rl-${season}-imitation-round-${playing.round}.mp4`;
+  download.hidden = false;
+  byId("waiting").hidden = true;
+  const stage = teacher ? "Flow teacher evaluation"
+    : firmwareCheck ? "Firmware takeoff check"
+    : playing.phase === "SPEED RL" ? (Number.isFinite(playing.steps)
+      ? "Reinforcement learning · " + count(playing.steps) + " steps" : "Reinforcement learning checkpoint")
+    : playing.round ? "Imitation · Round " + count(playing.round) : "Imitation checkpoint";
+  setText("replay-stage", stage);
+  setText("flight-gates", count(playing.gates) + " / " + count(playing.gates_per_race ?? 22));
+  setText("replay-result", firmwareCheck ? "Takeoff verified"
+    : { 1: "Crash", 2: "Timed out", 3: "Stalled", 4: "Finished two laps" }[playing.status] || "—");
+  setText("replay-physics", physicsLabel(playing));
+  const recorded = byId("replay-recorded");
+  const recordedDate = new Date(Number(playing.version) / 1_000_000);
+  if (Number.isFinite(recordedDate.getTime())) {
+    recorded.dateTime = recordedDate.toISOString();
+    recorded.textContent = dateTime.format(recordedDate);
+    recorded.closest("div").hidden = false;
   } else {
-    return;
+    recorded.closest("div").hidden = true;
   }
-  if (playing) camera.play().catch(() => {});
+  if (pilot === "student") renderStudentEvaluation();
+  if (previous) URL.revokeObjectURL(previous.blob);
+  camera.play().catch(() => {});
 }
-camera.addEventListener("ended", startReplay);
 camera.addEventListener("seeked", () => showSticks());
 if ("requestVideoFrameCallback" in camera) {
   const updateSticks = (_, frame) => {
@@ -374,10 +366,10 @@ async function fetchReplay(poll = true) {
     const manifest = await readFeed("replay.json", view);
     if (selected !== selection) return;
     try {
-      await queueReplay(manifest, selected);
+      await loadReplay(manifest, selected);
     } catch (error) {
       if (!hosted || view !== "student" || manifest.value.archived) throw error;
-      if (selected === selection) await queueReplay(await requestData("/student/replay.json"), selected);
+      if (selected === selection) await loadReplay(await requestData("/student/replay.json"), selected);
     }
   } catch {
     if (selected === selection && !playing) {
@@ -402,8 +394,7 @@ function selectPilot(view, refresh = true) {
   camera.removeAttribute("src");
   camera.load();
   if (playing) URL.revokeObjectURL(playing.blob);
-  if (pending) URL.revokeObjectURL(pending.blob);
-  playing = pending = null;
+  playing = null;
   byId("download-replay").hidden = true;
   byId("mode2-sticks").hidden = true;
   byId("replay-recorded").closest("div").hidden = true;
@@ -420,17 +411,17 @@ function selectPilot(view, refresh = true) {
 byId("show-teacher").addEventListener("click", () => selectPilot("teacher"));
 byId("show-student").addEventListener("click", () => selectPilot("student"));
 
-function canQueueReplay(info, selected) {
+function isNewReplay(info, selected) {
   if (selected !== selection) return false;
   if (!/^[0-9]+$/.test(info.version)) throw new Error("Invalid replay version");
-  const current = pending ?? playing;
+  const current = playing;
   if (!current) return true;
   if (Boolean(info.archived) !== Boolean(current.archived)) return !info.archived;
   return BigInt(info.version) > BigInt(current.version);
 }
 
-async function queueReplay({ url, value: info }, selected) {
-  if (!canQueueReplay(info, selected)) return;
+async function loadReplay({ url, value: info }, selected) {
+  if (!isNewReplay(info, selected)) return;
   if (!/^replay-[0-9]+\.mp4$/.test(info.url)) throw new Error("Invalid replay filename");
   const controlsRequest = /^controls-[0-9]+\.json$/.test(info.controls_url)
     ? requestData(new URL(info.controls_url, url)).then(({ value }) => (
@@ -440,12 +431,9 @@ async function queueReplay({ url, value: info }, selected) {
           && axes.every((axis) => Number.isFinite(axis) && Math.abs(axis) <= 1)) ? value : null
     )).catch(() => null) : null;
   const [video, controls] = await Promise.all([requestData(new URL(info.url, url), true), controlsRequest]);
-  if (!canQueueReplay(info, selected)) return;
+  if (!isNewReplay(info, selected)) return;
   const blob = URL.createObjectURL(video.value.slice(0, video.value.size, "video/mp4"));
-  if (pending) URL.revokeObjectURL(pending.blob);
-  pending = { ...info, blob, controls };
-  if (!playing || camera.ended) startReplay();
-  else camera.loop = false;
+  startReplay({ ...info, blob, controls });
 }
 
 new ResizeObserver(drawHistory).observe(chart);
@@ -453,5 +441,11 @@ new ResizeObserver(drawFinishHistory).observe(finishChart);
 if (new URLSearchParams(window.location.search).get("pilot") === "student") {
   selectPilot("student", false);
 }
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden && pilot === "student") fetchReplay(false);
+});
+window.addEventListener("pageshow", (event) => {
+  if (event.persisted && pilot === "student") fetchReplay(false);
+});
 fetchStatus();
 fetchReplay();

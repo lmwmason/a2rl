@@ -1,47 +1,20 @@
 {
-  "round": 859,
-  "steps": 16492800,
-  "version": "1795398723931604056",
+  "round": 864,
+  "steps": 16588800,
+  "version": "1795399179535823407",
   "phase": "IMITATION",
-  "gates": 4,
+  "gates": 1,
   "status": 1,
   "official_seconds": null,
   "curriculum_stage": "finish",
   "kind": "student-evaluation",
-  "url": "replay-1795398723931604056.mp4",
-  "chase_url": "chase-1795398723931604056.mp4",
-  "controls_url": "controls-1795398723931604056.json",
+  "url": "replay-1795399179535823407.mp4",
+  "chase_url": "chase-1795399179535823407.mp4",
+  "controls_url": "controls-1795399179535823407.json",
   "course": "2026-practice",
   "physics_engine": "elodin",
   "gates_per_race": 24,
   "history": [
-    {
-      "round": 216,
-      "steps": 4147200,
-      "version": "1795393966321658892",
-      "phase": "IMITATION",
-      "gates": 1,
-      "status": 1,
-      "official_seconds": null
-    },
-    {
-      "round": 231,
-      "steps": 4435200,
-      "version": "1795394026113848719",
-      "phase": "IMITATION",
-      "gates": 1,
-      "status": 1,
-      "official_seconds": null
-    },
-    {
-      "round": 248,
-      "steps": 4761600,
-      "version": "1795394084778362712",
-      "phase": "IMITATION",
-      "gates": 2,
-      "status": 1,
-      "official_seconds": null
-    },
     {
       "round": 264,
       "steps": 5068800,
@@ -561,6 +534,36 @@
       "version": "1795398723931604056",
       "phase": "IMITATION",
       "gates": 4,
+      "status": 1,
+      "official_seconds": null,
+      "curriculum_stage": "finish"
+    },
+    {
+      "round": 860,
+      "steps": 16512000,
+      "version": "1795398873702792678",
+      "phase": "IMITATION",
+      "gates": 2,
+      "status": 1,
+      "official_seconds": null,
+      "curriculum_stage": "finish"
+    },
+    {
+      "round": 862,
+      "steps": 16550400,
+      "version": "1795399041888892075",
+      "phase": "IMITATION",
+      "gates": 3,
+      "status": 1,
+      "official_seconds": null,
+      "curriculum_stage": "finish"
+    },
+    {
+      "round": 864,
+      "steps": 16588800,
+      "version": "1795399179535823407",
+      "phase": "IMITATION",
+      "gates": 1,
       "status": 1,
       "official_seconds": null,
       "curriculum_stage": "finish"

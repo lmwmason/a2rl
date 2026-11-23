@@ -1,3 +1,5 @@
+mod airframe;
+
 use crate::{ray_box, Course, Race, ARENA_MAX, ARENA_MIN};
 use glam::{Quat, Vec3};
 
@@ -50,8 +52,9 @@ fn chase_pose(race: &Race) -> [Vec3; 4] {
     }
     let (min, max) = race.course.bounds();
     let margin = Vec3::splat(0.05);
-    let sensor = (drone.position - 2.6 * heading + 1.2 * Vec3::Z).clamp(min + margin, max - margin);
-    let forward = (drone.position + 0.7 * heading - sensor).normalize();
+    let sensor =
+        (drone.position - 1.55 * heading + 0.72 * Vec3::Z).clamp(min + margin, max - margin);
+    let forward = (drone.position + 0.42 * heading - sensor).normalize();
     let right = forward.cross(Vec3::Z).normalize_or_zero();
     [sensor, right, right.cross(forward), forward]
 }
@@ -299,14 +302,21 @@ impl Camera {
                 }
                 let origin = inverse * -delta;
                 let direction = inverse * direction;
+                if follows {
+                    airframe::draw(
+                        origin,
+                        direction,
+                        race.ticks,
+                        inverse * Vec3::Z,
+                        &mut distance,
+                        &mut color,
+                    );
+                    continue;
+                }
                 let body = Vec3::new(0.12, 0.10, 0.052);
                 if let Some(hit) = ray_box(origin, direction, -body, body, 0.015, distance) {
                     distance = hit;
-                    color = if follows {
-                        [221, 145, 43]
-                    } else {
-                        [49, 52, 56]
-                    };
+                    color = [49, 52, 56];
                 }
                 for x in [-0.11, 0.11] {
                     for y in [-0.11, 0.11] {
@@ -321,11 +331,7 @@ impl Camera {
                             distance,
                         ) {
                             distance = hit;
-                            color = if follows && x > 0. {
-                                [231, 108, 56]
-                            } else {
-                                [100, 104, 109]
-                            };
+                            color = [100, 104, 109];
                         }
                     }
                 }

@@ -273,7 +273,7 @@ def watch(args):
                 if handoff_enabled:
                     handoff = handoff_schedule(history, args.out / "handoff-history.jsonl")
                     profile = profile | {"handoff": handoff}
-                if phase == "IMITATION" and args.completion_rollouts and not handoff_enabled:
+                if stage == "finish" and args.completion_rollouts and not handoff_enabled:
                     session = trial / "assisted"
                     clip = args.rollout_corrections / f"{clip_prefix}-assisted.npz"
                     result = evaluate(args, weights, session, 0., clip, assisted=True, profile=profile)
@@ -319,7 +319,7 @@ def watch(args):
                         options = {"port_offset": args.evaluation_port_offset} if getattr(args, "evaluation_port_offset", 0) else {}
                         result = evaluate(args, weights, session, side, correction,
                                           seconds=seconds, profile=nominal_profile,
-                                          max_gate_gap=10. if stage == "finish" and index == 0 else 0., **options)
+                                          max_gate_gap=10. if phase == "IMITATION" else 0., **options)
                     if result.get("assisted"):
                         raise ValueError("Assisted rollouts cannot count toward qualification.")
                     if index == 0:

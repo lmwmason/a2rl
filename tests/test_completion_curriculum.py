@@ -55,14 +55,19 @@ def test_curriculum_requires_a_pace_trained_checkpoint_before_rl(tmp_path, monke
     (run / "speed").mkdir()
     torch.save({"training_progress": {"steps": 99}}, run / "speed/latest.pt")
     args = SimpleNamespace(local_run=run, out=out, public=None, adaptive_completion=False,
-                           completion_rollouts=False, rollout_corrections=None, launch_corrections=None)
+                           completion_rollouts=True, rollout_corrections=tmp_path, launch_corrections=None)
     checked = {"finish": [], "pace": [], "speed": []}
 
     def evaluate(_, weights, session, side, correction, **kwargs):
         stage = session.relative_to(out).parts[0]
+        if kwargs.get("assisted"):
+            assert stage == "finish"
+            return {"assisted": True}
         checkpoint = torch.load(weights, weights_only=True)["training_progress"].get("curriculum_stage")
         checked[stage].append((checkpoint, side))
         if stage == "pace":
+            assert kwargs["seconds"] > 30
+            assert kwargs["max_gate_gap"] == 10.
             assert (run / FINISH_MARKER).is_file()
             assert not (run / PACE_MARKER).is_file()
             if checkpoint == "finish":

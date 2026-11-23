@@ -182,10 +182,26 @@ def main():
     correction_clips = {}
     last_correction = progress.get("last_correction")
     stage = (progress.get("curriculum_stage") or "finish") if args.completion_marker else None
+    pace_reference = None
+
+    def start_pace(*, restore):
+        qualified = adapt_weights(torch.load(args.completion_marker, map_location="cpu", weights_only=True))
+        reference = Agent(stack, args.device, 0., with_imu=args.imu,
+                          backbone=qualified.get("vision_backbone", "cnn"),
+                          action_horizon=args.action_horizon, imu_channels=channels)
+        reference.set_weights(qualified)
+        reference.encoder.eval()
+        if restore:
+            agent.set_weights(qualified)
+            optimizer.state.clear()
+        for group in optimizer.param_groups:
+            group["lr"] = args.learning_rate * .25
+        demos.assisted = []
+        demos.handoff = []
+        return reference
+
     if stage == "pace":
-        demos.primary_fraction = .80
-        demos.focus_gates = None
-        demos.secondary_focus_gates = None
+        pace_reference = start_pace(restore=False)
     with (args.out / "metrics.jsonl").open("a" if resumed else "w", encoding="utf-8", buffering=1) as log:
         for step in range(1, args.updates + 1) if args.updates else count(1):
             if args.until and args.until.is_file():
@@ -206,29 +222,17 @@ def main():
                 correction_clips = {
                     path: correction_clips.get(path) or Clip(
                         path, stack, height, width, with_imu=True, relative_attitude=args.relative_attitude,
-                        preserve_success=args.preserve_successful_prefixes and stage == "finish" and path in independent,
+                        preserve_success=args.preserve_successful_prefixes and path in independent,
                         preserve_handoff=args.preserve_successful_prefixes and stage == "finish" and path in handoff)
                     for path in (*independent, *assisted, *handoff)
                 }
                 demos.independent = [correction_clips[path] for path in independent]
-                demos.assisted = [correction_clips[path] for path in assisted]
+                demos.assisted = [correction_clips[path] for path in assisted] if stage != "pace" else []
                 demos.handoff = [correction_clips[path] for path in handoff] if stage == "finish" else []
                 last_correction = recent[-1].name
             if (step - 1) % args.eval_every == 0 and stage == "finish" and args.completion_marker.is_file():
-                if args.extend_history or args.relative_attitude:
-                    qualified = torch.load(args.completion_marker, map_location="cpu", weights_only=True)
-                    agent.set_weights(adapt_weights(qualified))
-                else:
-                    agent.load(args.completion_marker)
-                optimizer.state.clear()
+                pace_reference = start_pace(restore=True)
                 best_rank = None
-                demos.primary_fraction = .80
-                demos.handoff = []
-                demos.focus_gates = None
-                demos.secondary_focus_gates = None
-                if args.preserve_successful_prefixes and args.correction_directory:
-                    correction_clips.clear()
-                    demos.independent = [Clip(path, stack, height, width, with_imu=True, relative_attitude=args.relative_attitude) for path in independent]
                 stage = "pace"
                 print(json.dumps({"curriculum_stage": stage, "primary_fraction": demos.primary_fraction}),
                       flush=True)
@@ -237,7 +241,7 @@ def main():
             gate_loss = None
             anchor_loss = None
             boundary_loss = None
-            nominal_completion = stage == "finish"
+            nominal_completion = stage in ("finish", "pace")
             obs = random_shift(pixel_tensor(frames, args.device).float() / 255. - 0.5,
                                pad=1 if nominal_completion else 3)
             contrast = .06 if nominal_completion else .15
@@ -267,7 +271,17 @@ def main():
                 future_loss = stick_loss(actions[:, 1:].reshape(-1, 4), targets,
                                          np.repeat(weight, args.action_horizon - 1))
                 loss = loss + .5 * future_loss
-            if anchor is not None and stage != "pace":
+            if pace_reference is not None:
+                with torch.no_grad():
+                    reference_features = pace_reference.policy_features(obs, imu)
+                    if agent.future_actor is not None:
+                        reference = pace_reference.action_sequence(reference_features, late=agent.protected_prefix > 0)
+                    else:
+                        reference = pace_reference.actor(reference_features).tanh()
+                prediction = actions if agent.future_actor is not None else action
+                anchor_loss = torch.nn.functional.smooth_l1_loss(prediction, reference, beta=.12)
+                loss = loss + 2. * anchor_loss
+            elif anchor is not None:
                 prefix = (next_gate >= 0) & (next_gate < args.anchor_gates)
                 with torch.no_grad():
                     reference = anchor.actor(anchor.policy_features(obs, imu)).tanh()
@@ -297,7 +311,7 @@ def main():
             if boundary_loss is not None:
                 metrics["route_boundary_loss"] = float(boundary_loss.detach())
             if anchor_loss is not None:
-                metrics["prefix_anchor_loss"] = float(anchor_loss.detach())
+                metrics["pace_reference_loss" if pace_reference is not None else "prefix_anchor_loss"] = float(anchor_loss.detach())
             if agent.future_actor is not None:
                 metrics["future_action_loss"] = float(future_loss.detach())
             if gate_loss is not None:

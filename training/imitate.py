@@ -146,8 +146,11 @@ def main():
                            secondary_focus_gates=args.secondary_focus_gates)
     if args.focus_directory:
         selected = sorted(path for path in args.focus_directory.glob("*.npz") if not path.name.endswith(".tmp.npz"))
-        demos.focus_clips = [Clip(path, stack, height, width, with_imu=True, relative_attitude=args.relative_attitude)
-                             for path in selected]
+        demos.focus_clips = [
+            Clip(path, stack, height, width, with_imu=True, relative_attitude=args.relative_attitude,
+                 preserve_handoff=args.preserve_successful_prefixes)
+            for path in selected
+        ]
     if args.until:
         print(json.dumps({"imitation_datasets": [
             {"path": str(path), "frames": len(clip)}
@@ -203,7 +206,8 @@ def main():
                 correction_clips = {
                     path: correction_clips.get(path) or Clip(
                         path, stack, height, width, with_imu=True, relative_attitude=args.relative_attitude,
-                        preserve_success=args.preserve_successful_prefixes and stage == "finish" and path in independent)
+                        preserve_success=args.preserve_successful_prefixes and stage == "finish" and path in independent,
+                        preserve_handoff=args.preserve_successful_prefixes and stage == "finish" and path in handoff)
                     for path in (*independent, *assisted, *handoff)
                 }
                 demos.independent = [correction_clips[path] for path in independent]
@@ -304,7 +308,8 @@ def main():
                                independent_correction_clips=len(demos.independent),
                                assisted_correction_clips=len(demos.assisted),
                                handoff_correction_clips=len(demos.handoff),
-                               preserved_successful_frames=sum(clip.preserved_rows for clip in demos.independent))
+                               preserved_successful_frames=sum(clip.preserved_rows for clip in demos.independent),
+                               preserved_handoff_frames=sum(clip.preserved_rows for clip in demos.handoff))
             if demos.focus_gates:
                 metrics.update(focus_gates=demos.focus_gates, focused_samples=demos.focus_samples)
             if demos.secondary_focus_gates:

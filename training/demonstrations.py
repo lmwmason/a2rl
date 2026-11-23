@@ -7,7 +7,7 @@ from .inertial import RelativeAttitude
 
 
 class Clip:
-    def __init__(self, path, stack, height, width, with_imu=False, *, preserve_success=False, relative_attitude=False):
+    def __init__(self, path, stack, height, width, with_imu=False, *, preserve_success=False, preserve_handoff=False, relative_attitude=False):
         path = Path(path)
         self.source_name = path.name
         shape = (height, width, 3)
@@ -33,14 +33,20 @@ class Clip:
                     if gates.shape == (len(actions),):
                         self.gate_numbers = gates.astype(np.int64)
                         self.last_approach = int(self.gate_numbers[-1]) if len(self.gate_numbers) else 0
-                    if (preserve_success and self.gate_numbers is not None and {"executed", "independent", "passed"} <= set(data.files)
-                            and bool(data["independent"]) and int(data["passed"]) >= 3):
+                    if ((preserve_success or preserve_handoff) and self.gate_numbers is not None
+                            and {"executed", "independent", "passed"} <= set(data.files)):
+                        independent = bool(data["independent"])
+                        passed = int(data["passed"])
                         executed = data["executed"]
                         if executed.shape != actions.shape or not np.isfinite(executed).all():
                             raise ValueError(f"Malformed executed actions in {path}.")
-                        passed = int(data["passed"])
-                        # Require the next crossing too, so a bad exit into the failed leg uses teacher labels.
+                        # Preserve a clear approach only when the next gate was also reached.
                         cleared = (self.gate_numbers >= 0) & (self.gate_numbers + 1 < passed)
+                        if independent:
+                            cleared &= preserve_success and passed >= 3
+                        else:
+                            # Handoff samples carry the student's commands only after the transfer.
+                            cleared &= preserve_handoff & (self.weights >= 5.)
                         actions[cleared] = .65 * executed[cleared] + .35 * actions[cleared]
                         self.preserved_rows = int(cleared.sum())
                     if self.gate_numbers is not None and len(gates) >= stack:

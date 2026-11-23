@@ -85,6 +85,13 @@ class DemonstrationTest(unittest.TestCase):
             self.assertEqual(clip.preserved_rows, 3)
             np.testing.assert_allclose(clip.actions[:3], .65)
             np.testing.assert_array_equal(clip.actions[3:], original[3:])
+            np.savez(path, frames=frames, actions=original, executed=np.ones_like(original),
+                     timestamps=np.arange(10) / 30, next_gate=np.arange(10),
+                     weights=np.array([.2, .2, 5, 5, 5, 5, 5, 5, 5, 5]), independent=False, passed=5)
+            segment = Clip(path, 2, 1, 1, preserve_handoff=True)
+            self.assertEqual(segment.preserved_rows, 2)
+            np.testing.assert_allclose(segment.actions[2:4], .65)
+            np.testing.assert_array_equal(segment.actions[:2], original[:2])
 
     def test_completion_batch_emphasizes_independent_approaches(self):
         with TemporaryDirectory() as directory:

@@ -4,9 +4,10 @@
 use <battery.scad>
 use <power-module.scad>
 use <jetson-b01.scad>
+use <fairing.scad>
 
 /* [Assembly] */
-view = "assembled"; // [assembled,exploded,clearance,canopy,nano-guard,carbon-plate,stack-adapter]
+view = "assembled"; // [assembled,exploded,clearance,canopy,battery-hatch,nano-guard,skid-shoes,carbon-plate,stack-adapter]
 stack_pitch = 30.5; // [20,30.5]
 wheelbase = 220;
 motor_x = wheelbase / sqrt(8);
@@ -15,6 +16,8 @@ motor_centres = [[motor_x, motor_y], [motor_x, -motor_y],
                  [-motor_x, motor_y], [-motor_x, -motor_y]];
 camera_tilt = 55;
 show_canopy = true;
+show_battery_hatch = true;
+show_nano_pod = true;
 show_propellers = true;
 
 /* [Hidden] */
@@ -24,12 +27,16 @@ prop_radius = 63.5;
 prop_z = 32;
 sweep_half_height = 4;
 nano_z = -8;
-landing_z = -46;
+pod_bottom = -51;
+landing_z = -55;
+pod_wall = 2.6;
 battery_z = 28;
 regulator_origin = [-53, 0, 8];
 camera_origin = [70, 0, 26];
 board_mounts = [[-32, -17], [-32, 17], [32, -17], [32, 17]];
 adapter_mounts = [[0, -17.5], [0, 17.5]];
+hatch_screw = [-63, 13];
+hatch_head_z = 44.35;
 spread = view == "exploded" ? 1 : 0;
 
 module plate(length, width, thickness, radius) {
@@ -213,48 +220,59 @@ module nano_mount() {
         rotate([180, 0, 0]) screw([0, 0], -5, 5);
 }
 
-module nano_guard_shape() {
-    // The two open runners carry landing loads outside the PCB and connector.
-    for (y = [-57, 57]) {
-        hull() for (x = [-56, 56]) translate([x, y, landing_z]) cylinder(r = 4, h = 4);
-        for (x = [-54, 54]) hull() {
-            translate([x, y, landing_z]) cylinder(r = 4, h = 4);
-            translate([x, y, -5]) cylinder(r = 3.2, h = 5);
-        }
-    }
-    for (x = [-54, 0, 54]) hull()
-        for (y = [-57, 57]) translate([x, y, landing_z]) cylinder(r = 3, h = 4);
-    for (x = [-54, 54]) hull()
-        for (y = [-57, 57]) translate([x, y, -5]) cylinder(r = 3, h = 5);
-    for (x = [-54, 54], y = [-17, 17]) hull() {
-        translate([x, y, -5]) cylinder(r = 4, h = 5);
-        translate([x > 0 ? 32 : -32, y, -5]) cylinder(r = 5, h = 5);
-    }
+module pod_vents() {
+    // Vent openings sit fore and aft of the fins, above the belly and skids.
+    for (side = [-1, 1], x = [-64, -53, 53, 64], z = [-36, -26])
+        hull() for (dx = [-2.6, 2.6])
+            translate([x + dx, side * 48, z]) rotate([90, 0, 0])
+                cylinder(d = 3.8, h = 36, center = true, $fn = 20);
 }
 
 module nano_guard() {
+    stations = [[-84, 20, -27, -1], [-73, 69, -42, -1], [-59, 113, -48, -1],
+                [-46, 122, pod_bottom, -1], [-28, 116, pod_bottom, -1],
+                [24, 104, pod_bottom, -1], [49, 100, -48, -1],
+                [65, 78, -41, -1], [79, 24, -24, -1]];
+    cavity = fair_cavity(stations, pod_wall, true, 2);
     difference() {
-        nano_guard_shape();
-        for (p = board_mounts) hole_at(p, 3.3, -5.1, 5.2);
+        union() {
+            difference() {
+                fair_loft(stations, 11, 6);
+                fair_loft(cavity, 8.4, 3.4);
+            }
+            // Four bridges share the carrier fasteners near the carbon spine.
+            for (p = board_mounts) hull() {
+                translate([p.x, p.y, -6.5]) cylinder(d = 10, h = 3.4);
+                side_y = p.x < 0 ? 54 : 46.5;
+                translate([p.x, p.y < 0 ? -side_y : side_y, -6.5]) cylinder(d = 8, h = 3.4);
+            }
+            // Inward lips shade the top edges while keeping the pod removable.
+            intersection() {
+                fair_loft(stations, 11, 6);
+                for (side = [-1, 1]) translate([0, side * 56, -2.45])
+                    cube([168, 28, 1.9], center = true);
+            }
+            for (x = [-37, 21], y = [-32, 32])
+                translate([x, y, pod_bottom + 0.2]) cylinder(d = 9, h = 6.2);
+        }
+        pod_vents();
+        translate([-43, 40, -4]) cube([17, 11, 4]);
+        for (p = board_mounts) hole_at(p, 3.3, -6.6, 3.6);
+        for (x = [-37, 21], y = [-32, 32]) hole_at([x, y], 2.6, landing_z, 9.3);
     }
 }
 
-module canopy_station(section, inset, bottom_offset) {
-    half_width = section[1] / 2 - inset;
-    bottom = section[2] + bottom_offset;
-    top = section[3] - inset;
-    translate([section[0], 0, 0]) rotate([90, 0, 90])
-        linear_extrude(0.4, center = true)
-            offset(r = 1.25) offset(delta = -1.25)
-                polygon([[-half_width, bottom], [half_width, bottom],
-                         [half_width, top - 3], [half_width - 5, top],
-                         [-half_width + 5, top], [-half_width, top - 3]]);
-}
-
-module canopy_loft(stations, inset, bottom_offset) {
-    for (i = [0 : len(stations) - 2]) hull() {
-        canopy_station(stations[i], inset, bottom_offset);
-        canopy_station(stations[i + 1], inset, bottom_offset);
+module skid_shoes() {
+    // Replaceable polymer shoes sit below the continuous pod floor.
+    for (y = [-32, 32]) difference() {
+        hull() for (x = [-42, 26]) {
+            translate([x, y, landing_z]) cylinder(r = 4.2, h = 5);
+            translate([x, y, pod_bottom + 1]) cylinder(r = 5, h = 1);
+        }
+        for (x = [-37, 21]) {
+            hole_at([x, y], 3.2, landing_z - 0.1, 7);
+            hole_at([x, y], 6, landing_z - 0.1, 2);
+        }
     }
 }
 
@@ -263,20 +281,20 @@ module blade_clearance_cuts() {
         cylinder(r = prop_radius + 3, h = 2 * sweep_half_height + 2, $fn = 100);
 }
 
-module canopy() {
+function canopy_sections() = [[-90, 40, 5, 27], [-77, 46, 5, 36], [-49, 49, 5, 53],
+                              [-37, 48, 5, 63], [42, 48, 5, 63], [53, 42, 5, 55],
+                              [66, 36, 5, 46], [86, 19, 5, 24]];
+
+module canopy_shell() {
     // Spine runs nose to tail. Side scallops keep the shell outside the prop volume.
-    sections = [[-90, 40, 5, 27], [-77, 46, 5, 36], [-49, 49, 5, 53],
-                [-37, 48, 5, 63], [42, 48, 5, 63], [53, 42, 5, 55],
-                [66, 36, 5, 46], [86, 19, 5, 24]];
-    inner = [for (i = [0 : len(sections) - 1])
-        let(s = sections[i], end_shift = i == 0 ? 2.4 : i == len(sections) - 1 ? -2.4 : 0)
-        [s[0] + end_shift, s[1], s[2], s[3]]];
+    sections = canopy_sections();
+    inner = fair_cavity(sections, 2.4, false, 2);
     difference() {
         union() {
-            canopy_loft(sections, 0, 0);
+            fair_loft(sections, 3.4, 7.5);
             for (p = board_mounts) translate([p.x, p.y, 5]) cylinder(d = 11, h = 5);
         }
-        canopy_loft(inner, 2.4, -2);
+        fair_loft(inner, 1, 5.1);
         blade_clearance_cuts();
         // Lens aperture along the tilted optical axis. Actual view requires calibration.
         translate(camera_origin) rotate([0, 90 - camera_tilt, 0])
@@ -297,6 +315,57 @@ module canopy() {
             translate([0, p.y < 0 ? -6 : 6, 0]) cylinder(d = 5.2, h = 2.6);
         }
         translate([0, 0, -0.1]) cylinder(d = 3.3, h = 2.8);
+    }
+}
+
+module battery_access(gap = 0) {
+    // Main opening clears the 80 x 39 mm pack. The rear pocket exposes XT60.
+    translate([0, 0, 30]) plate(89 + 2 * gap, 44 + 2 * gap, 43, 4);
+    translate([-64, 0, 25]) plate(46 + 2 * gap, 36 + 2 * gap, 48, 4);
+}
+
+module canopy() {
+    difference() {
+        union() {
+            difference() {
+                canopy_shell();
+                battery_access();
+            }
+            intersection() {
+                fair_loft(canopy_sections(), 3.4, 7.5);
+                hull() {
+                    translate([hatch_screw.x, hatch_screw.y, 36.5]) cylinder(d = 8, h = 3.1);
+                    translate([hatch_screw.x, 23, 36.5]) cylinder(d = 6, h = 3.1);
+                }
+            }
+        }
+        blade_clearance_cuts();
+        hole_at(hatch_screw, 2.6, 36.3, 3.5);
+        for (y = [-10, 10])
+            translate([44.4, y - 3, 56.7]) cube([5.5, 6, 2.4]);
+    }
+}
+
+module battery_hatch() {
+    difference() {
+        union() {
+            intersection() {
+                canopy_shell();
+                battery_access(-0.55);
+            }
+            for (y = [-10, 10]) {
+                translate([40.5, y - 2.4, 57]) cube([8.5, 4.8, 1.6]);
+                translate([40.5, y - 2.4, 58.5]) cube([3, 4.8, 3.6]);
+            }
+        }
+        hole_at(hatch_screw, 3.3, 39, 8);
+    }
+}
+
+module hatch_fastener() {
+    translate([hatch_screw.x, hatch_screw.y, hatch_head_z]) {
+        cylinder(d = 7.5, h = 2.8, $fn = 24);
+        translate([0, 0, -7.3]) cylinder(d = 3, h = 7.4);
     }
 }
 
@@ -337,11 +406,13 @@ module battery_installation() {
         for (x = [-17, 32], y = [-20, 20])
             standoff([x, y], 5, battery_z - 7 + 18 * spread, 5.5, 3.25);
     }
-    color("#333844") for (x = [-15, 20])
+    color("#333844") for (x = [-15, 20]) {
         translate([x, 0, battery_z + 13.5 + 25 * spread]) difference() {
             cube([10, 42.2, 31], center = true);
             cube([11, 39.8, 28.7], center = true);
         }
+        translate([x, 6, battery_z + 28.5 + 25 * spread]) plate(10, 12, 1, 2);
+    }
 }
 
 module power_installation() {
@@ -412,18 +483,21 @@ module sweep_disks() {
 
 assert(stack_pitch == 20 || stack_pitch == 30.5);
 assert(view == "assembled" || view == "exploded" || view == "clearance"
-       || view == "stack-adapter" || view == "canopy" || view == "nano-guard" || view == "carbon-plate");
+       || view == "stack-adapter" || view == "canopy" || view == "nano-guard"
+       || view == "skid-shoes" || view == "carbon-plate" || view == "battery-hatch");
 assert(len(motor_centres) == 4);
 for (i = [0 : 2], j = [i + 1 : 3])
     assert(norm(motor_centres[i] - motor_centres[j]) > 2 * prop_radius,
            "Motor centres produce overlapping propeller disks.");
 assert(regulator_origin.z + 18 < prop_z - sweep_half_height);
-assert(nano_z - 28.28 > landing_z + 4);
+assert(nano_z - 28.28 > pod_bottom + pod_wall + 8);
 assert(battery_z - 2 > 5 + 13 + 5);
 
 if (view == "stack-adapter") stack_adapter();
 else if (view == "canopy") canopy();
+else if (view == "battery-hatch") battery_hatch();
 else if (view == "nano-guard") nano_guard();
+else if (view == "skid-shoes") skid_shoes();
 else if (view == "carbon-plate") projection(cut = true)
     translate([0, 0, -arm_thickness / 2]) carbon_frame();
 else {
@@ -434,12 +508,19 @@ else {
     }
     flight_stack();
     nano_mount();
-    color("#2b2e36") translate([0, 0, -31 * spread]) nano_guard();
+    if (show_nano_pod && view != "clearance") {
+        color("#303844") translate([0, 0, -51 * spread]) render(convexity = 12) nano_guard();
+        color("#22252b") translate([0, 0, -60 * spread]) skid_shoes();
+    }
     camera_and_mount();
     battery_installation();
     power_installation();
     if (view != "exploded") power_and_signal_harness();
     if (show_canopy && view != "clearance")
-        color("#e58128") translate([0, 0, 66 * spread]) canopy();
+        color("#e58128") translate([0, 0, 66 * spread]) render(convexity = 12) canopy();
+    if (show_canopy && show_battery_hatch && view != "clearance") {
+        color("#39404a") translate([0, 0, 92 * spread]) render(convexity = 12) battery_hatch();
+        color("#555963") translate([0, 0, 92 * spread]) hatch_fastener();
+    }
     if (view == "clearance") sweep_disks();
 }

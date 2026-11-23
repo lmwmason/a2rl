@@ -1,90 +1,20 @@
 {
-  "round": 1166,
-  "steps": 21100800,
-  "version": "1795405548682076382",
+  "round": 1180,
+  "steps": 21268800,
+  "version": "1795405930270082635",
   "phase": "IMITATION",
-  "gates": 14,
-  "status": 1,
-  "official_seconds": null,
+  "gates": 24,
+  "status": 4,
+  "official_seconds": 28.602,
   "curriculum_stage": "finish",
   "kind": "student-evaluation",
-  "url": "replay-1795405548682076382.mp4",
-  "chase_url": "chase-1795405548682076382.mp4",
-  "controls_url": "controls-1795405548682076382.json",
+  "url": "replay-1795405930270082635.mp4",
+  "chase_url": "chase-1795405930270082635.mp4",
+  "controls_url": "controls-1795405930270082635.json",
   "course": "2026-practice",
   "physics_engine": "elodin",
   "gates_per_race": 24,
   "history": [
-    {
-      "round": 951,
-      "steps": 18259200,
-      "version": "1795401597718389564",
-      "phase": "IMITATION",
-      "gates": 5,
-      "status": 1,
-      "official_seconds": null,
-      "curriculum_stage": "finish"
-    },
-    {
-      "round": 957,
-      "steps": 18374400,
-      "version": "1795401724811334226",
-      "phase": "IMITATION",
-      "gates": 5,
-      "status": 1,
-      "official_seconds": null,
-      "curriculum_stage": "finish"
-    },
-    {
-      "round": 963,
-      "steps": 18489600,
-      "version": "1795401801248698804",
-      "phase": "IMITATION",
-      "gates": 3,
-      "status": 1,
-      "official_seconds": null,
-      "curriculum_stage": "finish"
-    },
-    {
-      "round": 973,
-      "steps": 18681600,
-      "version": "1795402022720877846",
-      "phase": "IMITATION",
-      "gates": 5,
-      "status": 1,
-      "official_seconds": null,
-      "curriculum_stage": "finish"
-    },
-    {
-      "round": 978,
-      "steps": 18777600,
-      "version": "1795402160187939393",
-      "phase": "IMITATION",
-      "gates": 7,
-      "status": 1,
-      "official_seconds": null,
-      "curriculum_stage": "finish"
-    },
-    {
-      "round": 985,
-      "steps": 18912000,
-      "version": "1795402274717605025",
-      "phase": "IMITATION",
-      "gates": 5,
-      "status": 1,
-      "official_seconds": null,
-      "curriculum_stage": "finish"
-    },
-    {
-      "round": 1005,
-      "steps": 19204800,
-      "version": "1795402607963667187",
-      "phase": "IMITATION",
-      "gates": 3,
-      "status": 1,
-      "official_seconds": null,
-      "curriculum_stage": "finish"
-    },
     {
       "round": 1018,
       "steps": 19360800,
@@ -613,6 +543,76 @@
       "gates": 14,
       "status": 1,
       "official_seconds": null,
+      "curriculum_stage": "finish"
+    },
+    {
+      "round": 1168,
+      "steps": 21124800,
+      "version": "1795405584588418695",
+      "phase": "IMITATION",
+      "gates": 9,
+      "status": 1,
+      "official_seconds": null,
+      "curriculum_stage": "finish"
+    },
+    {
+      "round": 1170,
+      "steps": 21148800,
+      "version": "1795405621046820337",
+      "phase": "IMITATION",
+      "gates": 5,
+      "status": 1,
+      "official_seconds": null,
+      "curriculum_stage": "finish"
+    },
+    {
+      "round": 1172,
+      "steps": 21172800,
+      "version": "1795405683996521261",
+      "phase": "IMITATION",
+      "gates": 11,
+      "status": 1,
+      "official_seconds": null,
+      "curriculum_stage": "finish"
+    },
+    {
+      "round": 1174,
+      "steps": 21196800,
+      "version": "1795405723203239039",
+      "phase": "IMITATION",
+      "gates": 8,
+      "status": 1,
+      "official_seconds": null,
+      "curriculum_stage": "finish"
+    },
+    {
+      "round": 1176,
+      "steps": 21220800,
+      "version": "1795405771460247156",
+      "phase": "IMITATION",
+      "gates": 8,
+      "status": 1,
+      "official_seconds": null,
+      "curriculum_stage": "finish"
+    },
+    {
+      "round": 1178,
+      "steps": 21244800,
+      "version": "1795405833020392142",
+      "phase": "IMITATION",
+      "gates": 14,
+      "status": 1,
+      "official_seconds": null,
+      "curriculum_stage": "finish"
+    },
+    {
+      "round": 1180,
+      "steps": 21268800,
+      "version": "1795405930270082635",
+      "phase": "IMITATION",
+      "gates": 24,
+      "status": 4,
+      "official_seconds": 28.602,
       "curriculum_stage": "finish"
     }
   ],

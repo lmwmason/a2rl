@@ -4,17 +4,10 @@
   "course": "2026-practice",
   "physics_engine": "elodin",
   "gates_per_race": 24,
-  "round": 1166,
-  "steps": 21100800,
+  "round": 1180,
+  "steps": 21268800,
   "curriculum_stage": "finish",
   "recent_gates": [
-    5,
-    5,
-    3,
-    5,
-    7,
-    5,
-    3,
     5,
     4,
     9,
@@ -67,7 +60,14 @@
     6,
     11,
     13,
-    14
+    14,
+    9,
+    5,
+    11,
+    8,
+    8,
+    14,
+    24
   ],
   "recent_finish_times": [
     {
@@ -308,10 +308,10 @@
     },
     {
       "at": 60,
-      "comparison_s": null
+      "comparison_s": 28.602
     }
   ],
-  "finish_rate": 0.0,
-  "collision_rate": 0.9833333333333333,
-  "best_two_lap_seconds": null
+  "finish_rate": 0.016666666666666666,
+  "collision_rate": 0.9666666666666667,
+  "best_two_lap_seconds": 28.602
 }

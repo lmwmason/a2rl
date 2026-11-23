@@ -14,6 +14,7 @@ import numpy as np
 from solver.api import RCCommand
 
 from training.betaflight_link import encode_rc
+from training.inertial import RelativeAttitude
 
 
 contact = lambda: False
@@ -21,7 +22,10 @@ hover = .17
 control_rate = 30
 last_expert_sample = -1
 pilot = None
+relative_attitude = RelativeAttitude()
 forecasts = deque()
+use_late_controller = False
+boundary_ticks = 0
 frames = imu = None
 held = RCCommand()
 last_command = held
@@ -264,7 +268,7 @@ def autopilot(update):
 def choose_command(update, image, ended):
     global pilot, frames, imu, held, last_expert_sample, reference_command
     global student_influence_frames, reduced_assistance_frames, handoff_frames, intervention_ticks
-    global handoff_ready_since
+    global handoff_ready_since, use_late_controller, boundary_ticks
     if ended or update.t < heat_arm_time:
         return RCCommand()
     if update.t < heat_arm_time + .25:
@@ -293,6 +297,8 @@ def choose_command(update, image, ended):
             raise ValueError("Elodin requires an RGB+IMU policy checkpoint.")
         print(f"[A2RL] RGB+IMU policy loaded ({pilot.stack} observations per action)", flush=True)
     image, sensor = policy_observation(image, update)
+    if pilot.imu_channels == 10:
+        sensor = relative_attitude.augment(sensor, update.t)
     if frames is None:
         frames = np.repeat(image[None], pilot.stack, axis=0)
         imu = np.repeat(sensor[None], pilot.stack, axis=0)
@@ -308,11 +314,22 @@ def choose_command(update, image, ended):
             return held
         handoff_frames += 1
     if pilot.action_horizon > 1:
-        forecasts.appendleft(pilot.forecast(frames[None], imu[None])[0])
+        if pilot.protected_prefix:
+            prediction, progress = pilot.forecast_with_boundary(frames[None], imu[None], use_late_controller)
+            if not use_late_controller:
+                boundary_ticks = boundary_ticks + 1 if progress >= .90 else 0
+                if boundary_ticks >= 4:
+                    use_late_controller = True
+                    print(f"[A2RL] Learned route transition at t={update.t:.3f} s", flush=True)
+                    forecasts.clear()
+                    prediction, _ = pilot.forecast_with_boundary(frames[None], imu[None], True)
+        else:
+            prediction = pilot.forecast(frames[None], imu[None])
+        forecasts.appendleft(prediction[0])
         if len(forecasts) > pilot.action_horizon:
             forecasts.pop()
         sticks = np.average([prediction[age] for age, prediction in enumerate(forecasts)],
-                            axis=0, weights=.45 ** np.arange(len(forecasts)))
+                            axis=0, weights=pilot.forecast_decay ** np.arange(len(forecasts)))
     else:
         sticks = pilot.action(frames[None], imu=imu[None])[0]
     if handoff is not None:

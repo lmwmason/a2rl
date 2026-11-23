@@ -3,10 +3,13 @@ from pathlib import Path
 
 import numpy as np
 
+from .inertial import RelativeAttitude
+
 
 class Clip:
-    def __init__(self, path, stack, height, width, with_imu=False, *, preserve_success=False):
+    def __init__(self, path, stack, height, width, with_imu=False, *, preserve_success=False, relative_attitude=False):
         path = Path(path)
+        self.source_name = path.name
         shape = (height, width, 3)
         self.approach_rows = None
         self.gate_numbers = None
@@ -16,6 +19,7 @@ class Clip:
             actions = np.fromfile(path / "actions.f32", dtype="<f4").reshape(-1, 4)
             self.frames = np.memmap(path / "frames.rgb", mode="r", dtype=np.uint8).reshape(-1, *shape)
             gaps = np.zeros(len(actions), dtype=bool)
+            times = np.arange(len(actions)) / 30
             self.weights = np.ones(len(actions), np.float32)
         else:
             with np.load(path, allow_pickle=False) as data:
@@ -58,6 +62,9 @@ class Clip:
             self.imu = np.load(path.with_suffix(".imu.npy"), allow_pickle=False)
             if self.imu.shape != (len(actions), 6) or not np.isfinite(self.imu).all():
                 raise ValueError(f"Malformed synchronized IMU samples for {path}.")
+            if relative_attitude:
+                estimate = RelativeAttitude()
+                self.imu = np.stack([estimate.augment(sample, t) for sample, t in zip(self.imu, times)])
         self.offsets = np.arange(1 - stack, 1)
         self.start = np.maximum.accumulate(np.where(gaps, np.arange(len(gaps)), 0))
         last = len(gaps) - 1
@@ -89,14 +96,19 @@ class Clip:
 
 
 class Demonstrations:
-    def __init__(self, real_paths, sim_paths, stack, height, width, seed, with_imu=False, primary_fraction=.40, gate_labels=False, action_horizon=1, frontier_sampling=False):
-        self.real = [Clip(path, stack, height, width, with_imu) for path in real_paths]
-        self.sim = [Clip(path, stack, height, width, with_imu) for path in sim_paths]
+    def __init__(self, real_paths, sim_paths, stack, height, width, seed, with_imu=False, primary_fraction=.40, gate_labels=False, action_horizon=1, frontier_sampling=False, relative_attitude=False, focus_gates=None, secondary_focus_gates=None):
+        self.real = [Clip(path, stack, height, width, with_imu, relative_attitude=relative_attitude) for path in real_paths]
+        self.sim = [Clip(path, stack, height, width, with_imu, relative_attitude=relative_attitude) for path in sim_paths]
         self.rng = np.random.default_rng(seed)
         self.primary_fraction = primary_fraction
         self.gate_labels = gate_labels
         self.action_horizon = action_horizon
         self.frontier_sampling = frontier_sampling
+        self.focus_gates = focus_gates
+        self.secondary_focus_gates = secondary_focus_gates
+        self.focus_samples = 0
+        self.secondary_focus_samples = 0
+        self.focus_clips = []
         self.independent = []
         self.assisted = []
         self.handoff = []
@@ -116,11 +128,46 @@ class Demonstrations:
                            action_horizon=self.action_horizon)
                 for clip, rows in zip(group, counts) if rows]
 
+    def _focus_batches(self, gates_range, count):
+        if not gates_range or not count:
+            return [], 0
+        first, last = gates_range
+        sources = []
+        seen = set()
+        for group, with_teacher in ((self.independent, False), (self.handoff, True), (self.focus_clips, True)):
+            for clip in group:
+                if clip.source_name in seen:
+                    continue
+                seen.add(clip.source_name)
+                gates = clip.gate_numbers
+                if gates is None:
+                    continue
+                eligible = (gates >= first - 1) & (gates < last)
+                if with_teacher:
+                    eligible &= clip.weights > 1.
+                rows = np.flatnonzero(eligible)
+                if len(rows):
+                    sources.append((clip, rows))
+        if not sources:
+            return [], 0
+        counts = np.bincount(self.rng.integers(len(sources), size=count), minlength=len(sources))
+        batches = [clip.batch(self.rng.choice(rows, size=n), gate_labels=self.gate_labels,
+                              action_horizon=self.action_horizon)
+                   for (clip, rows), n in zip(sources, counts) if n]
+        return batches, count
+
     def sample(self, count):
         has_corrections = self.independent or self.assisted or self.handoff or self.sim
         real_count = (max(1, round(self.primary_fraction * count)) if has_corrections else count) if self.real else 0
         batches = self._sample_group(self.real, real_count) if real_count else []
         remaining = count - real_count
+        focus, self.focus_samples = self._focus_batches(self.focus_gates, min(remaining, round(count * .30)))
+        batches.extend(focus)
+        remaining -= self.focus_samples
+        followup, self.secondary_focus_samples = self._focus_batches(
+            self.secondary_focus_gates, min(remaining, round(count * .15)))
+        batches.extend(followup)
+        remaining -= self.secondary_focus_samples
         if remaining and self.handoff:
             segment_count = round(remaining * .45) if self.independent or self.assisted else remaining
             batches += self._sample_group(self.handoff, segment_count, prioritize_approach=True)

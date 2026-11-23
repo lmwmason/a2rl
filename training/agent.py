@@ -35,7 +35,7 @@ def stick_loss(prediction, labels, confidence):
     weights = torch.from_numpy(confidence).to(prediction.device)
     axis_weights = prediction.new_tensor([1., 2., 1.4, 1.4])
     errors = F.smooth_l1_loss(prediction, target, reduction="none", beta=.12)
-    return (weights * (errors * axis_weights).mean(dim=1)).sum() / weights.sum()
+    return (weights * (errors * axis_weights).mean(dim=1)).sum() / weights.sum().clamp_min(1e-8)
 
 
 def mlp(in_features, out_features):
@@ -90,7 +90,7 @@ class Critic(nn.Module):
 
 class Agent:
     def __init__(self, stack, device, hover_stick, with_imu=False, backbone="cnn",
-                 pretrained=False, action_horizon=1):
+                 pretrained=False, action_horizon=1, imu_channels=6):
         self.device = device
         self.stack = stack
         self.backbone = backbone
@@ -101,7 +101,8 @@ class Agent:
         else:
             raise ValueError(f"Unknown vision backbone: {backbone}")
         self.encoder = encoder.to(device, memory_format=torch.channels_last)
-        self.imu_encoder = (nn.Sequential(nn.Flatten(), nn.Linear(stack * 6, 64), nn.ReLU(),
+        self.imu_channels = imu_channels
+        self.imu_encoder = (nn.Sequential(nn.Flatten(), nn.Linear(stack * imu_channels, 64), nn.ReLU(),
                                           nn.Linear(64, 32), nn.LayerNorm(32)).to(device)
                             if with_imu else None)
         self.actor = mlp(160 if with_imu else 128, 4).to(device)
@@ -113,6 +114,11 @@ class Agent:
         self.actor_opt = torch.optim.Adam(self.actor.parameters(), lr=1e-4)
         self.reference_actor = None
         self.action_horizon = action_horizon
+        self.forecast_decay = .45
+        self.protected_prefix = 0
+        self.boundary_head = None
+        self.late_actor = None
+        self.late_future_actor = None
         self.future_actor = None
         if action_horizon > 1:
             self.future_actor = nn.Linear(self.actor[-1].in_features, (action_horizon - 1) * 4).to(device)
@@ -132,7 +138,7 @@ class Agent:
         if imu is None:
             raise ValueError("This policy requires synchronized gyro and acceleration history.")
         sensor = torch.as_tensor(imu, dtype=torch.float32, device=self.device)
-        scale = sensor.new_tensor([10., 10., 10., 30., 30., 30.])
+        scale = sensor.new_tensor([10., 10., 10., 30., 30., 30.] + [1.] * (self.imu_channels - 6))
         return torch.cat((image, self.imu_encoder((sensor / scale).clamp(-4., 4.))), dim=1)
 
     @torch.no_grad()
@@ -144,18 +150,42 @@ class Agent:
             action = (action + torch.randn_like(action) * noise).clamp(-1., 1.)
         return action.cpu().numpy()
 
-    def action_sequence(self, features):
-        hidden = self.actor[:-1](features)
-        current = self.actor[-1](hidden).unsqueeze(1)
-        if self.future_actor is None:
+    def configure_protected_prefix(self, gates):
+        if self.protected_prefix:
+            if gates != self.protected_prefix:
+                raise ValueError("Checkpoint route boundary does not match the requested prefix.")
+            return
+        self.protected_prefix = gates
+        self.boundary_head = nn.Sequential(nn.Linear(self.actor[0].in_features, 64),
+                                           nn.ReLU(), nn.Linear(64, 1)).to(self.device)
+        self.late_actor = deepcopy(self.actor)
+        self.late_future_actor = deepcopy(self.future_actor)
+        for module in (self.encoder, self.imu_encoder, self.actor, self.future_actor):
+            if module is not None:
+                module.requires_grad_(False)
+                module.eval()
+
+    def action_sequence(self, features, *, late=False):
+        actor = self.late_actor if late else self.actor
+        future_actor = self.late_future_actor if late else self.future_actor
+        hidden = actor[:-1](features)
+        current = actor[-1](hidden).unsqueeze(1)
+        if future_actor is None:
             return current.tanh()
-        future = current + self.future_actor(hidden).reshape(-1, self.action_horizon - 1, 4)
+        future = current + future_actor(hidden).reshape(-1, self.action_horizon - 1, 4)
         return torch.cat((current, future), dim=1).tanh()
 
     @torch.no_grad()
     def forecast(self, frames, imu):
         obs = pixel_tensor(frames, self.device).float() / 255. - .5
         return self.action_sequence(self.policy_features(obs, imu)).cpu().numpy()
+
+    @torch.no_grad()
+    def forecast_with_boundary(self, frames, imu, late):
+        obs = pixel_tensor(frames, self.device).float() / 255. - .5
+        features = self.policy_features(obs, imu)
+        probability = self.boundary_head(features).sigmoid().item() if not late else 1.
+        return self.action_sequence(features, late=late).cpu().numpy(), probability
 
     def update(self, batch, noise, *, update_actor=True, demonstration=None, imitation_weight=0.):
         obs, action, reward, discount, next_obs, *inertial = batch
@@ -212,9 +242,18 @@ class Agent:
                   "target": self.target.state_dict()}
         if self.imu_encoder is not None:
             params["imu_encoder"] = self.imu_encoder.state_dict()
+            if self.imu_channels != 6:
+                params["imu_channels"] = self.imu_channels
         if self.future_actor is not None:
             params["future_actor"] = self.future_actor.state_dict()
             params["action_horizon"] = self.action_horizon
+            params["forecast_decay"] = self.forecast_decay
+        if self.protected_prefix:
+            params.update(protected_prefix=self.protected_prefix,
+                          boundary_head=self.boundary_head.state_dict(),
+                          late_actor=self.late_actor.state_dict())
+            if self.late_future_actor is not None:
+                params["late_future_actor"] = self.late_future_actor.state_dict()
         if self.backbone != "cnn":
             params["vision_backbone"] = self.backbone
             params["frame_stack"] = self.stack
@@ -229,12 +268,23 @@ class Agent:
         if ("imu_encoder" in params) != (self.imu_encoder is not None):
             raise ValueError("Checkpoint sensor layout does not match this policy.")
         if self.imu_encoder is not None:
+            if params.get("imu_channels", 6) != self.imu_channels:
+                raise ValueError("Checkpoint IMU feature layout does not match this policy.")
             self.imu_encoder.load_state_dict(params["imu_encoder"])
         self.actor.load_state_dict(params["actor"])
         if "future_actor" in params:
             if self.future_actor is None or params.get("action_horizon") != self.action_horizon:
                 raise ValueError("Checkpoint prediction horizon does not match this policy.")
             self.future_actor.load_state_dict(params["future_actor"])
+            self.forecast_decay = float(params.get("forecast_decay", .45))
+            if not 0. <= self.forecast_decay <= 1.:
+                raise ValueError("Checkpoint forecast decay must be between zero and one.")
+        if "protected_prefix" in params:
+            self.configure_protected_prefix(params["protected_prefix"])
+            self.boundary_head.load_state_dict(params["boundary_head"])
+            self.late_actor.load_state_dict(params["late_actor"])
+            if self.late_future_actor is not None:
+                self.late_future_actor.load_state_dict(params["late_future_actor"])
         for model, key in ((self.critic, "critic"), (self.target, "target")):
             state = params[key]
             if self.imu_encoder is not None and state["q1.0.weight"].shape[1] == 132:
@@ -271,6 +321,8 @@ class Agent:
         self.encoder.load_state_dict(params["encoder"])
         self.encoder.requires_grad_(False)
         if self.imu_encoder is not None:
+            if params.get("imu_channels", 6) != self.imu_channels:
+                raise ValueError("Checkpoint IMU feature layout does not match this policy.")
             self.imu_encoder.load_state_dict(params["imu_encoder"])
             self.imu_encoder.requires_grad_(False)
         self.actor_opt.param_groups[0]["lr"] = 1e-5
@@ -299,8 +351,20 @@ def extend_cnn_history(params, stack):
     expanded["encoder"] = {**params["encoder"], "0.weight": F.pad(rgb, (0, 0, 0, 0, 3 * extra, 0))}
     if "imu_encoder" in params:
         imu = params["imu_encoder"]["1.weight"]
-        expanded["imu_encoder"] = {**params["imu_encoder"], "1.weight": F.pad(imu, (6 * extra, 0))}
+        expanded["imu_encoder"] = {**params["imu_encoder"], "1.weight": F.pad(imu, (params.get("imu_channels", 6) * extra, 0))}
     return expanded
+
+
+def extend_imu_features(params, channels):
+    previous = params.get("imu_channels", 6)
+    if channels == previous:
+        return params
+    if previous != 6 or channels != 10 or "imu_encoder" not in params:
+        raise ValueError("Attitude features require a six-channel IMU checkpoint.")
+    state = params["imu_encoder"]
+    old = state["1.weight"].reshape(-1, checkpoint_stack(params), previous)
+    padded = F.pad(old, (0, channels - previous)).flatten(1)
+    return {**params, "imu_channels": channels, "imu_encoder": {**state, "1.weight": padded}}
 
 
 def load_policy(weights):
@@ -308,6 +372,6 @@ def load_policy(weights):
     stack = checkpoint_stack(params)
     agent = Agent(stack, "cpu", 0., with_imu="imu_encoder" in params,
                   backbone=params.get("vision_backbone", "cnn"),
-                  action_horizon=params.get("action_horizon", 1))
+                  action_horizon=params.get("action_horizon", 1), imu_channels=params.get("imu_channels", 6))
     agent.set_weights(params)
     return agent

@@ -6,9 +6,10 @@ from tempfile import TemporaryDirectory
 import numpy as np
 import torch
 
-from training.agent import Agent, extend_cnn_history
+from training.agent import Agent, extend_cnn_history, extend_imu_features
 from training.betaflight_link import timed_mean_throttle
 from training.demonstrations import Clip, Demonstrations
+from training.inertial import RelativeAttitude
 from training.replay import Replay
 from training.sim import CameraRenderer, gate_count, load_sim
 from training.telemetry import finish_time_history
@@ -105,6 +106,22 @@ class DemonstrationTest(unittest.TestCase):
         self.assertTrue(np.all((rows[:32] >= 60) & (rows[:32] < 117)))
 
 
+    def test_focus_batches_stay_in_requested_gate_range(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "clip.npz"
+            gates = np.repeat(np.arange(8), 10)
+            frames = np.zeros((len(gates), 1, 1, 3), dtype=np.uint8)
+            actions = np.tile(gates[:, None] / 10, (1, 4)).astype(np.float32)
+            np.savez(path, frames=frames, actions=actions, timestamps=np.arange(len(gates)) / 30,
+                     weights=np.ones(len(gates), np.float32), next_gate=gates)
+            demos = Demonstrations([path], [], 2, 1, 1, 3, primary_fraction=.25,
+                                   gate_labels=True, focus_gates=[3, 5])
+            demos.independent = [Clip(path, 2, 1, 1)]
+            _, _, _, labels = demos.sample(80)
+        self.assertEqual(demos.focus_samples, 24)
+        self.assertTrue(np.all(np.isin(labels[20:44], [2, 3, 4])))
+
+
 class TelemetryTest(unittest.TestCase):
     def test_finish_history_keeps_unfinished_evaluations_as_gaps(self):
         series = finish_time_history([{"steps": 0, "official_start_seconds": 111.7},
@@ -140,6 +157,20 @@ class SharedCameraTest(unittest.TestCase):
 
 
 class QualifiedPolicyTest(unittest.TestCase):
+    def test_gyro_attitude_and_imu_weight_extension(self):
+        estimate = RelativeAttitude()
+        angular_rate = np.array([0, 0, np.pi / 2, 0, 0, 0], np.float32)
+        for tick in range(31):
+            features = estimate.augment(angular_rate, tick / 30)
+        np.testing.assert_allclose(features[6:], [0, 0, np.sqrt(.5), np.sqrt(.5)], atol=1e-6)
+        original = Agent(2, "cpu", 0., with_imu=True)
+        expanded = Agent(2, "cpu", 0., with_imu=True, imu_channels=10)
+        expanded.set_weights(extend_imu_features(original.weights(), 10))
+        images = np.zeros((1, 2, 16, 12, 3), np.uint8)
+        imus = np.repeat(features[None, None], 2, axis=1)
+        np.testing.assert_allclose(expanded.action(images, imu=imus),
+                                   original.action(images, imu=imus[..., :6]), atol=1e-6)
+
     def test_extended_history_preserves_initial_cnn_policy(self):
         old = Agent(2, "cpu", 0., with_imu=True)
         new = Agent(6, "cpu", 0., with_imu=True)

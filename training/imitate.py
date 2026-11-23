@@ -8,7 +8,7 @@ from time import sleep
 import numpy as np
 import torch
 
-from .agent import Agent, extend_cnn_history, pixel_tensor, random_shift, stick_loss
+from .agent import Agent, extend_cnn_history, extend_imu_features, pixel_tensor, random_shift, stick_loss
 from .demonstrations import Clip, Demonstrations
 
 
@@ -38,10 +38,18 @@ def main():
     parser.add_argument("--updates", type=int, default=1400)
     parser.add_argument("--preserve-successful-prefixes", action="store_true",
                         help="Retain effective student actions in independently cleared gate approaches.")
+    parser.add_argument("--protect-prefix-through", type=int, default=0,
+                        help="Keep the early student fixed and train a later racing controller with a learned boundary.")
     parser.add_argument("--anchor-prefix", type=Path,
                         help="Preserve a repeatably cleared early route using a frozen student checkpoint.")
     parser.add_argument("--anchor-gates", type=int, default=6)
     parser.add_argument("--anchor-weight", type=float, default=.65)
+    parser.add_argument("--focus-directory", type=Path,
+                        help="Keep these gate-handoff recordings available after the rolling buffer advances.")
+    parser.add_argument("--focus-gates", type=int, nargs=2, metavar=("FIRST", "LAST"),
+                        help="Reserve completion batches for live corrections in this inclusive gate range.")
+    parser.add_argument("--secondary-focus-gates", type=int, nargs=2, metavar=("FIRST", "LAST"),
+                        help="Reserve a smaller separate portion of completion batches for a later gate range.")
     parser.add_argument("--frontier-sampling", action="store_true",
                         help="Sample independent corrections more often when the student reached later gates.")
     parser.add_argument("--action-horizon", type=int, default=1,
@@ -57,12 +65,22 @@ def main():
     parser.add_argument("--extend-history", action="store_true",
                         help="Start a larger RGB+IMU window from the latest CNN weights.")
     parser.add_argument("--offline", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--relative-attitude", action="store_true", help="Add attitude integrated from the observed gyro.")
     parser.add_argument("--imu", action="store_true", help="Fuse synchronized gyro and accelerometer samples with RGB.")
     parser.add_argument("--backbone", choices=("cnn", "mobilenet-v3-small"), default="cnn")
     parser.add_argument("--eval-every", type=int, default=200)
     args = parser.parse_args()
     if min(args.batch, args.stack, args.eval_every) <= 0 or args.updates < 0:
         parser.error("Counts must be positive.")
+    if not 0 <= args.protect_prefix_through < 24:
+        parser.error("The protected prefix must end before the last gate.")
+    if args.protect_prefix_through and (not args.imu or args.action_horizon < 2 or args.anchor_prefix):
+        parser.error("A protected prefix needs RGB+IMU forecasts and its own frozen reference.")
+    if args.focus_directory and not (args.focus_gates and args.imu):
+        parser.error("A focus directory requires RGB+IMU and an explicit gate range.")
+    for focus in (args.focus_gates, args.secondary_focus_gates):
+        if focus and not 1 <= focus[0] <= focus[1] <= 24:
+            parser.error("Focus gates must be an ordered range within 1–24.")
     if args.anchor_prefix and (not 1 <= args.anchor_gates <= 23 or not np.isfinite(args.anchor_weight)
                                or args.anchor_weight <= 0):
         parser.error("Anchored route prefix and weight must be positive.")
@@ -80,6 +98,8 @@ def main():
         parser.error("The student correction feed requires evaluator-controlled offline RGB+IMU training.")
     if args.completion_marker and not args.until:
         parser.error("Pace imitation requires evaluator-controlled offline training.")
+    if args.relative_attitude and not args.imu:
+        parser.error("Relative attitude requires synchronized IMU observations.")
     if args.device == "cuda" and not torch.cuda.is_available():
         raise SystemExit("CUDA is unavailable in this Python environment.")
     torch.manual_seed(args.seed)
@@ -92,12 +112,24 @@ def main():
     resumed = bool(args.until and latest.is_file())
     source = latest if resumed else args.initialize
     weights = torch.load(source, map_location="cpu", weights_only=True) if source else None
+    channels = 10 if args.relative_attitude else 6
+
+    def adapt_weights(params):
+        resized = extend_cnn_history(params, stack) if args.extend_history else params
+        return extend_imu_features(resized, channels) if args.relative_attitude else resized
+
     agent = Agent(stack, args.device, -.66, with_imu=args.imu,
                   backbone=weights.get("vision_backbone", "cnn") if weights else args.backbone,
                   pretrained=weights is None and args.backbone != "cnn",
-                  action_horizon=args.action_horizon)
+                  action_horizon=args.action_horizon, imu_channels=channels)
     if weights is not None:
-        agent.set_weights(extend_cnn_history(weights, stack) if args.extend_history else weights)
+        agent.set_weights(adapt_weights(weights))
+    if args.protect_prefix_through:
+        if weights is None:
+            parser.error("Initialize the protected prefix from an independently evaluated student.")
+        agent.configure_protected_prefix(args.protect_prefix_through)
+    if agent.protected_prefix != args.protect_prefix_through:
+        parser.error("Pass the protected prefix length recorded in the checkpoint.")
     progress = weights.get("training_progress", {}) if resumed else {}
     first_round, first_step, first_samples = (progress.get(key, 0) for key in ("round", "updates", "steps"))
     anchor = None
@@ -105,25 +137,34 @@ def main():
         anchor_weights = torch.load(args.anchor_prefix, map_location="cpu", weights_only=True)
         anchor = Agent(stack, args.device, 0., with_imu=args.imu,
                        backbone=anchor_weights.get("vision_backbone", "cnn"),
-                       action_horizon=anchor_weights.get("action_horizon", 1))
-        anchor.set_weights(extend_cnn_history(anchor_weights, stack))
+                       action_horizon=anchor_weights.get("action_horizon", 1), imu_channels=channels)
+        anchor.set_weights(adapt_weights(anchor_weights))
     demos = Demonstrations(args.real, args.sim, stack, height, width, args.seed, with_imu=args.imu,
-                           primary_fraction=args.primary_fraction, gate_labels=args.gate_progress_loss > 0 or anchor is not None,
-                           action_horizon=args.action_horizon, frontier_sampling=args.frontier_sampling)
+                           primary_fraction=args.primary_fraction, gate_labels=args.gate_progress_loss > 0 or anchor is not None or agent.protected_prefix > 0,
+                           action_horizon=args.action_horizon, frontier_sampling=args.frontier_sampling,
+                           relative_attitude=args.relative_attitude, focus_gates=args.focus_gates,
+                           secondary_focus_gates=args.secondary_focus_gates)
+    if args.focus_directory:
+        selected = sorted(path for path in args.focus_directory.glob("*.npz") if not path.name.endswith(".tmp.npz"))
+        demos.focus_clips = [Clip(path, stack, height, width, with_imu=True, relative_attitude=args.relative_attitude)
+                             for path in selected]
     if args.until:
         print(json.dumps({"imitation_datasets": [
             {"path": str(path), "frames": len(clip)}
             for path, clip in zip(args.real + args.sim, demos.real + demos.sim)
         ], "batch": args.batch, "primary_fraction": args.primary_fraction, "device": args.device,
-           "frame_stack": stack, "action_horizon": args.action_horizon}), flush=True)
+           "frame_stack": stack, "action_horizon": args.action_horizon, "imu_channels": channels}), flush=True)
     if {path.resolve() for path in args.real + args.sim} & {path.resolve() for path in args.held_out}:
         parser.error("Hold out complete flights from training.")
-    held_out = [Clip(path, stack, height, width, args.imu) for path in args.held_out]
+    held_out = [Clip(path, stack, height, width, args.imu, relative_attitude=args.relative_attitude) for path in args.held_out]
     parameters = [*agent.encoder.parameters(), *agent.actor.parameters()]
     if agent.imu_encoder is not None:
         parameters.extend(agent.imu_encoder.parameters())
     if agent.future_actor is not None:
         parameters.extend(agent.future_actor.parameters())
+    if agent.protected_prefix:
+        parameters = [*agent.boundary_head.parameters(), *agent.late_actor.parameters(),
+                      *agent.late_future_actor.parameters()]
     gate_head = None
     if args.gate_progress_loss:
         if not args.imu:
@@ -140,6 +181,8 @@ def main():
     stage = (progress.get("curriculum_stage") or "finish") if args.completion_marker else None
     if stage == "pace":
         demos.primary_fraction = .80
+        demos.focus_gates = None
+        demos.secondary_focus_gates = None
     with (args.out / "metrics.jsonl").open("a" if resumed else "w", encoding="utf-8", buffering=1) as log:
         for step in range(1, args.updates + 1) if args.updates else count(1):
             if args.until and args.until.is_file():
@@ -159,7 +202,7 @@ def main():
                 handoff = [path for path in recent if path.stem.endswith("-handoff")][-8:]
                 correction_clips = {
                     path: correction_clips.get(path) or Clip(
-                        path, stack, height, width, with_imu=True,
+                        path, stack, height, width, with_imu=True, relative_attitude=args.relative_attitude,
                         preserve_success=args.preserve_successful_prefixes and stage == "finish" and path in independent)
                     for path in (*independent, *assisted, *handoff)
                 }
@@ -168,18 +211,20 @@ def main():
                 demos.handoff = [correction_clips[path] for path in handoff] if stage == "finish" else []
                 last_correction = recent[-1].name
             if (step - 1) % args.eval_every == 0 and stage == "finish" and args.completion_marker.is_file():
-                if args.extend_history:
+                if args.extend_history or args.relative_attitude:
                     qualified = torch.load(args.completion_marker, map_location="cpu", weights_only=True)
-                    agent.set_weights(extend_cnn_history(qualified, stack))
+                    agent.set_weights(adapt_weights(qualified))
                 else:
                     agent.load(args.completion_marker)
                 optimizer.state.clear()
                 best_rank = None
                 demos.primary_fraction = .80
                 demos.handoff = []
+                demos.focus_gates = None
+                demos.secondary_focus_gates = None
                 if args.preserve_successful_prefixes and args.correction_directory:
                     correction_clips.clear()
-                    demos.independent = [Clip(path, stack, height, width, with_imu=True) for path in independent]
+                    demos.independent = [Clip(path, stack, height, width, with_imu=True, relative_attitude=args.relative_attitude) for path in independent]
                 stage = "pace"
                 print(json.dumps({"curriculum_stage": stage, "primary_fraction": demos.primary_fraction}),
                       flush=True)
@@ -187,6 +232,7 @@ def main():
             imu = extra[0] if args.imu else None
             gate_loss = None
             anchor_loss = None
+            boundary_loss = None
             nominal_completion = stage == "finish"
             obs = random_shift(pixel_tensor(frames, args.device).float() / 255. - 0.5,
                                pad=1 if nominal_completion else 3)
@@ -196,20 +242,27 @@ def main():
             offset = torch.empty_like(scale).uniform_(-brightness, brightness)
             obs = (obs * scale + offset).clamp(-.5, .5)
             features = agent.policy_features(obs, imu)
+            if gate_head is not None or anchor is not None or agent.protected_prefix:
+                next_gate = torch.as_tensor(extra[int(args.imu)], dtype=torch.long, device=args.device)
+            if agent.protected_prefix:
+                valid = (next_gate >= 0) & (next_gate < 12)
+                later = next_gate >= agent.protected_prefix
+                logits = agent.boundary_head(features).flatten()
+                errors = torch.nn.functional.binary_cross_entropy_with_logits(logits, later.float(), reduction="none")
+                boundary_loss = (errors * valid).sum() / valid.sum().clamp(min=1)
+                weight = weight * later.cpu().numpy()
             if agent.future_actor is not None:
-                actions = agent.action_sequence(features)
+                actions = agent.action_sequence(features, late=agent.protected_prefix > 0)
                 action = actions[:, 0]
             else:
                 action = agent.actor(features).tanh()
             bc_loss = stick_loss(action, labels, weight)
-            loss = bc_loss
+            loss = bc_loss + .04 * boundary_loss if boundary_loss is not None else bc_loss
             if agent.future_actor is not None:
                 targets = extra[-1].reshape(-1, 4)
                 future_loss = stick_loss(actions[:, 1:].reshape(-1, 4), targets,
                                          np.repeat(weight, args.action_horizon - 1))
                 loss = loss + .5 * future_loss
-            if gate_head is not None or anchor is not None:
-                next_gate = torch.as_tensor(extra[int(args.imu)], dtype=torch.long, device=args.device)
             if anchor is not None and stage != "pace":
                 prefix = (next_gate >= 0) & (next_gate < args.anchor_gates)
                 with torch.no_grad():
@@ -237,6 +290,8 @@ def main():
             steps = first_samples + step * args.batch if args.until else step
             metrics.update(update=updates, steps=steps, round=round_no,
                            bc_loss=float(bc_loss.detach()), real_holdout_mae=real_error, offline=True)
+            if boundary_loss is not None:
+                metrics["route_boundary_loss"] = float(boundary_loss.detach())
             if anchor_loss is not None:
                 metrics["prefix_anchor_loss"] = float(anchor_loss.detach())
             if agent.future_actor is not None:
@@ -250,6 +305,11 @@ def main():
                                assisted_correction_clips=len(demos.assisted),
                                handoff_correction_clips=len(demos.handoff),
                                preserved_successful_frames=sum(clip.preserved_rows for clip in demos.independent))
+            if demos.focus_gates:
+                metrics.update(focus_gates=demos.focus_gates, focused_samples=demos.focus_samples)
+            if demos.secondary_focus_gates:
+                metrics.update(secondary_focus_gates=demos.secondary_focus_gates,
+                               secondary_focused_samples=demos.secondary_focus_samples)
             if stage:
                 metrics.update(curriculum_stage=stage, primary_fraction=demos.primary_fraction)
             print(json.dumps(metrics), flush=True)

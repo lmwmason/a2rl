@@ -77,7 +77,7 @@ def fit_segment_directions(paths, checkpoint, device, gates):
     groups = [observations(path, agent, gates) for path in paths]
     hidden, labels = (torch.cat(group) for group in zip(*groups))
     if not torch.all(labels.amax(dim=0) > .5):
-        raise ValueError("Calibration flights must contain both gate approaches")
+        raise ValueError("Calibration flights must contain every selected gate approach")
     design = torch.cat((hidden, torch.ones_like(hidden[:, :1])), dim=1)
     weights = (1 + 3 * labels.amax(dim=1)).sqrt()[:, None]
     features = design * weights
@@ -99,11 +99,16 @@ def move_actor(policy, directions, controls):
     return {**policy, "actor": actor}
 
 
-def search_controls(iteration, rng):
+def search_controls(iteration, rng, gate_count=2):
     # The scale schedule keeps probing beyond small changes after failed iterations.
     scale = (.018, .035, .065, .10)[(iteration - 1) % 4]
-    jitter = torch.randn((2, 4), generator=rng).clamp(-2., 2.) * .16
-    controls = [*CONTROL_DIRECTIONS, CONTROL_DIRECTIONS[(iteration - 1) % 3] + jitter]
+    families = CONTROL_DIRECTIONS
+    if gate_count == 4:
+        # Treat the two gate pairs independently while retaining the shared actor.
+        second = families.roll(1 + (iteration - 1) % 2, dims=0)
+        families = torch.cat((families, second), dim=1)
+    jitter = torch.randn((gate_count, 4), generator=rng).clamp(-2., 2.) * .16
+    controls = [*families, families[(iteration - 1) % 3] + jitter]
     return [scale * sign * family for family in controls for sign in (1, -1)], scale
 
 
@@ -172,7 +177,8 @@ def run(args):
             side = STARTS[(iteration - 1) % len(STARTS)]
             round_dir = output / "rounds" / f"{iteration}-segment"
             round_dir.mkdir(parents=True, exist_ok=True)
-            controls, scale = search_controls(iteration, torch.Generator().manual_seed(args.seed + iteration))
+            controls, scale = search_controls(
+                iteration, torch.Generator().manual_seed(args.seed + iteration), len(args.gates))
             trials = [round_dir / f"policy-{i}.pt" for i in range(1 + len(controls))]
             for path, params in zip(trials, [policy, *(move_actor(policy, directions, c) for c in controls)]):
                 save_checkpoint(path, params)
@@ -241,14 +247,15 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for argument in ("initial", "run", "harness", "firmware"):
         parser.add_argument(f"--{argument}", type=Path, required=True)
-    parser.add_argument("--gates", nargs=2, type=int, default=[5, 6])
+    parser.add_argument("--gates", nargs="+", type=int, default=[5, 6])
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--port-offset", type=int, default=35000)
     parser.add_argument("--seed", type=int, default=20261123)
     parser.add_argument("--stop-after-round", type=int, default=0)
     args = parser.parse_args()
-    if len(set(args.gates)) != 2 or any(not 1 <= gate <= 12 for gate in args.gates):
-        parser.error("--gates requires two distinct 1-based gate numbers")
+    if (len(args.gates) not in (2, 4) or len(set(args.gates)) != len(args.gates)
+            or any(not 1 <= gate <= 12 for gate in args.gates)):
+        parser.error("--gates requires one or two pairs of distinct 1-based gate numbers")
     if not 1 <= args.port_offset <= 49200 or args.stop_after_round < 0:
         parser.error("Invalid SITL port range or stopping round")
     if not args.initial.is_file() or not os.access(args.firmware, os.X_OK):

@@ -284,8 +284,11 @@ def watch(args):
                 for index, side in enumerate(STARTS):
                     session = trial / str(index)
                     correction_folder = args.rollout_corrections or args.launch_corrections
-                    correction = (correction_folder / f"{clip_prefix}.npz"
-                                  if correction_folder and phase == "IMITATION" and index == 0 else None)
+                    correction = None
+                    if correction_folder and (index == 0 and phase == "IMITATION"
+                                              or stage == "pace" and args.rollout_corrections):
+                        start_suffix = f"-start-{index}" if index else ""
+                        correction = correction_folder / f"{clip_prefix}{start_suffix}.npz"
                     seconds = FINISH_WINDOW if phase == "IMITATION" else 35
                     if handoff_enabled and index == 0:
                         nominal_profile = {key: value for key, value in profile.items() if key != "handoff"}

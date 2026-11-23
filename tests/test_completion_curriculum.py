@@ -68,6 +68,8 @@ def test_curriculum_requires_a_pace_trained_checkpoint_before_rl(tmp_path, monke
         if stage == "pace":
             assert kwargs["seconds"] > 30
             assert kwargs["max_gate_gap"] == 10.
+            suffix = "" if side == 0 else "-start-1" if side < 0 else "-start-2"
+            assert correction.name.endswith(f"-pace{suffix}.npz")
             assert (run / FINISH_MARKER).is_file()
             assert not (run / PACE_MARKER).is_file()
             if checkpoint == "finish":

@@ -23,6 +23,7 @@ held = RCCommand()
 last_command = held
 expert = None
 shadow_expert = False
+record_full_rollout = False
 camera = None
 heat = None
 heat_sample = -1
@@ -89,21 +90,21 @@ class CameraFeed:
         if self.path:
             self.actions.append(mode2_sticks(command))
 
-    def record_demonstration(self, image, update, command):
+    def record_demonstration(self, image, update, command, weight=1.):
         if self.dataset and update.t >= .75 and command.arm >= 1700:
             frame, inertial = policy_observation(image, update)
-            self.samples.append((frame, inertial, update.t, mode2_sticks(command)))
+            self.samples.append((frame, inertial, update.t, mode2_sticks(command), weight))
 
     def save_demonstration(self):
         if self.dataset and self.samples:
-            frames, inertial, times, actions = zip(*self.samples)
+            frames, inertial, times, actions, weights = zip(*self.samples)
             self.dataset.parent.mkdir(parents=True, exist_ok=True)
             np.save(self.dataset.with_suffix(".imu.npy"), np.asarray(inertial, dtype=np.float32))
             temporary = self.dataset.with_suffix(".tmp.npz")
             np.savez_compressed(temporary, frames=np.asarray(frames),
                                 actions=np.asarray(actions, dtype=np.float32),
                                 timestamps=np.asarray(times),
-                                weights=np.ones(len(times), dtype=np.float32))
+                                weights=np.asarray(weights, dtype=np.float32))
             temporary.replace(self.dataset)
             print(f"[A2RL] Saved {len(times)} RGB/IMU/Mode 2 samples to {self.dataset}", flush=True)
 
@@ -185,8 +186,9 @@ def autopilot(update):
     if image is not None and expert is not None and not ended:
         if not shadow_expert:
             camera.record_demonstration(image, update, last_command)
-        elif .75 <= update.t <= 3.75 and update.last_gate_passed < 0:
-            camera.record_demonstration(image, update, expert(update))
+        elif update.t >= .75 and (record_full_rollout or (update.t <= 3.75 and update.last_gate_passed < 0)):
+            weight = 2. if record_full_rollout and update.last_gate_passed >= 0 else 1.
+            camera.record_demonstration(image, update, expert(update), weight)
     return last_command
 
 

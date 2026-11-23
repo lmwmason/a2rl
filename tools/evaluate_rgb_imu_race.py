@@ -44,6 +44,7 @@ def evaluate(args, weights, session, side, correction=None):
     }
     if correction is not None:
         environment["A2RL_ELODIN_DEMONSTRATION"] = str(correction)
+        environment["A2RL_ELODIN_CORRECTION_SCOPE"] = "rollout" if args.rollout_corrections else "launch"
     (args.out / "assets").mkdir(exist_ok=True)
     with (session / "flight.log").open("wb") as log:
         script = str(ROOT / "tools/elodin_a2rl.py")
@@ -166,8 +167,9 @@ def watch(args):
                 qualified = True
                 for index, side in enumerate(STARTS):
                     session = args.out / digest / str(index)
-                    correction = (args.launch_corrections / f"{digest}.npz"
-                                  if args.launch_corrections and phase == "IMITATION" and index == 0 else None)
+                    correction_folder = args.rollout_corrections or args.launch_corrections
+                    correction = (correction_folder / f"{digest}.npz"
+                                  if correction_folder and phase == "IMITATION" and index == 0 else None)
                     result = evaluate(args, weights, session, side, correction)
                     if index == 0:
                         publish_replay(args.public, session, phase, result, progress)
@@ -198,7 +200,9 @@ def main():
     source.add_argument("--local-run", type=Path)
     parser.add_argument("--remote-run")
     parser.add_argument("--public", type=Path, help="Publish rendered student evaluation artifacts here.")
-    parser.add_argument("--launch-corrections", type=Path, help="Record teacher corrections on student launches.")
+    corrections = parser.add_mutually_exclusive_group()
+    corrections.add_argument("--launch-corrections", type=Path, help="Record teacher corrections on student launches.")
+    corrections.add_argument("--rollout-corrections", type=Path, help="Record teacher labels throughout a student's flight.")
     parser.add_argument("--harness", type=Path, required=True)
     parser.add_argument("--elodin")
     parser.add_argument("--in-process", action="store_true", help="Run the Elodin JAX model without a telemetry database.")
@@ -214,6 +218,8 @@ def main():
         args.public = args.public.resolve()
     if args.launch_corrections:
         args.launch_corrections = args.launch_corrections.resolve()
+    if args.rollout_corrections:
+        args.rollout_corrections = args.rollout_corrections.resolve()
     args.harness = args.harness.resolve()
     args.out = args.out.resolve()
     args.out.mkdir(parents=True, exist_ok=True)

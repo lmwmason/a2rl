@@ -289,6 +289,7 @@ def main():
     if teacher and policy:
         raise ValueError("Select one pilot for Elodin validation.")
     elodin_policy.shadow_expert = bool(policy and dataset)
+    elodin_policy.record_full_rollout = os.environ.get("A2RL_ELODIN_CORRECTION_SCOPE") == "rollout"
     if teacher or elodin_policy.shadow_expert:
         elodin_policy.configure_expert(lib, season2)
     heading = radians(heading)

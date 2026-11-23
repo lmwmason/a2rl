@@ -20,15 +20,10 @@ qualified="$run/imitation-qualified.pt"
 recorded="$run/speed-qualified.pt"
 
 if [[ ! -s "$qualified" ]]; then
-    shopt -s nullglob
-    corrections=()
-    for clip in "$run"/firmware-launch/*.npz; do
-        [[ "$clip" == *.tmp.npz ]] || corrections+=("$clip")
-    done
     "$python" -u -m training.imitate --device "$device" --imu --stack 8 --offline \
-        --initialize "$seed" --real "$@" --sim "${corrections[@]}" --out "$imitation" \
-        --until "$qualified" --updates 0 --eval-every 150 --batch 128 --learning-rate 5e-5 \
-        --primary-fraction .75
+        --initialize "$seed" --real "$@" --out "$imitation" \
+        --correction-directory "$run/firmware-recovery" --until "$qualified" \
+        --updates 0 --eval-every 150 --batch 128 --learning-rate 5e-5 --primary-fraction .60
 fi
 
 export A2RL_REWARD_PROFILE=pace

@@ -3,6 +3,7 @@ import argparse
 from itertools import count
 import json
 from pathlib import Path
+from time import sleep
 
 import numpy as np
 import torch
@@ -31,6 +32,8 @@ def main():
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--initialize", type=Path, help="Start from an existing policy checkpoint.")
     parser.add_argument("--until", type=Path, help="Keep training offline until the evaluator writes this file.")
+    parser.add_argument("--correction-directory", type=Path,
+                        help="Train one round for each newly recorded student flight.")
     parser.add_argument("--device", choices=("cuda", "cpu"), default="cuda")
     parser.add_argument("--updates", type=int, default=1400)
     parser.add_argument("--learning-rate", type=float, default=3e-4)
@@ -55,6 +58,8 @@ def main():
         parser.error("Use a positive learning rate and offline mode for evaluator-controlled training.")
     if not 0 < args.primary_fraction <= 1:
         parser.error("The primary dataset fraction must be greater than zero and at most one.")
+    if args.correction_directory and not (args.offline and args.imu and args.until):
+        parser.error("The student correction feed requires evaluator-controlled offline RGB+IMU training.")
     if args.offline and args.official_eval:
         parser.error("Official Rust evaluation is unavailable in offline mode.")
     if args.device == "cuda" and not torch.cuda.is_available():
@@ -94,11 +99,29 @@ def main():
     run = None if args.offline else Environment(lib, width, height)
     args.out.mkdir(parents=True, exist_ok=True)
     best_rank = None
+    correction_clips = {}
+    last_correction = progress.get("last_correction")
     try:
         with (args.out / "metrics.jsonl").open("a" if resumed else "w", encoding="utf-8", buffering=1) as log:
             for step in range(1, args.updates + 1) if args.updates else count(1):
                 if args.until and args.until.is_file():
                     break
+                if args.correction_directory and (step - 1) % args.eval_every == 0:
+                    while not args.until.is_file():
+                        complete = (path for path in args.correction_directory.glob("*.npz")
+                                    if not path.name.endswith(".tmp.npz"))
+                        recent = sorted(complete, key=lambda path: path.stat().st_mtime_ns)[-12:]
+                        if recent and recent[-1].name != last_correction:
+                            break
+                        sleep(1)
+                    if args.until.is_file():
+                        break
+                    correction_clips = {
+                        path: correction_clips.get(path) or Clip(path, stack, height, width, with_imu=True)
+                        for path in recent
+                    }
+                    demos.sim = list(correction_clips.values())
+                    last_correction = recent[-1].name
                 frames, labels, weight, *imu = demos.sample(args.batch)
                 obs = random_shift(pixel_tensor(frames, args.device).float() / 255. - 0.5, pad=3)
                 scale = torch.empty((len(frames), 1, 1, 1), device=args.device).uniform_(.85, 1.15)
@@ -129,9 +152,12 @@ def main():
                 steps = first_samples + step * args.batch if args.until else step
                 metrics.update(update=updates, steps=steps, round=round_no,
                                bc_loss=float(loss.detach()), real_holdout_mae=real_error, offline=args.offline)
+                if args.correction_directory:
+                    metrics.update(rollout_corrections=len(correction_clips), latest_correction=last_correction,
+                                   correction_frames=sum(map(len, correction_clips.values())))
                 print(json.dumps(metrics), flush=True)
                 log.write(json.dumps(metrics) + "\n")
-                agent.save(latest, round=round_no, steps=steps, updates=updates)
+                agent.save(latest, round=round_no, steps=steps, updates=updates, last_correction=last_correction)
                 if best_rank is None or rank > best_rank:
                     agent.save(args.out / "best.pt")
                     best_rank = rank

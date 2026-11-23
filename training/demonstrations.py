@@ -69,6 +69,7 @@ class Demonstrations:
         self.primary_fraction = primary_fraction
         self.independent = []
         self.assisted = []
+        self.handoff = []
         if not self.real and not self.sim:
             raise ValueError("At least one demonstration is required.")
 
@@ -78,10 +79,14 @@ class Demonstrations:
                 for clip, rows in zip(group, counts) if rows]
 
     def sample(self, count):
-        has_corrections = self.independent or self.assisted or self.sim
+        has_corrections = self.independent or self.assisted or self.handoff or self.sim
         real_count = (max(1, round(self.primary_fraction * count)) if has_corrections else count) if self.real else 0
         batches = self._sample_group(self.real, real_count) if real_count else []
         remaining = count - real_count
+        if remaining and self.handoff:
+            segment_count = round(remaining * .45) if self.independent or self.assisted else remaining
+            batches += self._sample_group(self.handoff, segment_count, prioritize_approach=True)
+            remaining -= segment_count
         if remaining and self.independent and self.assisted:
             independent_count = round(remaining * 2 / 3)
             batches += self._sample_group(self.independent, independent_count, prioritize_approach=True)

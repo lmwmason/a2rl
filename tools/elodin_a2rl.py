@@ -124,24 +124,27 @@ def configure_course(course, lib, season2, asset, camera_feed, report_path):
         f'}}' for gate in frames)
     previous, current = (ct.c_float * 3)(), (ct.c_float * 3)()
     contact = False
+    contact_kind = None
     elapsed = 0.
     passed_times = []
 
     def detect(path, last, start, end):
-        nonlocal contact
+        nonlocal contact, contact_kind
         target = last + 1
         if contact or elodin_policy.peer_contact or target >= len(path):
             return None
         previous[:], current[:] = start, end
         if not np.isfinite(end).all() or not np.isfinite(start).all():
             contact = True
+            contact_kind = "invalid_state"
             print("[A2RL] invalid rigid-body state", flush=True)
             return None
         hit = lib.sim_course_segment(season2, previous, current, target % n)
         outside = np.any(np.asarray(end) < low) or np.any(np.asarray(end) > high)
         if hit < 0 or outside:
             contact = True
-            print(f"[A2RL] contact after {target} gates", flush=True)
+            contact_kind = "gate_frame" if hit < 0 else "arena_boundary"
+            print(f"[A2RL] {contact_kind} contact after {target} gates", flush=True)
         if hit == 1 and not contact:
             passed_times.append(elapsed)
             return target
@@ -168,6 +171,7 @@ def configure_course(course, lib, season2, asset, camera_feed, report_path):
                 "gates": last + 1,
                 "gates_per_race": len(path),
                 "contact": crashed,
+                "contact_kind": contact_kind,
                 "finished": finished,
                 "official_seconds": official,
                 "mean_throttle_fraction": mean_throttle,
@@ -180,6 +184,9 @@ def configure_course(course, lib, season2, asset, camera_feed, report_path):
             if elodin_policy.assisted_rollout:
                 details.update(assisted=True, student_influence_frames=elodin_policy.student_influence_frames,
                                reduced_assistance_frames=elodin_policy.reduced_assistance_frames)
+            if elodin_policy.handoff is not None:
+                details.update(handoff=elodin_policy.handoff,
+                               handoff_frames=elodin_policy.handoff_frames)
             if elodin_policy.completion_profile:
                 details["completion_profile"] = elodin_policy.completion_profile
             temporary = report_path.with_suffix(".tmp")
@@ -190,15 +197,17 @@ def configure_course(course, lib, season2, asset, camera_feed, report_path):
         nonlocal elapsed
         elapsed = seconds
 
-    def finish_on_contact():
-        if not contact or elodin_policy.heat is not None:
+    def finish_early():
+        handoff = elodin_policy.handoff
+        target_reached = handoff is not None and len(passed_times) >= handoff["target_gates"]
+        if not (contact or target_reached) or elodin_policy.heat is not None:
             return False
         summary(course.EASY_COURSE, len(passed_times) - 1, passed_times, elapsed)
         return True
 
     course.detect_gate_pass = detect
     course.print_summary = summary
-    return (lambda: contact), start, heading, set_elapsed, finish_on_contact
+    return (lambda: contact), start, heading, set_elapsed, finish_early
 
 
 class InProcessContext:
@@ -308,8 +317,10 @@ def main():
             mount_pitch=float(pitch_override) if pitch_override is not None else None,
             chase=os.environ.get("A2RL_ELODIN_CHASE") == "1",
         )
-    report = Path(path).expanduser().resolve().with_suffix(".result.json") if path else None
-    elodin_policy.contact, start, heading, set_elapsed, finish_on_contact = configure_course(
+    explicit_report = os.environ.get("A2RL_ELODIN_REPORT")
+    report = (Path(explicit_report).expanduser().resolve() if explicit_report else
+              Path(path).expanduser().resolve().with_suffix(".result.json") if path else None)
+    elodin_policy.contact, start, heading, set_elapsed, finish_early = configure_course(
         course, lib, season2, asset, elodin_policy.camera, report,
     )
     if teacher and policy:
@@ -320,6 +331,12 @@ def main():
     elodin_policy.completion_profile = json.loads(os.environ.get("A2RL_ELODIN_COMPLETION_PROFILE", "{}"))
     if elodin_policy.assisted_rollout and not (elodin_policy.shadow_expert and elodin_policy.record_full_rollout):
         raise ValueError("Assisted rollouts require a policy and full-rollout correction recording.")
+    handoff = elodin_policy.completion_profile.get("handoff")
+    if handoff is not None:
+        if (not elodin_policy.assisted_rollout or not 0 <= handoff["after_gates"] < handoff["target_gates"] <= len(course.EASY_COURSE)
+                or not os.environ.get("A2RL_ELODIN_IN_PROCESS") == "1"):
+            raise ValueError("Gate handoffs require an in-process assisted rollout with an ordered segment.")
+        elodin_policy.handoff = handoff
     if teacher or elodin_policy.shadow_expert:
         elodin_policy.configure_expert(lib, season2)
     heading = radians(heading)
@@ -419,7 +436,7 @@ exec "$1"
                     simulation.step(1)
                     set_elapsed(tick / simulation_rate)
                     post_step(tick, context)
-                    if tick < max_ticks - 1 and finish_on_contact():
+                    if tick < max_ticks - 1 and finish_early():
                         break
                     if pace is not None:
                         epoch = elodin_policy.heat_epoch

@@ -1,6 +1,7 @@
 """Run firmware evaluations and authorize the 30 s and 12 s milestones."""
 import argparse
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 import hashlib
 from io import BytesIO
 import json
@@ -31,17 +32,40 @@ def completion_profile(history):
     return {"focus_gate": focus, "reliable_gates": reliable, "evaluation_count": len(recent)}
 
 
-def evaluate(args, weights, session, side, correction=None, *, assisted=False, seconds=35, profile=None):
+def handoff_schedule(history, log_path):
+    recorded = [json.loads(line) for line in log_path.read_text().splitlines()] if log_path.exists() else []
+    frontier = max((row["gates"] for row in history[-24:] if row["status"] != 4), default=0)
+    target = min(24, max(2, frontier + 1, recorded[-1]["target_gates"] if recorded else 0))
+    previous = [row for row in recorded[-12:] if row["target_gates"] == target]
+    if not previous:
+        return {"after_gates": max(1, target - 2), "target_gates": target}
+    prefix = previous[-1]["after_gates"]
+    peers = [row for row in previous if row["after_gates"] == prefix][-3:]
+    clears = sum(row["gates"] >= target and not row["contact"] and row["student_frames"] > 0 for row in peers)
+    if clears >= 2:
+        if prefix == 0:
+            target = min(24, target + 1)
+        else:
+            prefix -= 1
+    elif len(peers) == 3 and clears == 0:
+        prefix = min(target - 1, prefix + 1)
+    return {"after_gates": prefix, "target_gates": target}
+
+
+def evaluate(args, weights, session, side, correction=None, *, assisted=False, seconds=35, profile=None, port_offset=0):
     session.mkdir(parents=True, exist_ok=True)
     report = session / "replay.result.json"
     if report.is_file():
         return json.loads(report.read_text())
     database = Path(mkdtemp(prefix="attempt-", dir=session))
+    training_only = bool((profile or {}).get("handoff"))
     environment = os.environ | {
         "A2RL_COURSE": "2026-practice",
         "A2RL_ELODIN_ROOT": str(args.harness),
         "A2RL_ELODIN_DB": str(database / "flight"),
-        "A2RL_ELODIN_FPV": str(session / "replay.mp4"),
+        "A2RL_ELODIN_FPV": "" if training_only else str(session / "replay.mp4"),
+        "A2RL_ELODIN_REPORT": str(report),
+        "A2RL_SITL_PORT_OFFSET": str(port_offset),
         "A2RL_ELODIN_CHASE": "1" if args.public is not None and side == 0. and not assisted else "0",
         "A2RL_ELODIN_FLOW_TEACHER": "0",
         "A2RL_ELODIN_IN_PROCESS": "1" if args.in_process else "0",
@@ -61,6 +85,9 @@ def evaluate(args, weights, session, side, correction=None, *, assisted=False, s
         "A2RL_SIM_LIB": str(ROOT / "target/release/liba2rl_sim.so"),
     }
     environment.pop("A2RL_FPV_MOUNT_PITCH", None)
+    environment.pop("A2RL_ELODIN_DEMONSTRATION", None)
+    if port_offset and (firmware := os.environ.get("A2RL_HANDOFF_SITL_EXECUTABLE")):
+        environment["A2RL_SITL_EXECUTABLE"] = firmware
     if correction is not None:
         environment["A2RL_ELODIN_DEMONSTRATION"] = str(correction)
         environment["A2RL_ELODIN_CORRECTION_SCOPE"] = "rollout" if args.rollout_corrections else "launch"
@@ -205,7 +232,11 @@ def watch(args):
                     replay = args.public / "replay.json"
                     history = json.loads(replay.read_text()).get("history", []) if replay.is_file() else []
                     profile = completion_profile([row for row in history if row["phase"] == phase])
-                if phase == "IMITATION" and args.completion_rollouts:
+                handoff_enabled = stage == "finish" and getattr(args, "handoff_completion", False)
+                if handoff_enabled:
+                    handoff = handoff_schedule(history, args.out / "handoff-history.jsonl")
+                    profile = profile | {"handoff": handoff}
+                if phase == "IMITATION" and args.completion_rollouts and not handoff_enabled:
                     session = trial / "assisted"
                     clip = args.rollout_corrections / f"{clip_prefix}-assisted.npz"
                     result = evaluate(args, weights, session, 0., clip, assisted=True, profile=profile)
@@ -219,10 +250,40 @@ def watch(args):
                     correction = (correction_folder / f"{clip_prefix}.npz"
                                   if correction_folder and phase == "IMITATION" and index == 0 else None)
                     seconds = FINISH_WINDOW if phase == "IMITATION" else 35
-                    result = evaluate(args, weights, session, side, correction, seconds=seconds, profile=profile)
+                    if handoff_enabled and index == 0:
+                        nominal_profile = {key: value for key, value in profile.items() if key != "handoff"}
+                        focused = args.rollout_corrections / f"{clip_prefix}-handoff.npz"
+                        segment_side = (-.02, 0., .02)[progress.get("round", 0) % 3]
+                        with ThreadPoolExecutor(max_workers=1) as worker:
+                            def run_segment():
+                                return evaluate(args, weights, trial / "handoff", segment_side,
+                                                focused, assisted=True, seconds=min(50, 7 + 1.5 * handoff["target_gates"]),
+                                                profile=profile, port_offset=args.handoff_port_offset)
+
+                            segment = worker.submit(run_segment) if args.handoff_port_offset else None
+                            result = evaluate(args, weights, session, side, correction,
+                                              seconds=seconds, profile=nominal_profile)
+                            if result.get("assisted"):
+                                raise ValueError("Assisted rollouts cannot count toward qualification.")
+                            publish_replay(args.public, session, phase, result, progress, stage)
+                            try:
+                                outcome = segment.result() if segment is not None else run_segment()
+                            except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as error:
+                                print(f"Handoff failed to produce a report: {error}", flush=True)
+                            else:
+                                note = {"round": progress.get("round"), "after_gates": handoff["after_gates"],
+                                        "target_gates": handoff["target_gates"], "gates": outcome["gates"],
+                                        "contact": outcome["contact"], "contact_kind": outcome.get("contact_kind"),
+                                        "student_frames": outcome.get("handoff_frames", 0)}
+                                with (args.out / "handoff-history.jsonl").open("a") as log:
+                                    log.write(json.dumps(note) + "\n")
+                                print(json.dumps({"handoff_result": note}), flush=True)
+                    else:
+                        nominal_profile = {key: value for key, value in (profile or {}).items() if key != "handoff"}
+                        result = evaluate(args, weights, session, side, correction, seconds=seconds, profile=nominal_profile)
                     if result.get("assisted"):
                         raise ValueError("Assisted rollouts cannot count toward qualification.")
-                    if index == 0:
+                    if index == 0 and not handoff_enabled:
                         publish_replay(args.public, session, phase, result, progress, stage)
                     if args.public is not None:
                         for name in ("replay.mp4", "replay-chase.mp4", "replay.controls.json"):
@@ -259,11 +320,17 @@ def main():
                         help="Collect teacher-assisted rollouts before independent imitation evaluations.")
     parser.add_argument("--adaptive-completion", action="store_true",
                         help="Target repeated failures and ease coaching on reliably passed gates.")
+    parser.add_argument("--handoff-completion", action="store_true",
+                        help="Train on a geometry-aligned teacher handoff beside independent evaluation.")
     parser.add_argument("--harness", type=Path, required=True)
     parser.add_argument("--elodin")
     parser.add_argument("--in-process", action="store_true", help="Run the Elodin JAX model without a telemetry database.")
     parser.add_argument("--out", type=Path, required=True)
+    parser.add_argument("--handoff-port-offset", type=int, default=0,
+                        help="Use a second, port-offset SITL instance for concurrent handoffs.")
     args = parser.parse_args()
+    if not 0 <= args.handoff_port_offset <= 50000:
+        parser.error("The SITL handoff port offset must be between 0 and 50000.")
     if not (args.elodin or args.in_process):
         parser.error("Select an Elodin executable or --in-process.")
     if args.host and (args.host.startswith("-") or not args.remote_run):
@@ -280,6 +347,8 @@ def main():
         parser.error("Completion rollouts require a full-rollout correction directory.")
     if args.adaptive_completion and not (args.completion_rollouts and args.public):
         parser.error("Adaptive completion requires completion rollouts and an independent evaluation history.")
+    if args.handoff_completion and not (args.adaptive_completion and args.in_process):
+        parser.error("Gate handoffs require adaptive completion and in-process Elodin.")
     args.harness = args.harness.resolve()
     args.out = args.out.resolve()
     args.out.mkdir(parents=True, exist_ok=True)

@@ -26,6 +26,8 @@ shadow_expert = False
 record_full_rollout = False
 assisted_rollout = False
 completion_profile = {}
+handoff = None
+handoff_frames = 0
 reference_command = None
 student_influence_frames = 0
 reduced_assistance_frames = 0
@@ -212,6 +214,8 @@ def autopilot(update):
             weight = 2. if record_full_rollout and update.last_gate_passed >= 0 else 1.
             if update.next_gate_index == completion_profile.get("focus_gate"):
                 weight *= 2.
+            if handoff is not None:
+                weight = 5. if update.next_gate_index >= handoff["after_gates"] else .20
             target = reference_command if assisted_rollout else expert(update)
             camera.record_demonstration(image, update, target, weight)
     return last_command
@@ -219,7 +223,7 @@ def autopilot(update):
 
 def choose_command(update, image, ended):
     global pilot, frames, imu, held, last_expert_sample, reference_command
-    global student_influence_frames, reduced_assistance_frames
+    global student_influence_frames, reduced_assistance_frames, handoff_frames
     if ended or update.t < heat_arm_time:
         return RCCommand()
     if update.t < heat_arm_time + .25:
@@ -254,7 +258,16 @@ def choose_command(update, image, ended):
     else:
         frames[:-1], frames[-1] = frames[1:], image
         imu[:-1], imu[-1] = imu[1:], sensor
+    if handoff is not None:
+        reference_command = expert(update)
+        if update.next_gate_index < handoff["after_gates"]:
+            held = reference_command
+            return held
+        handoff_frames += 1
     sticks = pilot.action(frames[None], imu=imu[None])[0]
+    if handoff is not None:
+        held = rc_command(sticks)
+        return held
     if assisted_rollout:
         reference_command = expert(update)
         held = reference_command

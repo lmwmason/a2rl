@@ -1,9 +1,10 @@
 from types import SimpleNamespace
+import json
 
 import torch
 
 from tools import evaluate_rgb_imu_race as evaluator
-from tools.evaluate_rgb_imu_race import completion_profile, succeeds
+from tools.evaluate_rgb_imu_race import completion_profile, handoff_schedule, succeeds
 from training.curriculum import FINISH_MARKER, PACE_MARKER, SPEED_MARKER, SPEED_RUN
 
 
@@ -12,6 +13,17 @@ def test_focus_uses_recent_failures_and_releases_reliably_cleared_gates():
     recent = [{"gates": gates, "status": 4 if gates == 24 else 1}
               for gates in (0, 1, 2, 2, 2, 3, 3, 24)]
     assert completion_profile(old + recent) == {"focus_gate": 2, "reliable_gates": 2, "evaluation_count": 8}
+
+
+def test_gate_handoff_moves_earlier_after_two_clear_segments(tmp_path):
+    log = tmp_path / "handoff.jsonl"
+    independent = [{"gates": 4, "status": 1}] * 5
+    assert handoff_schedule(independent, log) == {"after_gates": 3, "target_gates": 5}
+    result = {"after_gates": 3, "target_gates": 5, "gates": 5, "contact": False, "student_frames": 30}
+    log.write_text((json.dumps(result) + "\n") * 2)
+    assert handoff_schedule(independent, log) == {"after_gates": 2, "target_gates": 5}
+    log.write_text((json.dumps(result | {"gates": 4, "contact": True}) + "\n") * 3)
+    assert handoff_schedule(independent, log) == {"after_gates": 4, "target_gates": 5}
 
 
 def test_assisted_finish_never_qualifies():

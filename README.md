@@ -124,17 +124,19 @@ python3 -m tools.evaluate_rgb_imu_race \
   --local-run runs/target-12 --harness "$A2RL_ELODIN_ROOT" \
   --in-process --out runs/target-12/firmware \
   --public runs/target-12/public --rollout-corrections runs/target-12/firmware-recovery \
-  --completion-rollouts
+  --completion-rollouts --adaptive-completion --handoff-completion
 python3 -m training.live_feed --run runs/target-12 --media runs/target-12/public --port 8766
 ```
 
 The GPU trains with synchronized teacher demonstrations and correction labels from student rollouts. The student observes only RGB and IMU. Teacher inputs are supervision targets. Assisted rollouts expand training coverage. Published replays and qualification use independent student flights.
 
-1. **Completion imitation.** Clear all 24 apertures on the two-lap course, with three clean starts. Each mixed batch draws approximately 25% of examples from the reference demonstration, 50% from independent rollout corrections, and 25% from teacher-assisted rollouts. Half of the independent samples target the approach before the rollout ended.
+1. **Completion imitation.** Clear all 24 apertures on the two-lap course, with three clean starts. Each mixed batch draws approximately 25% of examples from the reference demonstration, 50% from independent rollout corrections, and 25% from teacher-assisted rollouts. Half of the independent samples target the approach before the rollout ended. With the gate-handoff curriculum enabled, targeted student-control segments also enter the batch.
 2. **Pace imitation.** Increase the reference demonstration fraction from 25% to 80%. Qualify at or below 30 seconds in three clean starts.
 3. **Speed optimization.** The target is 12 seconds after pace qualification. This stage is awaiting an Elodin reinforcement learner.
 
 The application benchmark uses the reference airframe profile, 70° camera mount, clean RGB, and a nominal launch for the replay and lap time. Two 3 cm launch offsets check repeatability within the same setup. For separate transfer experiments, run the checkpoint with `A2RL_AIRFRAME` pointing to a measured variant and `A2RL_FPV_MOUNT_PITCH` set to the desired camera pitch in degrees. Keep evaluation outputs in a fresh directory and record completion and timing for each configuration. Simulated variation measures sensitivity within the model. Physical transfer still needs flight data from the intended aircraft.
+
+The handoff curriculum initializes the approach in a continuous firmware rollout flown by the teacher, then transfers full control to the student while collecting expert labels. The curriculum moves the transfer earlier when the same segment clears repeatedly. Independent qualification always starts from the launch pad with the student in control. Set `--handoff-port-offset 1000` and `A2RL_HANDOFF_SITL_EXECUTABLE` to an instance-patched Betaflight binary to run handoffs concurrently with independent evaluations.
 
 The dashboard's Student view opens the latest Elodin + Betaflight student recording with its matching stick inputs. The status panel reports the worker’s training progress. The loopback feed serves only the status and published replay assets. An HTTPS tunnel connects the public dashboard to this feed on GPU 4.
 

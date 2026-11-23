@@ -113,20 +113,23 @@ def main():
                     sleep(1)
                 if args.until.is_file():
                     break
-                independent = [path for path in recent if not path.stem.endswith("-assisted")][-8:]
+                independent = [path for path in recent if not path.stem.endswith(("-assisted", "-handoff"))][-8:]
                 assisted = [path for path in recent if path.stem.endswith("-assisted")][-8:]
+                handoff = [path for path in recent if path.stem.endswith("-handoff")][-8:]
                 correction_clips = {
                     path: correction_clips.get(path) or Clip(path, stack, height, width, with_imu=True)
-                    for path in (*independent, *assisted)
+                    for path in (*independent, *assisted, *handoff)
                 }
                 demos.independent = [correction_clips[path] for path in independent]
                 demos.assisted = [correction_clips[path] for path in assisted]
+                demos.handoff = [correction_clips[path] for path in handoff] if stage == "finish" else []
                 last_correction = recent[-1].name
             if (step - 1) % args.eval_every == 0 and stage == "finish" and args.completion_marker.is_file():
                 agent.load(args.completion_marker)
                 optimizer.state.clear()
                 best_rank = None
                 demos.primary_fraction = .80
+                demos.handoff = []
                 stage = "pace"
                 print(json.dumps({"curriculum_stage": stage, "primary_fraction": demos.primary_fraction}),
                       flush=True)
@@ -159,7 +162,8 @@ def main():
                 metrics.update(rollout_corrections=len(correction_clips), latest_correction=last_correction,
                                correction_frames=sum(map(len, correction_clips.values())),
                                independent_correction_clips=len(demos.independent),
-                               assisted_correction_clips=len(demos.assisted))
+                               assisted_correction_clips=len(demos.assisted),
+                               handoff_correction_clips=len(demos.handoff))
             if stage:
                 metrics.update(curriculum_stage=stage, primary_fraction=demos.primary_fraction)
             print(json.dumps(metrics), flush=True)

@@ -13,17 +13,19 @@ output_wire_clearance = 15;
 view = "reference"; // [reference,keepout]
 $fn = 32;
 
+function xl4015_mounts() = [for (x = [-26.5, 26.5], y = [-15, 15]) [x, y]];
+
 module xl4015_pcb() {
     color("#125878") difference() {
         hull() for (x = [-29.3, 29.3], y = [-17.8, 17.8])
             translate([x, y, 0]) cylinder(r = 0.7, h = 1.6);
-        for (x = [-26.5, 26.5], y = [-15, 15])
-            translate([x, y, -1]) cylinder(d = 3, h = 4);
+        for (p = xl4015_mounts())
+            translate([p.x, p.y, -1]) cylinder(d = 3.2, h = 4);
     }
-    color("#b7af91") for (x = [-26.5, 26.5], y = [-15, 15])
-        translate([x, y, 1.55]) difference() {
+    color("#b7af91") for (p = xl4015_mounts())
+        translate([p.x, p.y, 1.55]) difference() {
             cylinder(d = 4.5, h = 0.13);
-            translate([0, 0, -0.1]) cylinder(d = 3, h = 0.4);
+            translate([0, 0, -0.1]) cylinder(d = 3.2, h = 0.4);
         }
 }
 

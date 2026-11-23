@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="FPV policy evaluation, training metrics, and checkpoint replays">
   <title>Flight Policy Research</title>
-  <link rel="stylesheet" href="style.css?v=race-results">
-  <script src="dashboard.js?v=race-end-hold" defer></script>
+  <link rel="stylesheet" href="style.css?v=race-hud">
+  <script src="dashboard.js?v=race-hud" defer></script>
 </head>
 <body>
   <main>
@@ -23,6 +23,9 @@
               <button type="button" id="show-fpv" aria-pressed="true">FPV</button>
               <button type="button" id="show-chase" aria-pressed="false" disabled>Third person</button>
             </div>
+            <div class="pilot-switch">
+              <button type="button" id="race-sound" aria-pressed="false">Sound off</button>
+            </div>
           </div>
         </div>
         <div class="screen">
@@ -30,14 +33,20 @@
           <div id="race-timer" class="race-timer" role="group" aria-label="Replay race timing in seconds" hidden>
             <div><span id="timer-lap-label">Lap</span><span id="timer-lap">0.000</span></div>
             <div><span>Total</span><span id="timer-total">0.000</span></div>
+            <div id="race-gate-row" hidden><span>Gates</span><span id="timer-gates">0 / 24</span></div>
+            <progress id="race-progress" aria-label="Gates cleared" hidden></progress>
           </div>
+          <div class="race-countdown" id="race-countdown" role="status" hidden>3</div>
           <section class="race-results" id="race-results" aria-labelledby="race-results-title" hidden>
             <h3 id="race-results-title">Race complete</h3>
-            <div class="race-results-splits">
-              <div><span>Lap 1</span><strong id="result-lap-one">—</strong></div>
-              <div><span>Lap 2</span><strong id="result-lap-two">—</strong></div>
-              <div><span>Total</span><strong id="result-total">—</strong></div>
-            </div>
+            <div class="race-results-total"><span>Finish time</span><strong id="result-total">—</strong></div>
+            <table aria-label="Lap splits">
+              <thead><tr><th scope="col">Lap</th><th scope="col">Split</th><th scope="col">Elapsed</th></tr></thead>
+              <tbody>
+                <tr><th scope="row">1</th><td id="result-lap-one">—</td><td id="result-elapsed-one">—</td></tr>
+                <tr><th scope="row">2</th><td id="result-lap-two">—</td><td id="result-elapsed-two">—</td></tr>
+              </tbody>
+            </table>
           </section>
           <div id="mode2-sticks" class="mode2-sticks" role="group" aria-label="Recorded Mode 2 stick positions" hidden>
             <div class="stick">

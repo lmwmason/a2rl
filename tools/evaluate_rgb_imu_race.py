@@ -179,6 +179,7 @@ def replay_timing(result):
     return {
         "video_start_seconds": result.get("video_start_seconds") or 0.,
         "start_seconds": crossings[0] if crossings else None,
+        "gate_seconds": crossings,
         "lap_end_seconds": crossings[lap_size - 1::lap_size],
         "stop_seconds": crossings[-1] if result["finished"] and crossings else result.get("end_seconds"),
         "laps": 2,

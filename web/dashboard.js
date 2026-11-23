@@ -24,6 +24,10 @@ const finishTrend = { values: [], key: "", speed: false };
 let playing = null;
 let queuedReplay = null;
 let raceEndTimer = null;
+let countdownTimer = null;
+let sound = null;
+let soundEnabled = false;
+const countdown = byId("race-countdown");
 let displayedControl = -1;
 let pilot = null;
 let studentStatus = null;
@@ -114,11 +118,110 @@ function showRaceTimer(time = camera.currentTime) {
   setText("timer-lap-label", secondLap ? "Lap 2 / 2" : "Lap 1 / 2");
   setText("timer-lap", elapsed(lapStart));
   setText("timer-total", elapsed(start));
+  if (Array.isArray(timing.gate_seconds)) {
+    const passed = timing.gate_seconds.filter(crossing => crossing <= timestamp).length;
+    setText("timer-gates", `${passed} / ${playing.gates_per_race}`);
+    byId("race-progress").value = passed;
+  }
 }
 
 function updateReplayOverlays(time = camera.currentTime) {
   showSticks(time);
   showRaceTimer(time);
+  updateMotorSound();
+}
+
+function updateMotorSound() {
+  if (!sound) return;
+  const controls = playing?.controls;
+  const time = sound.context.currentTime;
+  const active = soundEnabled && controls && !camera.paused && !camera.ended && countdownTimer === null;
+  const row = active && controls.actions[Math.min(controls.actions.length - 1,
+    Math.floor(camera.currentTime * controls.sample_rate))];
+  const throttle = row && (1 + row[1]) / 2;
+  sound.volume.gain.setTargetAtTime(throttle > .005 ? .018 + .14 * throttle : 0, time, .035);
+  if (throttle > .005) {
+    const pitch = 74 + 380 * Math.sqrt(throttle);
+    sound.motors.forEach((motor, index) => {
+      const mix = index % 2 ? row[2] : row[3];
+      motor.frequency.setTargetAtTime(pitch * (1 + (index - 1) * .055 + .14 * mix), time, .035);
+    });
+  }
+}
+
+byId("race-sound").addEventListener("click", async () => {
+  const button = byId("race-sound");
+  if (!sound) {
+    const Audio = window.AudioContext ?? window.webkitAudioContext;
+    if (!Audio) return;
+    const context = new Audio();
+    const volume = context.createGain();
+    volume.gain.value = 0;
+    const filter = context.createBiquadFilter();
+    filter.frequency.value = 1250;
+    filter.connect(volume).connect(context.destination);
+    const motors = Array.from({ length: 3 }, (_, index) => {
+      const motor = context.createOscillator();
+      motor.type = index ? "triangle" : "sawtooth";
+      motor.connect(filter);
+      motor.start();
+      return motor;
+    });
+    sound = { context, volume, motors };
+  }
+  soundEnabled = !soundEnabled;
+  if (soundEnabled) await sound.context.resume().catch(() => {});
+  button.setAttribute("aria-pressed", String(soundEnabled));
+  setText("race-sound", soundEnabled ? "Sound on" : "Sound off");
+  updateMotorSound();
+});
+
+function countdownBeep(go) {
+  if (!soundEnabled || sound?.context.state !== "running") return;
+  const { context } = sound;
+  const oscillator = context.createOscillator();
+  const volume = context.createGain();
+  const now = context.currentTime;
+  oscillator.frequency.value = go ? 920 : 490;
+  volume.gain.setValueAtTime(.16, now);
+  volume.gain.exponentialRampToValueAtTime(.001, now + .17);
+  oscillator.connect(volume).connect(context.destination);
+  oscillator.start(now);
+  oscillator.stop(now + .18);
+}
+
+function cancelCountdown() {
+  clearTimeout(countdownTimer);
+  countdownTimer = null;
+  countdown.hidden = true;
+  delete countdown.dataset.go;
+}
+
+function startRacePlayback() {
+  if (!playing?.timing) {
+    camera.play().catch(() => {});
+    return;
+  }
+  cancelCountdown();
+  const start = performance.now();
+  let previousNumber = null;
+  function tick() {
+    const number = Math.max(0, 3 - Math.floor((performance.now() - start) / 1000));
+    if (number !== previousNumber) {
+      previousNumber = number;
+      setText("race-countdown", number || "GO");
+      countdown.hidden = false;
+      countdownBeep(number === 0);
+    }
+    if (!number) {
+      countdown.dataset.go = "";
+      countdownTimer = window.setTimeout(cancelCountdown, 600);
+      camera.play().catch(cancelCountdown);
+      return;
+    }
+    countdownTimer = window.setTimeout(tick, Math.max(0, start + (4 - number) * 1000 - performance.now()));
+  }
+  tick();
 }
 
 function drawHistory() {
@@ -256,6 +359,7 @@ async function selectCamera(perspective) {
 
 function startReplay(replay, resumeTime = 0, autoplay = true) {
   const previous = playing;
+  if (previous?.version !== replay.version) cancelCountdown();
   playing = replay;
   camera.src = playing.blob;
   updateCameraButtons();
@@ -269,6 +373,10 @@ function startReplay(replay, resumeTime = 0, autoplay = true) {
   camera.hidden = false;
   byId("mode2-sticks").hidden = !playing.controls;
   byId("race-timer").hidden = !playing.timing;
+  const hasGates = Array.isArray(playing.timing?.gate_seconds);
+  byId("race-gate-row").hidden = !hasGates;
+  byId("race-progress").hidden = !hasGates;
+  byId("race-progress").max = playing.gates_per_race || 24;
   displayedControl = -1;
   updateReplayOverlays(resumeTime);
   const download = byId("download-replay");
@@ -306,7 +414,10 @@ function startReplay(replay, resumeTime = 0, autoplay = true) {
   }
   if (pilot === "student") renderStudentEvaluation();
   if (previous) URL.revokeObjectURL(previous.blob);
-  if (autoplay) camera.play().catch(() => {});
+  if (autoplay) {
+    if (resumeTime > 0) camera.play().catch(() => {});
+    else startRacePlayback();
+  }
 }
 
 function cancelRaceEnd() {
@@ -328,7 +439,9 @@ camera.addEventListener("ended", () => {
     const seconds = (value) => Number.isFinite(value) ? `${value.toFixed(3)} s` : "—";
     setText("result-lap-one", seconds(first - start));
     setText("result-lap-two", seconds(second - first));
+    setText("result-elapsed-one", seconds(first - start));
     setText("result-total", seconds(playing.official_seconds ?? second - start));
+    setText("result-elapsed-two", byId("result-total").textContent);
     byId("race-results").hidden = false;
   }
   raceEndTimer = window.setTimeout(() => {
@@ -340,7 +453,7 @@ camera.addEventListener("ended", () => {
       return;
     }
     camera.currentTime = 0;
-    camera.play().catch(() => {});
+    startRacePlayback();
   }, finished ? 5000 : 3000);
 });
 
@@ -362,10 +475,11 @@ function startOverlayAnimation() {
 }
 
 camera.addEventListener("playing", () => {
+  if (!Object.hasOwn(countdown.dataset, "go")) cancelCountdown();
   cancelRaceEnd();
   startOverlayAnimation();
 });
-for (const event of ["timeupdate", "seeking", "seeked", "loadeddata", "ended"]) {
+for (const event of ["timeupdate", "seeking", "seeked", "loadeddata", "pause", "ended"]) {
   camera.addEventListener(event, () => updateReplayOverlays());
 }
 
@@ -533,6 +647,7 @@ function selectPilot(view, refresh = true) {
   pilot = view;
   selection++;
   cancelRaceEnd();
+  cancelCountdown();
   discardQueuedReplay();
   const page = new URL(window.location.href);
   page.searchParams.set("pilot", view);

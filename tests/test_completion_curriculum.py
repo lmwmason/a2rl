@@ -49,7 +49,7 @@ def test_assisted_finish_never_qualifies():
 def test_replay_timing_uses_recorded_crossings_and_ends_at_finish_or_contact():
     race = {"finished": True, "gates": 24, "gates_per_race": 24,
             "gate_times": list(range(2, 26)), "video_start_seconds": .2, "end_seconds": 27.}
-    assert replay_timing(race) == {"video_start_seconds": .2, "start_seconds": 2,
+    assert replay_timing(race) == {"video_start_seconds": .2, "start_seconds": 2, "gate_seconds": list(range(2, 26)),
                                    "lap_end_seconds": [13, 25], "stop_seconds": 25, "laps": 2}
     crash = race | {"finished": False, "gates": 14, "gate_times": race["gate_times"][:14], "end_seconds": 16.2}
     assert replay_timing(crash)["lap_end_seconds"] == [13]

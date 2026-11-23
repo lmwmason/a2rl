@@ -24,6 +24,9 @@ last_command = held
 expert = None
 shadow_expert = False
 record_full_rollout = False
+assisted_rollout = False
+reference_command = None
+student_influence_frames = 0
 camera = None
 heat = None
 heat_sample = -1
@@ -188,12 +191,13 @@ def autopilot(update):
             camera.record_demonstration(image, update, last_command)
         elif update.t >= .75 and (record_full_rollout or (update.t <= 3.75 and update.last_gate_passed < 0)):
             weight = 2. if record_full_rollout and update.last_gate_passed >= 0 else 1.
-            camera.record_demonstration(image, update, expert(update), weight)
+            target = reference_command if assisted_rollout else expert(update)
+            camera.record_demonstration(image, update, target, weight)
     return last_command
 
 
 def choose_command(update, image, ended):
-    global pilot, frames, imu, held, last_expert_sample
+    global pilot, frames, imu, held, last_expert_sample, reference_command, student_influence_frames
     if ended or update.t < heat_arm_time:
         return RCCommand()
     if update.t < heat_arm_time + .25:
@@ -230,5 +234,17 @@ def choose_command(update, image, ended):
         frames[:-1], frames[-1] = frames[1:], image
         imu[:-1], imu[-1] = imu[1:], sensor
     sticks = pilot.action(frames[None], imu=imu[None])[0]
+    if assisted_rollout:
+        reference_command = expert(update)
+        held = reference_command
+        # Give the learner brief control perturbations after takeoff while the
+        # expert keeps the rollout close enough to reach the rest of the course.
+        sample = int(update.t * control_rate + 1e-6)
+        if update.last_gate_passed >= 0 and sample % 6 == 0:
+            reference = np.asarray(mode2_sticks(reference_command))
+            limit = np.asarray([.05, .03, .07, .07])
+            held = rc_command(reference + np.clip(sticks - reference, -limit, limit))
+            student_influence_frames += 1
+        return held
     held = rc_command(sticks)
     return held

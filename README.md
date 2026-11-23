@@ -220,11 +220,12 @@ Run the evaluator and loopback replay feed on the GPU host. Install the pinned E
 python3 -m tools.evaluate_rgb_imu_race \
   --local-run runs/target-12 --harness "$A2RL_ELODIN_ROOT" \
   --in-process --out runs/target-12/firmware \
-  --public runs/target-12/public --rollout-corrections runs/target-12/firmware-recovery
+  --public runs/target-12/public --rollout-corrections runs/target-12/firmware-recovery \
+  --completion-rollouts
 python3 -m training.live_feed --run runs/target-12 --media runs/target-12/public --port 8766
 ```
 
-The GPU processes batches of 128 examples from recorded teacher races and recent student-flight corrections. During each student evaluation, the teacher labels the controls it would choose from the student's current state. The student flies using its own RGB and IMU. The trainer processes one round when a new correction clip is available and gives additional weight to corrections after the first gate. The evaluator runs the Elodin JAX plant with Betaflight SITL and accepts a checkpoint after three clean full-course starts at or below 30 seconds. The existing speed reinforcement learning worker uses parallel Rust simulations and the same RGB and IMU input. The Elodin evaluator applies a 12-second time limit to all three starts before marking the speed phase complete. Run the correction feed and trainer on the same host or give them a shared correction directory.
+The GPU processes batches of 128 examples from recorded teacher races and recent student-flight corrections. During each student evaluation, the teacher labels the controls it would choose from the student's current state. The student flies using its own RGB and IMU. The trainer processes one round when a new correction clip is available and gives additional weight to corrections after the first gate. The optional completion rollout blends bounded student inputs into a teacher-led flight so the training data can cover late gates. Published replays and qualification use only independent student flights. The evaluator runs the Elodin JAX plant with Betaflight SITL and accepts a checkpoint after three clean full-course starts at or below 30 seconds. The existing speed reinforcement learning worker uses parallel Rust simulations and the same RGB and IMU input. The Elodin evaluator applies a 12-second time limit to all three starts before marking the speed phase complete. Run the correction feed and trainer on the same host or give them a shared correction directory.
 
 The dashboard's Student view opens the latest Elodin + Betaflight student recording with its matching stick inputs. The status panel reports the worker’s training progress. The loopback feed serves only the status and published replay assets. An HTTPS tunnel connects the public dashboard to this feed on GPU 4.
 

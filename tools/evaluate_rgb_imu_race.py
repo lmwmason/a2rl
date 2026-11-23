@@ -18,7 +18,7 @@ STARTS = (0., -.03, .03)
 SSH = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=12"]
 
 
-def evaluate(args, weights, session, side, correction=None):
+def evaluate(args, weights, session, side, correction=None, *, assisted=False, seconds=35):
     session.mkdir(parents=True, exist_ok=True)
     report = session / "replay.result.json"
     if report.is_file():
@@ -33,8 +33,9 @@ def evaluate(args, weights, session, side, correction=None):
         "A2RL_ELODIN_IN_PROCESS": "1" if args.in_process else "0",
         "A2RL_ELODIN_POLICY": str(weights),
         "A2RL_ELODIN_START_SIDE": str(side),
-        "A2RL_ELODIN_SECONDS": "35",
+        "A2RL_ELODIN_SECONDS": str(seconds),
         "A2RL_FPV_BREAKUP": "0",
+        "A2RL_ELODIN_ASSISTED": "1" if assisted else "0",
         "OMP_NUM_THREADS": "1",
         "OPENBLAS_NUM_THREADS": "1",
         "UV_NO_SYNC": "1",
@@ -164,13 +165,23 @@ def watch(args):
                             .get("training_progress", {}) if args.public else {})
                 weights = args.out / (digest + ".pt")
                 weights.write_bytes(raw)
+                if phase == "IMITATION" and args.completion_rollouts:
+                    session = args.out / digest / "assisted"
+                    clip = args.rollout_corrections / f"{digest}-assisted.npz"
+                    result = evaluate(args, weights, session, 0., clip, assisted=True)
+                    for name in ("replay.mp4", "replay.controls.json"):
+                        (session / name).unlink(missing_ok=True)
+                    print(json.dumps({"phase": phase, "checkpoint": digest, **result}), flush=True)
                 qualified = True
                 for index, side in enumerate(STARTS):
                     session = args.out / digest / str(index)
                     correction_folder = args.rollout_corrections or args.launch_corrections
                     correction = (correction_folder / f"{digest}.npz"
                                   if correction_folder and phase == "IMITATION" and index == 0 else None)
-                    result = evaluate(args, weights, session, side, correction)
+                    seconds = 50 if phase == "IMITATION" else 35
+                    result = evaluate(args, weights, session, side, correction, seconds=seconds)
+                    if result.get("assisted"):
+                        raise ValueError("Assisted rollouts cannot count toward qualification.")
                     if index == 0:
                         publish_replay(args.public, session, phase, result, progress)
                     if args.public is not None:
@@ -203,6 +214,8 @@ def main():
     corrections = parser.add_mutually_exclusive_group()
     corrections.add_argument("--launch-corrections", type=Path, help="Record teacher corrections on student launches.")
     corrections.add_argument("--rollout-corrections", type=Path, help="Record teacher labels throughout a student's flight.")
+    parser.add_argument("--completion-rollouts", action="store_true",
+                        help="Collect teacher-assisted rollouts before independent imitation evaluations.")
     parser.add_argument("--harness", type=Path, required=True)
     parser.add_argument("--elodin")
     parser.add_argument("--in-process", action="store_true", help="Run the Elodin JAX model without a telemetry database.")
@@ -220,6 +233,8 @@ def main():
         args.launch_corrections = args.launch_corrections.resolve()
     if args.rollout_corrections:
         args.rollout_corrections = args.rollout_corrections.resolve()
+    if args.completion_rollouts and not args.rollout_corrections:
+        parser.error("Completion rollouts require a full-rollout correction directory.")
     args.harness = args.harness.resolve()
     args.out = args.out.resolve()
     args.out.mkdir(parents=True, exist_ok=True)

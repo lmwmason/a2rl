@@ -124,6 +124,8 @@ def configure_course(course, lib, season2, asset, camera_feed, report_path):
         f'}}' for gate in frames)
     previous, current = (ct.c_float * 3)(), (ct.c_float * 3)()
     contact = False
+    elapsed = 0.
+    passed_times = []
 
     def detect(path, last, start, end):
         nonlocal contact
@@ -140,7 +142,10 @@ def configure_course(course, lib, season2, asset, camera_feed, report_path):
         if hit < 0 or outside:
             contact = True
             print(f"[A2RL] contact after {target} gates", flush=True)
-        return target if hit == 1 and not contact else None
+        if hit == 1 and not contact:
+            passed_times.append(elapsed)
+            return target
+        return None
 
     def summary(path, last, times, end):
         crashed = contact or elodin_policy.peer_contact
@@ -171,11 +176,25 @@ def configure_course(course, lib, season2, asset, camera_feed, report_path):
             if elodin_policy.heat is not None:
                 details.update(took_off=bool(elodin_policy.heat_airborne),
                                aircraft_contact=elodin_policy.peer_contact)
-            report_path.write_text(json.dumps(details, indent=2) + "\n")
+            if elodin_policy.assisted_rollout:
+                details.update(assisted=True, student_influence_frames=elodin_policy.student_influence_frames)
+            temporary = report_path.with_suffix(".tmp")
+            temporary.write_text(json.dumps(details, indent=2) + "\n")
+            temporary.replace(report_path)
+
+    def set_elapsed(seconds):
+        nonlocal elapsed
+        elapsed = seconds
+
+    def finish_on_contact():
+        if not contact or elodin_policy.heat is not None:
+            return False
+        summary(course.EASY_COURSE, len(passed_times) - 1, passed_times, elapsed)
+        return True
 
     course.detect_gate_pass = detect
     course.print_summary = summary
-    return (lambda: contact), start, heading
+    return (lambda: contact), start, heading, set_elapsed, finish_on_contact
 
 
 class InProcessContext:
@@ -283,13 +302,16 @@ def main():
             Path(dataset).expanduser().resolve() if dataset else None,
         )
     report = Path(path).expanduser().resolve().with_suffix(".result.json") if path else None
-    elodin_policy.contact, start, heading = configure_course(
+    elodin_policy.contact, start, heading, set_elapsed, finish_on_contact = configure_course(
         course, lib, season2, asset, elodin_policy.camera, report,
     )
     if teacher and policy:
         raise ValueError("Select one pilot for Elodin validation.")
     elodin_policy.shadow_expert = bool(policy and dataset)
     elodin_policy.record_full_rollout = os.environ.get("A2RL_ELODIN_CORRECTION_SCOPE") == "rollout"
+    elodin_policy.assisted_rollout = os.environ.get("A2RL_ELODIN_ASSISTED") == "1"
+    if elodin_policy.assisted_rollout and not (elodin_policy.shadow_expert and elodin_policy.record_full_rollout):
+        raise ValueError("Assisted rollouts require a policy and full-rollout correction recording.")
     if teacher or elodin_policy.shadow_expert:
         elodin_policy.configure_expert(lib, season2)
     heading = radians(heading)
@@ -387,7 +409,10 @@ exec "$1"
                     if flight_controller.poll() is not None:
                         raise RuntimeError("Betaflight SITL exited during the rollout.")
                     simulation.step(1)
+                    set_elapsed(tick / simulation_rate)
                     post_step(tick, context)
+                    if tick < max_ticks - 1 and finish_on_contact():
+                        break
                     if pace is not None:
                         epoch = elodin_policy.heat_epoch
                     if elodin_policy.heat_failure is not None:

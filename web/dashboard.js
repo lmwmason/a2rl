@@ -13,7 +13,7 @@ const quantity = (value, unit) => Number.isFinite(value) ? value.toFixed(2) + " 
 const curriculumLabels = {
   finish: "Stage 1 · Clean two-lap finish",
   pace: "Stage 2 · Imitation ≤30 s",
-  speed: "Stage 3 · Reinforcement learning ≤12 s",
+  speed: "Stage 3 · Speed refinement",
 };
 const camera = byId("fpv");
 const chart = byId("history");

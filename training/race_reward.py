@@ -4,6 +4,7 @@ import math
 
 
 REWARD_VERSION = 2
+EXIT_WINDOW_SECONDS = .35
 
 
 def clean_finish(result):
@@ -20,9 +21,18 @@ class GateTrace:
         self.previous = None
         self.slow_approach_seconds = 0.
         self.crossing_offsets_m = []
+        self.exit_progress_m = []
+        self.exit_sample = None
         self.segment_progress = 0.
 
     def observe(self, gate, before, after, seconds, *, crossed=False):
+        if self.exit_sample is not None:
+            index, start, crossing_time = self.exit_sample
+            if seconds - crossing_time >= EXIT_WINDOW_SECONDS or crossed:
+                # Measure three-dimensional motion, including stacked-gate transitions.
+                target = self.centers[index + 1]
+                self.exit_progress_m[index] = math.dist(start, target) - math.dist(after, target)
+                self.exit_sample = None
         last = self.previous
         if not crossed and last is not None and last[0] == gate and seconds - last[1] < .049:
             return
@@ -42,15 +52,19 @@ class GateTrace:
             fraction = max(0., min(1., -normal_before / max(1e-9, -approach - normal_before)))
             cx, cy, cz = (a + fraction * (b - a) for a, b in zip(before, after))
             self.crossing_offsets_m.append(max(abs(-(cx - x) * ny + (cy - y) * nx), abs(cz - z)))
+            self.exit_progress_m.append(None)
+            if gate + 1 < len(self.centers):
+                self.exit_sample = gate, (cx, cy, cz), seconds
             self.segment_progress = 0.
 
     def report(self):
         return {"version": REWARD_VERSION, "segment_progress": self.segment_progress,
                 "slow_approach_seconds": self.slow_approach_seconds,
+                "exit_progress_m": self.exit_progress_m,
                 "crossing_offsets_m": self.crossing_offsets_m}
 
 
-def reward_terms(result, reference):
+def reward_terms(result, reference, *, exit_progress_weight=0.):
     trace = result["reward_trace"]
     actual = result["gate_times"]
     baseline = reference["gate_times"]
@@ -67,13 +81,23 @@ def reward_terms(result, reference):
         terminal = {"arena_boundary": -22., "invalid_state": -30.}.get(result.get("contact_kind"), -18.)
     else:
         terminal = -8. if result.get("stalled") else -6.
-    return {
+    terms = {
         "progress": 2. * result["gates"] + (0. if finish else 1.5 * trace["segment_progress"]),
         "split_pace": split_gain,
         "approach_flow": -.8 * trace["slow_approach_seconds"],
         "edge_clearance": -edge_cost,
         "terminal": terminal,
     }
+    if exit_progress_weight:
+        # A quick exit that subsequently misses the next gate earns no bonus.
+        paired = max(0, min(result["gates"], reference["gates"]) - 1)
+        advances = zip(trace["exit_progress_m"][:paired],
+                       reference["reward_trace"]["exit_progress_m"][:paired])
+        terms["gate_exit"] = exit_progress_weight * sum(
+            math.tanh((current - previous) / .5)
+            for current, previous in advances if current is not None and previous is not None
+        )
+    return terms
 
 
 def matched_improvement(candidate, incumbent):

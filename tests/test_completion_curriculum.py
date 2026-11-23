@@ -101,6 +101,24 @@ def test_reward_trace_records_stopping_near_gate_and_crossing_offset():
     assert trace.report()["segment_progress"] == 0.
 
 
+def test_gate_exit_progress_scores_only_completed_transitions():
+    gates = [SimpleNamespace(center=(0., 0., z), yaw_deg=0.) for z in (0., 2.)]
+    trace = GateTrace((-4., 0., 0.), gates)
+    trace.observe(0, (-.01, 0., 0.), (.01, 0., 0.), 1., crossed=True)
+    trace.observe(1, (.1, 0., 0.), (0., 0., 1.), 1.36)
+    trace.observe(1, (-.01, 0., 2.), (.01, 0., 2.), 2., crossed=True)
+    report = trace.report()
+    assert report["exit_progress_m"] == [1., None]
+
+    result = {"gates": 2, "finished": False, "contact": False, "gate_times": [1., 2.],
+              "reward_trace": report}
+    reference = result | {"reward_trace": report | {"exit_progress_m": [0., None]}}
+    assert reward_terms(result, reference, exit_progress_weight=.35)["gate_exit"] > 0.
+    assert "gate_exit" not in reward_terms(result, reference)
+    missed = result | {"gates": 1, "contact": True, "gate_times": [1.]}
+    assert reward_terms(missed, reference, exit_progress_weight=.35)["gate_exit"] == 0.
+
+
 def test_speed_policy_perturbations_are_paired_and_keep_the_encoders():
     tensor = torch.ones((2, 2))
     policy = {"encoder": {"weight": tensor},

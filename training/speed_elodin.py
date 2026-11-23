@@ -2,6 +2,7 @@
 
 import argparse
 from concurrent.futures import ThreadPoolExecutor
+from functools import partial
 import fcntl
 import json
 import os
@@ -74,10 +75,12 @@ def train(args):
     settings = SimpleNamespace(harness=args.harness, out=output, public=None, in_process=True,
                                metrics_only=True, rollout_corrections=False, reward_trace=True)
     os.environ["A2RL_HANDOFF_SITL_EXECUTABLE"] = str(args.firmware)
-    while not (args.run / SPEED_MARKER).is_file():
+    score = partial(reward_terms, exit_progress_weight=args.exit_progress_weight)
+    variant = "-gate-exit-v1" if args.exit_progress_weight else ""
+    while (not args.stop_after_round or iteration < args.stop_after_round) and not (args.run / SPEED_MARKER).is_file():
         iteration += 1
         side = STARTS[(iteration - 1) % len(STARTS)]
-        experiment = output / "rounds" / f"{iteration}-reward-v{REWARD_VERSION}-throttle-v1"
+        experiment = output / "rounds" / f"{iteration}-reward-v{REWARD_VERSION}-throttle-v1{variant}"
         experiment.mkdir(parents=True, exist_ok=True)
         random_population = 1 + 2 * args.directions
         paths = [experiment / f"policy-{index}.pt" for index in range(random_population + 2)]
@@ -100,13 +103,15 @@ def train(args):
             trace = report.get("reward_trace", {})
             if trace.get("version") != REWARD_VERSION or len(trace["crossing_offsets_m"]) != report["gates"]:
                 raise RuntimeError("Missing or incomplete speed reward trace.")
+            if args.exit_progress_weight and len(trace.get("exit_progress_m", ())) != report["gates"]:
+                raise RuntimeError("Missing or incomplete gate exit trace.")
             return report
 
         with ThreadPoolExecutor(max_workers=len(paths)) as pool:
             futures = [pool.submit(flight, path, side, i, f"candidate-{i}") for i, path in enumerate(paths)]
             population = [future.result() for future in futures]
             incumbent = population[0]
-            scores = [reward_terms(trial, incumbent) for trial in population]
+            scores = [score(trial, incumbent) for trial in population]
             returns = [sum(terms.values()) for terms in scores]
             eligible = [i for i, trial in enumerate(population[1:], 1) if clean_finish(trial) and (
                 not clean_finish(incumbent)
@@ -121,7 +126,7 @@ def train(args):
                            for i, start in enumerate(holdouts) for j, index in enumerate((0, winner))]
                 checks = [future.result() for future in futures]
                 for base, trial in zip(checks[::2], checks[1::2]):
-                    scores.extend((reward_terms(base, base), reward_terms(trial, base)))
+                    scores.extend((score(base, base), score(trial, base)))
         accepted = bool(checks) and matched_improvement(
             [population[winner], *checks[1::2]], [incumbent, *checks[::2]])
         outcomes = [*population, *checks]
@@ -135,6 +140,7 @@ def train(args):
             "physics_engine": "elodin", "curriculum_stage": "speed", "round": iteration,
             "steps": steps, "rollouts": episodes, "algorithm": "Antithetic evolutionary policy search",
             "exploration_radius": radius, "reward_version": REWARD_VERSION,
+            "exit_progress_weight": args.exit_progress_weight,
             "mean_return": mean(sum(terms.values()) for terms in scores),
             "reward_components": {key: mean(terms[key] for terms in scores) for key in scores[0]},
             "accepted": accepted, "gates_mean": mean(result["gates"] for result in outcomes),
@@ -171,6 +177,10 @@ def main():
     parser.add_argument("--directions", type=int, default=2)
     parser.add_argument("--radius", type=float, default=.00035)
     parser.add_argument("--seed", type=int, default=2026)
+    parser.add_argument("--stop-after-round", type=int, default=0,
+                        help="Last round number to execute, or zero for unlimited.")
+    parser.add_argument("--exit-progress-weight", type=float, default=0.,
+                        help="Optional weight for progress into the following gate after crossing.")
     args = parser.parse_args()
     args.run, args.harness, args.firmware = (path.resolve() for path in (args.run, args.harness, args.firmware))
     if (not 1 <= args.directions <= 8 or not 1 <= args.port_offset <= 49800 - 200 * args.directions
@@ -178,6 +188,8 @@ def main():
         parser.error("Use a valid exploration radius and a non-overlapping SITL port range.")
     if not (args.run / PACE_MARKER).is_file() or not os.access(args.firmware, os.X_OK):
         parser.error("Speed training requires the pace-qualified checkpoint and executable SITL firmware.")
+    if args.stop_after_round < 0 or not 0. <= args.exit_progress_weight <= 1.:
+        parser.error("Use a nonnegative round count and a gate exit weight from zero to one.")
     torch.set_num_threads(1)
     with (args.run / "training.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)

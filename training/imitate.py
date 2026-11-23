@@ -38,6 +38,12 @@ def main():
     parser.add_argument("--updates", type=int, default=1400)
     parser.add_argument("--preserve-successful-prefixes", action="store_true",
                         help="Retain effective student actions in independently cleared gate approaches.")
+    parser.add_argument("--anchor-prefix", type=Path,
+                        help="Preserve a repeatably cleared early route using a frozen student checkpoint.")
+    parser.add_argument("--anchor-gates", type=int, default=6)
+    parser.add_argument("--anchor-weight", type=float, default=.65)
+    parser.add_argument("--frontier-sampling", action="store_true",
+                        help="Sample independent corrections more often when the student reached later gates.")
     parser.add_argument("--action-horizon", type=int, default=1,
                         help="Predict this many consecutive Mode 2 actions for temporal ensembling.")
     parser.add_argument("--gate-progress-loss", type=float, default=0.,
@@ -57,6 +63,9 @@ def main():
     args = parser.parse_args()
     if min(args.batch, args.stack, args.eval_every) <= 0 or args.updates < 0:
         parser.error("Counts must be positive.")
+    if args.anchor_prefix and (not 1 <= args.anchor_gates <= 23 or not np.isfinite(args.anchor_weight)
+                               or args.anchor_weight <= 0):
+        parser.error("Anchored route prefix and weight must be positive.")
     if not 1 <= args.action_horizon <= 12:
         parser.error("Action horizon must be between 1 and 12 observations.")
     if args.updates == 0 and not args.until:
@@ -91,9 +100,16 @@ def main():
         agent.set_weights(extend_cnn_history(weights, stack) if args.extend_history else weights)
     progress = weights.get("training_progress", {}) if resumed else {}
     first_round, first_step, first_samples = (progress.get(key, 0) for key in ("round", "updates", "steps"))
+    anchor = None
+    if args.anchor_prefix:
+        anchor_weights = torch.load(args.anchor_prefix, map_location="cpu", weights_only=True)
+        anchor = Agent(stack, args.device, 0., with_imu=args.imu,
+                       backbone=anchor_weights.get("vision_backbone", "cnn"),
+                       action_horizon=anchor_weights.get("action_horizon", 1))
+        anchor.set_weights(extend_cnn_history(anchor_weights, stack))
     demos = Demonstrations(args.real, args.sim, stack, height, width, args.seed, with_imu=args.imu,
-                           primary_fraction=args.primary_fraction, gate_labels=args.gate_progress_loss > 0,
-                           action_horizon=args.action_horizon)
+                           primary_fraction=args.primary_fraction, gate_labels=args.gate_progress_loss > 0 or anchor is not None,
+                           action_horizon=args.action_horizon, frontier_sampling=args.frontier_sampling)
     if args.until:
         print(json.dumps({"imitation_datasets": [
             {"path": str(path), "frames": len(clip)}
@@ -170,6 +186,7 @@ def main():
             frames, labels, weight, *extra = demos.sample(args.batch)
             imu = extra[0] if args.imu else None
             gate_loss = None
+            anchor_loss = None
             nominal_completion = stage == "finish"
             obs = random_shift(pixel_tensor(frames, args.device).float() / 255. - 0.5,
                                pad=1 if nominal_completion else 3)
@@ -177,7 +194,8 @@ def main():
             brightness = .025 if nominal_completion else .07
             scale = torch.empty((len(frames), 1, 1, 1), device=args.device).uniform_(1 - contrast, 1 + contrast)
             offset = torch.empty_like(scale).uniform_(-brightness, brightness)
-            features = agent.policy_features((obs * scale + offset).clamp(-.5, .5), imu)
+            obs = (obs * scale + offset).clamp(-.5, .5)
+            features = agent.policy_features(obs, imu)
             if agent.future_actor is not None:
                 actions = agent.action_sequence(features)
                 action = actions[:, 0]
@@ -190,8 +208,16 @@ def main():
                 future_loss = stick_loss(actions[:, 1:].reshape(-1, 4), targets,
                                          np.repeat(weight, args.action_horizon - 1))
                 loss = loss + .5 * future_loss
-            if gate_head is not None:
+            if gate_head is not None or anchor is not None:
                 next_gate = torch.as_tensor(extra[int(args.imu)], dtype=torch.long, device=args.device)
+            if anchor is not None and stage != "pace":
+                prefix = (next_gate >= 0) & (next_gate < args.anchor_gates)
+                with torch.no_grad():
+                    reference = anchor.actor(anchor.policy_features(obs, imu)).tanh()
+                deviation = torch.nn.functional.smooth_l1_loss(action, reference, reduction="none", beta=.12).mean(dim=1)
+                anchor_loss = (deviation * prefix).sum() / prefix.sum().clamp(min=1)
+                loss = loss + args.anchor_weight * anchor_loss
+            if gate_head is not None:
                 valid = next_gate >= 0
                 target = torch.where(valid, next_gate.remainder(12), -100)
                 per_sample = torch.nn.functional.cross_entropy(gate_head(features), target, reduction="none")
@@ -211,6 +237,8 @@ def main():
             steps = first_samples + step * args.batch if args.until else step
             metrics.update(update=updates, steps=steps, round=round_no,
                            bc_loss=float(bc_loss.detach()), real_holdout_mae=real_error, offline=True)
+            if anchor_loss is not None:
+                metrics["prefix_anchor_loss"] = float(anchor_loss.detach())
             if agent.future_actor is not None:
                 metrics["future_action_loss"] = float(future_loss.detach())
             if gate_loss is not None:

@@ -11,6 +11,7 @@ class Clip:
         self.approach_rows = None
         self.gate_numbers = None
         self.preserved_rows = 0
+        self.last_approach = 0
         if path.is_dir():
             actions = np.fromfile(path / "actions.f32", dtype="<f4").reshape(-1, 4)
             self.frames = np.memmap(path / "frames.rgb", mode="r", dtype=np.uint8).reshape(-1, *shape)
@@ -27,13 +28,15 @@ class Clip:
                     gates = data["next_gate"]
                     if gates.shape == (len(actions),):
                         self.gate_numbers = gates.astype(np.int64)
+                        self.last_approach = int(self.gate_numbers[-1]) if len(self.gate_numbers) else 0
                     if (preserve_success and self.gate_numbers is not None and {"executed", "independent", "passed"} <= set(data.files)
                             and bool(data["independent"]) and int(data["passed"]) >= 3):
                         executed = data["executed"]
                         if executed.shape != actions.shape or not np.isfinite(executed).all():
                             raise ValueError(f"Malformed executed actions in {path}.")
                         passed = int(data["passed"])
-                        cleared = (self.gate_numbers >= 0) & (self.gate_numbers < passed)
+                        # Require the next crossing too, so a bad exit into the failed leg uses teacher labels.
+                        cleared = (self.gate_numbers >= 0) & (self.gate_numbers + 1 < passed)
                         actions[cleared] = .65 * executed[cleared] + .35 * actions[cleared]
                         self.preserved_rows = int(cleared.sum())
                     if self.gate_numbers is not None and len(gates) >= stack:
@@ -86,13 +89,14 @@ class Clip:
 
 
 class Demonstrations:
-    def __init__(self, real_paths, sim_paths, stack, height, width, seed, with_imu=False, primary_fraction=.40, gate_labels=False, action_horizon=1):
+    def __init__(self, real_paths, sim_paths, stack, height, width, seed, with_imu=False, primary_fraction=.40, gate_labels=False, action_horizon=1, frontier_sampling=False):
         self.real = [Clip(path, stack, height, width, with_imu) for path in real_paths]
         self.sim = [Clip(path, stack, height, width, with_imu) for path in sim_paths]
         self.rng = np.random.default_rng(seed)
         self.primary_fraction = primary_fraction
         self.gate_labels = gate_labels
         self.action_horizon = action_horizon
+        self.frontier_sampling = frontier_sampling
         self.independent = []
         self.assisted = []
         self.handoff = []
@@ -100,7 +104,14 @@ class Demonstrations:
             raise ValueError("At least one demonstration is required.")
 
     def _sample_group(self, group, count, *, prioritize_approach=False):
-        counts = np.bincount(self.rng.integers(len(group), size=count), minlength=len(group))
+        if self.frontier_sampling and group is self.independent:
+            approaches = np.asarray([clip.last_approach for clip in group], dtype=np.float32)
+            priority = np.exp2((approaches - approaches.max()).clip(min=-3.))
+            priority /= priority.sum()
+            ids = self.rng.choice(len(group), count, p=priority)
+        else:
+            ids = self.rng.integers(len(group), size=count)
+        counts = np.bincount(ids, minlength=len(group))
         return [clip.batch(clip.sample_rows(self.rng, rows, prioritize_approach), gate_labels=self.gate_labels,
                            action_horizon=self.action_horizon)
                 for clip, rows in zip(group, counts) if rows]

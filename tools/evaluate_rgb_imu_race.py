@@ -61,7 +61,7 @@ def handoff_schedule(history, log_path):
     return plan
 
 
-def evaluate(args, weights, session, side, correction=None, *, assisted=False, seconds=35, profile=None, port_offset=0):
+def evaluate(args, weights, session, side, correction=None, *, assisted=False, seconds=35, profile=None, port_offset=0, max_gate_gap=0.):
     session.mkdir(parents=True, exist_ok=True)
     report = session / "replay.result.json"
     if report.is_file():
@@ -81,6 +81,7 @@ def evaluate(args, weights, session, side, correction=None, *, assisted=False, s
         "A2RL_ELODIN_POLICY": str(weights),
         "A2RL_ELODIN_START_SIDE": str(side),
         "A2RL_ELODIN_SECONDS": str(seconds),
+        "A2RL_ELODIN_MAX_GATE_GAP": str(max_gate_gap),
         "A2RL_FPV_BREAKUP": "0",
         "A2RL_FPV_EXPOSURE": "1",
         "A2RL_AIRFRAME": str(ROOT / "assets/a2rl-2025-airframe.toml"),
@@ -111,10 +112,13 @@ def evaluate(args, weights, session, side, correction=None, *, assisted=False, s
         child = subprocess.Popen(command, cwd=args.harness, env=environment, stdout=log,
                                  stderr=subprocess.STDOUT, start_new_session=True)
         try:
-            for _ in range(220):
+            deadline = time.monotonic() + max(220, 16 * seconds + 60)
+            while time.monotonic() < deadline:
                 if report.is_file():
                     return json.loads(report.read_text())
                 if child.poll() is not None:
+                    break
+                if time.time() - os.fstat(log.fileno()).st_mtime > 75:
                     break
                 time.sleep(1)
             raise RuntimeError(f"Elodin did not produce {report}. See {session / 'flight.log'}.")
@@ -190,7 +194,7 @@ def publish_replay(directory, session, phase, result, progress, stage=None):
     evaluation = {
         **{key: progress[key] for key in ("round", "steps") if key in progress},
         "version": version, "phase": phase, "gates": result["gates"],
-        "status": 4 if result["finished"] else 1 if result["contact"] else 2,
+        "status": 4 if result["finished"] else 1 if result["contact"] else 3 if result.get("stalled") else 2,
         "official_seconds": result["official_seconds"],
     }
     if stage:
@@ -295,7 +299,7 @@ def watch(args):
 
                             segment = worker.submit(run_segment) if args.handoff_port_offset else None
                             result = evaluate(args, weights, session, side, correction,
-                                              seconds=seconds, profile=nominal_profile)
+                                              seconds=seconds, profile=nominal_profile, max_gate_gap=10.)
                             if result.get("assisted"):
                                 raise ValueError("Assisted rollouts cannot count toward qualification.")
                             publish_replay(args.public, session, phase, result, progress, stage)
@@ -314,7 +318,8 @@ def watch(args):
                         nominal_profile = {key: value for key, value in (profile or {}).items() if key != "handoff"}
                         options = {"port_offset": args.evaluation_port_offset} if getattr(args, "evaluation_port_offset", 0) else {}
                         result = evaluate(args, weights, session, side, correction,
-                                          seconds=seconds, profile=nominal_profile, **options)
+                                          seconds=seconds, profile=nominal_profile,
+                                          max_gate_gap=10. if stage == "finish" and index == 0 else 0., **options)
                     if result.get("assisted"):
                         raise ValueError("Assisted rollouts cannot count toward qualification.")
                     if index == 0:

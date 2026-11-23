@@ -81,9 +81,9 @@ class DemonstrationTest(unittest.TestCase):
                      timestamps=np.arange(10) / 30, next_gate=np.arange(10),
                      weights=np.ones(10, dtype=np.float32), independent=True, passed=4)
             clip = Clip(path, 2, 1, 1, preserve_success=True)
-            self.assertEqual(clip.preserved_rows, 4)
-            np.testing.assert_allclose(clip.actions[:4], .65)
-            np.testing.assert_array_equal(clip.actions[4:], original[4:])
+            self.assertEqual(clip.preserved_rows, 3)
+            np.testing.assert_allclose(clip.actions[:3], .65)
+            np.testing.assert_array_equal(clip.actions[3:], original[3:])
 
     def test_completion_batch_emphasizes_independent_approaches(self):
         with TemporaryDirectory() as directory:

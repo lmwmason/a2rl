@@ -125,6 +125,10 @@ def configure_course(course, lib, season2, asset, camera_feed, report_path):
     previous, current = (ct.c_float * 3)(), (ct.c_float * 3)()
     contact = False
     contact_kind = None
+    stalled = False
+    max_gate_gap = float(os.environ.get("A2RL_ELODIN_MAX_GATE_GAP", "0"))
+    if not np.isfinite(max_gate_gap) or max_gate_gap < 0:
+        raise ValueError("Maximum gate gap must be finite and nonnegative.")
     elapsed = 0.
     passed_times = []
 
@@ -172,6 +176,7 @@ def configure_course(course, lib, season2, asset, camera_feed, report_path):
                 "gates_per_race": len(path),
                 "contact": crashed,
                 "contact_kind": contact_kind,
+                "stalled": stalled,
                 "finished": finished,
                 "official_seconds": official,
                 "mean_throttle_fraction": mean_throttle,
@@ -198,9 +203,13 @@ def configure_course(course, lib, season2, asset, camera_feed, report_path):
         elapsed = seconds
 
     def finish_early():
+        nonlocal stalled
         handoff = elodin_policy.handoff
         target_reached = handoff is not None and len(passed_times) >= handoff["target_gates"]
-        if not (contact or target_reached) or elodin_policy.heat is not None:
+        last_crossing = passed_times[-1] if passed_times else 0.
+        stalled = (max_gate_gap > 0 and not contact and len(passed_times) < len(course.EASY_COURSE)
+                   and elapsed - last_crossing >= max_gate_gap)
+        if not (contact or target_reached or stalled) or elodin_policy.heat is not None:
             return False
         summary(course.EASY_COURSE, len(passed_times) - 1, passed_times, elapsed)
         return True

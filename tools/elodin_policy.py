@@ -5,8 +5,10 @@ import ctypes as ct
 import json
 import os
 from pathlib import Path
+from queue import SimpleQueue
 from struct import unpack
 import subprocess
+from threading import Thread
 
 import numpy as np
 from solver.api import RCCommand
@@ -70,7 +72,9 @@ class CameraFeed:
         self.encoder = None
         self.chase = CameraRenderer(lib, self.width, self.height) if path and chase else None
         self.chase_path = path.with_name(path.stem + "-chase.mp4") if self.chase else None
-        self.chase_encoder = None
+        self.chase_queue = SimpleQueue() if self.chase is not None else None
+        self.chase_worker = None
+        self.chase_failure = None
         self.frame_number = -1
         self.actions = []
         self.dataset = dataset
@@ -94,11 +98,11 @@ class CameraFeed:
                 self.path.parent.mkdir(parents=True, exist_ok=True)
                 self.encoder = self.open_encoder(self.path)
                 if self.chase is not None:
-                    self.chase_encoder = self.open_encoder(self.chase_path)
+                    self.chase_worker = Thread(target=self.write_chase, daemon=True)
+                    self.chase_worker.start()
             self.encoder.stdin.write(image.tobytes())
-            if self.chase_encoder is not None:
-                frame = self.chase.render_pose(state, sensors.t, peer_positions, chase=True)
-                self.chase_encoder.stdin.write(frame.tobytes())
+            if self.chase_queue is not None:
+                self.chase_queue.put((state, sensors.t, tuple(peer_positions)))
         return image
 
     def open_encoder(self, path):
@@ -107,6 +111,21 @@ class CameraFeed:
             "-pix_fmt", "rgb24", "-s", f"{self.width}x{self.height}", "-r", str(self.fps), "-i", "pipe:0",
             "-c:v", "libx264", "-threads", "2", "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(path),
         ], stdin=subprocess.PIPE)
+
+    def write_chase(self):
+        try:
+            encoder = self.open_encoder(self.chase_path)
+            try:
+                while (sample := self.chase_queue.get()) is not None:
+                    state, elapsed, peers = sample
+                    frame = self.chase.render_pose(state, elapsed, peers, chase=True)
+                    encoder.stdin.write(frame.tobytes())
+            finally:
+                encoder.stdin.close()
+                if encoder.wait():
+                    raise RuntimeError("FFmpeg could not write the third-person replay.")
+        except (OSError, RuntimeError, ValueError) as error:
+            self.chase_failure = error
 
     def record_command(self, command):
         if self.path:
@@ -138,18 +157,24 @@ class CameraFeed:
             return
         self.closed = True
         try:
-            encoders = [encoder for encoder in (self.encoder, self.chase_encoder) if encoder is not None]
-            for encoder in encoders:
-                encoder.stdin.close()
-            results = [encoder.wait() for encoder in encoders]
-            if any(results):
-                raise RuntimeError("FFmpeg could not write an Elodin replay.")
+            if self.chase_worker is not None:
+                self.chase_queue.put(None)
+            if self.encoder is not None:
+                self.encoder.stdin.close()
+                if self.encoder.wait():
+                    raise RuntimeError("FFmpeg could not write the FPV replay.")
+            if self.chase_worker is not None:
+                self.chase_worker.join()
+                if self.chase_failure is not None:
+                    raise RuntimeError("Could not record the third-person replay.") from self.chase_failure
             if self.encoder is not None:
                 self.path.with_suffix(".controls.json").write_text(json.dumps({
                     "sample_rate": self.fps, "actions": self.actions,
                 }, separators=(",", ":")) + "\n")
                 print(f"[A2RL] FPV replay: {len(self.actions)} frames written to {self.path}", flush=True)
         finally:
+            if self.chase_worker is not None:
+                self.chase_worker.join()
             self.env.close()
             if self.chase is not None:
                 self.chase.close()

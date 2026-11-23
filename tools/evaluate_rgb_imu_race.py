@@ -82,6 +82,7 @@ def evaluate(args, weights, session, side, correction=None, *, assisted=False, s
         "A2RL_ELODIN_START_SIDE": str(side),
         "A2RL_ELODIN_SECONDS": str(seconds),
         "A2RL_ELODIN_MAX_GATE_GAP": str(max_gate_gap),
+        "A2RL_ELODIN_REWARD_TRACE": "1" if getattr(args, "reward_trace", False) else "0",
         "A2RL_FPV_BREAKUP": "0",
         "A2RL_FPV_EXPOSURE": "1",
         "A2RL_AIRFRAME": str(ROOT / "assets/a2rl-2025-airframe.toml"),

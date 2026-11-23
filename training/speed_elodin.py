@@ -4,7 +4,6 @@ import argparse
 from concurrent.futures import ThreadPoolExecutor
 import fcntl
 import json
-import math
 import os
 from pathlib import Path
 from statistics import mean
@@ -14,22 +13,10 @@ from types import SimpleNamespace
 import torch
 
 from .curriculum import FINISH_WINDOW, PACE_MARKER, SPEED_MARKER, SPEED_RUN
+from .race_reward import REWARD_VERSION, clean_finish, matched_improvement, reward_terms
 
 
 STARTS = (0., -.03, .03)
-
-
-def clean_finish(result):
-    return result["finished"] and not result["contact"] and result["gates"] == 24
-
-
-def race_return(result):
-    """Reward continued progress and quick crossings, with a distinct clean-finish bonus."""
-    crossings = result["gate_times"]
-    progress = sum(math.exp(-seconds / 18.) for seconds in crossings)
-    if clean_finish(result):
-        return progress + 30. - .6 * result["official_seconds"]
-    return progress - (4. if result["contact"] else 2.)
 
 
 def perturb(policy, generator, radius, sign):
@@ -72,12 +59,12 @@ def train(args):
     episodes = state.get("rollouts", 0)
     radius = state.get("exploration_radius", args.radius)
     settings = SimpleNamespace(harness=args.harness, out=output, public=None, in_process=True,
-                               metrics_only=True, rollout_corrections=False)
+                               metrics_only=True, rollout_corrections=False, reward_trace=True)
     os.environ["A2RL_HANDOFF_SITL_EXECUTABLE"] = str(args.firmware)
     while not (args.run / SPEED_MARKER).is_file():
         iteration += 1
         side = STARTS[(iteration - 1) % len(STARTS)]
-        experiment = output / "rounds" / str(iteration)
+        experiment = output / "rounds" / f"{iteration}-reward-v{REWARD_VERSION}"
         experiment.mkdir(parents=True, exist_ok=True)
         paths = [experiment / f"policy-{index}.pt" for index in range(1 + 2 * args.directions)]
         save_checkpoint(paths[0], policy)
@@ -92,25 +79,34 @@ def train(args):
                               port_offset=args.port_offset + 100 * index, max_gate_gap=9.)
             if report["physics_engine"] != "elodin" or report.get("assisted") or report["policy_steps"] <= 0:
                 raise RuntimeError("Speed training requires an independent flight with recorded policy actions.")
+            trace = report.get("reward_trace", {})
+            if trace.get("version") != REWARD_VERSION or len(trace["crossing_offsets_m"]) != report["gates"]:
+                raise RuntimeError("Missing or incomplete speed reward trace.")
             return report
 
         with ThreadPoolExecutor(max_workers=len(paths)) as pool:
             futures = [pool.submit(flight, path, side, i, f"candidate-{i}") for i, path in enumerate(paths)]
             population = [future.result() for future in futures]
-            returns = list(map(race_return, population))
-            winner = max(range(len(population)),
-                         key=lambda i: (clean_finish(population[i]), returns[i]))
-            validation = []
-            if winner and clean_finish(population[winner]) and (
-                not clean_finish(population[0])
-                or population[winner]["official_seconds"] <= population[0]["official_seconds"] - .015
-            ):
+            incumbent = population[0]
+            scores = [reward_terms(trial, incumbent) for trial in population]
+            returns = [sum(terms.values()) for terms in scores]
+            eligible = [i for i, trial in enumerate(population[1:], 1) if clean_finish(trial) and (
+                not clean_finish(incumbent)
+                or trial["official_seconds"] <= incumbent["official_seconds"] - .015
+                or (trial["official_seconds"] <= incumbent["official_seconds"] + .05 and returns[i] > returns[0])
+            )]
+            winner = max(eligible, key=returns.__getitem__, default=None)
+            checks = []
+            if winner is not None:
                 holdouts = [start for start in STARTS if start != side]
-                futures = [pool.submit(flight, paths[winner], start, i, f"holdout-{i}")
-                           for i, start in enumerate(holdouts)]
-                validation = [future.result() for future in futures]
-        accepted = bool(validation) and all(clean_finish(result) for result in validation)
-        outcomes = [*population, *validation]
+                futures = [pool.submit(flight, paths[index], start, 2 * i + j, f"holdout-{i}-{j}")
+                           for i, start in enumerate(holdouts) for j, index in enumerate((0, winner))]
+                checks = [future.result() for future in futures]
+                for base, trial in zip(checks[::2], checks[1::2]):
+                    scores.extend((reward_terms(base, base), reward_terms(trial, base)))
+        accepted = bool(checks) and matched_improvement(
+            [population[winner], *checks[1::2]], [incumbent, *checks[::2]])
+        outcomes = [*population, *checks]
         if accepted:
             policy = torch.load(paths[winner], weights_only=True, map_location="cpu")
         steps += sum(result["policy_steps"] for result in outcomes)
@@ -120,7 +116,9 @@ def train(args):
         metrics = {
             "physics_engine": "elodin", "curriculum_stage": "speed", "round": iteration,
             "steps": steps, "rollouts": episodes, "algorithm": "Antithetic evolutionary policy search",
-            "exploration_radius": radius, "mean_return": mean(map(race_return, outcomes)),
+            "exploration_radius": radius, "reward_version": REWARD_VERSION,
+            "mean_return": mean(sum(terms.values()) for terms in scores),
+            "reward_components": {key: mean(terms[key] for terms in scores) for key in scores[0]},
             "accepted": accepted, "gates_mean": mean(result["gates"] for result in outcomes),
             "two_lap_rate": len(finished) / len(outcomes),
             "crash_rate": mean(result["contact"] for result in outcomes),

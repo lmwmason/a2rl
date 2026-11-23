@@ -57,6 +57,8 @@ def status(run, media):
         "starting_speed_trainer": starting_speed,
         "rollouts": latest.get("rollouts", 0 if starting_speed else None),
         "mean_return": latest.get("mean_return"),
+        "reward_version": latest.get("reward_version"),
+        "reward_components": latest.get("reward_components"),
         "gates_per_race": 24, "full_course": True,
         "round": latest.get("round"), "steps": latest.get("steps", latest.get("transitions")),
         "finish_rate": latest.get("two_lap_rate"), "collision_rate": latest.get("crash_rate"),

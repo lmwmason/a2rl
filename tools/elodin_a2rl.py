@@ -131,6 +131,11 @@ def configure_course(course, lib, season2, asset, camera_feed, report_path):
         raise ValueError("Maximum gate gap must be finite and nonnegative.")
     elapsed = 0.
     passed_times = []
+    trace = None
+    if os.environ.get("A2RL_ELODIN_REWARD_TRACE") == "1":
+        from training.race_reward import GateTrace
+
+        trace = GateTrace(start, course.EASY_COURSE)
 
     def detect(path, last, start, end):
         nonlocal contact, contact_kind
@@ -145,6 +150,8 @@ def configure_course(course, lib, season2, asset, camera_feed, report_path):
             return None
         hit = lib.sim_course_segment(season2, previous, current, target % n)
         outside = np.any(np.asarray(end) < low) or np.any(np.asarray(end) > high)
+        if trace is not None:
+            trace.observe(target, start, end, elapsed, crossed=hit == 1 and not outside)
         if hit < 0 or outside:
             contact = True
             contact_kind = "gate_frame" if hit < 0 else "arena_boundary"
@@ -184,6 +191,8 @@ def configure_course(course, lib, season2, asset, camera_feed, report_path):
                 "policy_steps": elodin_policy.policy_steps,
                 "camera_mount_pitch_deg": camera_feed.env.mount_pitch if camera_feed else None,
             }
+            if trace is not None:
+                details["reward_trace"] = trace.report()
             if elodin_policy.heat is not None:
                 details.update(took_off=bool(elodin_policy.heat_airborne),
                                aircraft_contact=elodin_policy.peer_contact)

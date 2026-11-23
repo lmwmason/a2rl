@@ -7,7 +7,8 @@ from tools import evaluate_rgb_imu_race as evaluator
 from tools.evaluate_rgb_imu_race import completion_profile, handoff_schedule, succeeds
 from training.curriculum import FINISH_MARKER, PACE_MARKER, SPEED_MARKER, SPEED_RUN
 from training.live_feed import status
-from training.speed_elodin import perturb, race_return
+from training.speed_elodin import perturb
+from training.race_reward import GateTrace, matched_improvement, reward_terms
 
 
 def test_focus_uses_recent_failures_and_releases_reliably_cleared_gates():
@@ -47,10 +48,34 @@ def test_assisted_finish_never_qualifies():
 
 def test_speed_score_prefers_clean_progress_and_a_faster_finish():
     finish = {"gates": 24, "finished": True, "contact": False, "gate_times": list(range(24)),
-              "official_seconds": 24.}
+              "official_seconds": 24., "reward_trace": {"segment_progress": 0., "slow_approach_seconds": 0.,
+                                                       "crossing_offsets_m": [0.] * 24}}
     crash = finish | {"gates": 23, "finished": False, "contact": True, "gate_times": list(range(23))}
-    assert race_return(finish | {"official_seconds": 23.}) > race_return(finish) > race_return(crash)
-    assert race_return(crash) > race_return(crash | {"gate_times": [1, 2]})
+    def score(result):
+        return sum(reward_terms(result, finish).values())
+
+    assert score(finish | {"official_seconds": 23.}) - score(finish) == 1.75
+    assert reward_terms(crash, finish)["terminal"] == -18.
+    assert score(finish) > score(crash) > score(crash | {"gates": 2, "gate_times": [1, 2]})
+    slow = finish | {"reward_trace": finish["reward_trace"] | {"slow_approach_seconds": 1.}}
+    assert score(slow) < score(finish)
+    wide = finish | {"reward_trace": finish["reward_trace"] | {"crossing_offsets_m": [.53] * 24}}
+    assert score(wide) < score(finish)
+    assert matched_improvement([finish | {"official_seconds": 23.}] * 3, [finish] * 3)
+    assert not matched_improvement([finish | {"official_seconds": 24.2}, finish, finish], [finish] * 3)
+    assert not matched_improvement([finish, crash, finish], [finish] * 3)
+
+
+def test_reward_trace_records_stopping_near_gate_and_crossing_offset():
+    gate = SimpleNamespace(center=(0., 0., 0.), yaw_deg=0.)
+    trace = GateTrace((-4., 0., 0.), [gate])
+    trace.observe(0, (-1., 0., 0.), (-1., 0., 0.), 1.)
+    trace.observe(0, (-1., 0., 0.), (-1., 0., 0.), 1.1)
+    assert trace.report()["segment_progress"] == .75
+    assert trace.report()["slow_approach_seconds"] > .09
+    trace.observe(0, (-.01, .4, 0.), (.01, .4, 0.), 1.2, crossed=True)
+    assert trace.report()["crossing_offsets_m"] == [.4]
+    assert trace.report()["segment_progress"] == 0.
 
 
 def test_speed_policy_perturbations_are_paired_and_keep_the_encoders():

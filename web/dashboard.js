@@ -71,7 +71,7 @@ function pill(id, label, state = "") {
 function showSticks(time = camera.currentTime) {
   const controls = playing?.controls;
   if (!controls || !Number.isFinite(time)) return;
-  const index = Math.min(controls.actions.length - 1, Math.floor(time * controls.sample_rate + 0.0001));
+  const index = Math.max(0, Math.min(controls.actions.length - 1, Math.floor(time * controls.sample_rate + 0.0001)));
   if (index === displayedControl) return;
   displayedControl = index;
   const [yaw, throttle, roll, pitch] = controls.actions[index];
@@ -230,15 +230,20 @@ function startReplay(replay) {
   if (previous) URL.revokeObjectURL(previous.blob);
   camera.play().catch(() => {});
 }
-camera.addEventListener("seeked", () => showSticks());
-if ("requestVideoFrameCallback" in camera) {
-  const updateSticks = (_, frame) => {
-    showSticks(frame.mediaTime);
-    camera.requestVideoFrameCallback(updateSticks);
-  };
-  camera.requestVideoFrameCallback(updateSticks);
-} else {
-  camera.addEventListener("timeupdate", () => showSticks());
+let stickAnimation = null;
+function animateSticks() {
+  stickAnimation = null;
+  showSticks();
+  if (!camera.paused && !camera.ended) startStickAnimation();
+}
+
+function startStickAnimation() {
+  if (stickAnimation === null && playing?.controls) stickAnimation = requestAnimationFrame(animateSticks);
+}
+
+camera.addEventListener("playing", startStickAnimation);
+for (const event of ["timeupdate", "seeked", "loadeddata"]) {
+  camera.addEventListener(event, () => showSticks());
 }
 
 function physicsLabel(run) {
@@ -442,7 +447,9 @@ if (new URLSearchParams(window.location.search).get("pilot") === "student") {
   selectPilot("student", false);
 }
 document.addEventListener("visibilitychange", () => {
-  if (!document.hidden && pilot === "student") fetchReplay(false);
+  if (document.hidden) return;
+  if (!camera.paused) startStickAnimation();
+  if (pilot === "student") fetchReplay(false);
 });
 window.addEventListener("pageshow", (event) => {
   if (event.persisted && pilot === "student") fetchReplay(false);

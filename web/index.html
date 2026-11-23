@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="FPV policy evaluation, training metrics, and checkpoint replays">
   <title>Flight Policy Research</title>
-  <link rel="stylesheet" href="style.css?v=replay-timing">
-  <script src="dashboard.js?v=replay-timing" defer></script>
+  <link rel="stylesheet" href="style.css?v=race-results">
+  <script src="dashboard.js?v=race-end-hold" defer></script>
 </head>
 <body>
   <main>
@@ -31,6 +31,14 @@
             <div><span id="timer-lap-label">Lap</span><span id="timer-lap">0.000</span></div>
             <div><span>Total</span><span id="timer-total">0.000</span></div>
           </div>
+          <section class="race-results" id="race-results" aria-labelledby="race-results-title" hidden>
+            <h3 id="race-results-title">Race complete</h3>
+            <div class="race-results-splits">
+              <div><span>Lap 1</span><strong id="result-lap-one">—</strong></div>
+              <div><span>Lap 2</span><strong id="result-lap-two">—</strong></div>
+              <div><span>Total</span><strong id="result-total">—</strong></div>
+            </div>
+          </section>
           <div id="mode2-sticks" class="mode2-sticks" role="group" aria-label="Recorded Mode 2 stick positions" hidden>
             <div class="stick">
               <span>Yaw / Throttle</span>

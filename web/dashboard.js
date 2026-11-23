@@ -22,6 +22,8 @@ const trend = { values: [], key: "", limit: 22 };
 const finishChart = byId("finish-history");
 const finishTrend = { values: [], key: "", speed: false };
 let playing = null;
+let queuedReplay = null;
+let raceEndTimer = null;
 let displayedControl = -1;
 let pilot = null;
 let studentStatus = null;
@@ -241,6 +243,7 @@ async function selectCamera(perspective) {
     const filename = perspective === "chase" ? current.chase_url : current.url;
     const { value: video } = await requestData(new URL(filename, current.manifestUrl), true);
     if (request !== cameraSelection || current !== playing) return;
+    discardQueuedReplay();
     const blob = URL.createObjectURL(video.slice(0, video.size, "video/mp4"));
     const page = new URL(window.location.href);
     page.searchParams.set("camera", perspective);
@@ -262,7 +265,7 @@ function startReplay(replay, resumeTime = 0, autoplay = true) {
     }, { once: true });
   }
   camera.muted = true;
-  camera.loop = true;
+  camera.loop = !playing.timing;
   camera.hidden = false;
   byId("mode2-sticks").hidden = !playing.controls;
   byId("race-timer").hidden = !playing.timing;
@@ -305,6 +308,46 @@ function startReplay(replay, resumeTime = 0, autoplay = true) {
   if (previous) URL.revokeObjectURL(previous.blob);
   if (autoplay) camera.play().catch(() => {});
 }
+
+function cancelRaceEnd() {
+  clearTimeout(raceEndTimer);
+  raceEndTimer = null;
+  byId("race-results").hidden = true;
+}
+
+function discardQueuedReplay() {
+  if (queuedReplay) URL.revokeObjectURL(queuedReplay.blob);
+  queuedReplay = null;
+}
+
+camera.addEventListener("ended", () => {
+  if (!playing?.timing || raceEndTimer !== null) return;
+  const finished = playing.status === 4;
+  if (finished) {
+    const { start_seconds: start, lap_end_seconds: [first, second] } = playing.timing;
+    const seconds = (value) => Number.isFinite(value) ? `${value.toFixed(3)} s` : "—";
+    setText("result-lap-one", seconds(first - start));
+    setText("result-lap-two", seconds(second - first));
+    setText("result-total", seconds(playing.official_seconds ?? second - start));
+    byId("race-results").hidden = false;
+  }
+  raceEndTimer = window.setTimeout(() => {
+    cancelRaceEnd();
+    if (queuedReplay) {
+      const next = queuedReplay;
+      queuedReplay = null;
+      startReplay(next);
+      return;
+    }
+    camera.currentTime = 0;
+    camera.play().catch(() => {});
+  }, finished ? 5000 : 3000);
+});
+
+camera.addEventListener("seeking", () => {
+  if (camera.currentTime < camera.duration - .1) cancelRaceEnd();
+});
+
 let overlayAnimation = null;
 function animateOverlays() {
   overlayAnimation = null;
@@ -318,7 +361,10 @@ function startOverlayAnimation() {
   }
 }
 
-camera.addEventListener("playing", startOverlayAnimation);
+camera.addEventListener("playing", () => {
+  cancelRaceEnd();
+  startOverlayAnimation();
+});
 for (const event of ["timeupdate", "seeking", "seeked", "loadeddata", "ended"]) {
   camera.addEventListener(event, () => updateReplayOverlays());
 }
@@ -486,6 +532,8 @@ function selectPilot(view, refresh = true) {
   if (pilot === view) return;
   pilot = view;
   selection++;
+  cancelRaceEnd();
+  discardQueuedReplay();
   const page = new URL(window.location.href);
   page.searchParams.set("pilot", view);
   window.history.replaceState(null, "", page.href);
@@ -520,7 +568,7 @@ byId("show-chase").addEventListener("click", () => selectCamera("chase"));
 function isNewReplay(info, selected) {
   if (selected !== selection) return false;
   if (!/^[0-9]+$/.test(info.version)) throw new Error("Invalid replay version");
-  const current = playing;
+  const current = queuedReplay ?? playing;
   if (!current) return true;
   if (Boolean(info.archived) !== Boolean(current.archived)) return !info.archived;
   return BigInt(info.version) > BigInt(current.version);
@@ -542,7 +590,13 @@ async function loadReplay({ url, value: info }, selected) {
   const [video, controls] = await Promise.all([requestData(new URL(filename, url), true), controlsRequest]);
   if (cameraRequest !== cameraSelection || !isNewReplay(info, selected)) return;
   const blob = URL.createObjectURL(video.value.slice(0, video.value.size, "video/mp4"));
-  startReplay({ ...info, blob, controls, timing: replayTiming(info.timing), perspective, manifestUrl: url });
+  const replay = { ...info, blob, controls, timing: replayTiming(info.timing), perspective, manifestUrl: url };
+  if (raceEndTimer !== null || (playing?.timing && !playing.archived)) {
+    discardQueuedReplay();
+    queuedReplay = replay;
+    return;
+  }
+  startReplay(replay);
 }
 
 new ResizeObserver(drawHistory).observe(chart);

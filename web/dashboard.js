@@ -478,16 +478,20 @@ function discardQueuedReplay() {
 camera.addEventListener("ended", () => {
   if (!playing?.timing || raceEndTimer !== null) return;
   const finished = playing.status === 4;
-  if (finished) {
-    const { start_seconds: start, lap_end_seconds: [first, second] } = playing.timing;
-    const seconds = (value) => Number.isFinite(value) ? `${value.toFixed(3)} s` : "—";
-    setText("result-lap-one", seconds(first - start));
-    setText("result-lap-two", seconds(second - first));
-    setText("result-elapsed-one", seconds(first - start));
-    setText("result-total", seconds(playing.official_seconds ?? second - start));
-    setText("result-elapsed-two", byId("result-total").textContent);
-    byId("race-results").hidden = false;
-  }
+  const { start_seconds: start, stop_seconds: stop, video_start_seconds: offset,
+          lap_end_seconds: [first, second] } = playing.timing;
+  const seconds = (value) => Number.isFinite(value) ? `${value.toFixed(3)} s` : "—";
+  const split = (end, from) => Number.isFinite(end) && Number.isFinite(from) ? seconds(Math.max(0, end - from)) : "—";
+  const status = {1: "Crash", 2: "Timed out", 3: "Stalled"}[playing.status] ?? "Race ended";
+  setText("race-results-title", finished ? "Race complete" : `${status} · ${playing.gates} / ${playing.gates_per_race} gates`);
+  setText("result-total-label", finished ? "Finish time" : "Elapsed time");
+  setText("result-lap-one", split(first, start));
+  setText("result-lap-two", split(second, first));
+  setText("result-elapsed-one", split(first, start));
+  setText("result-total", finished && Number.isFinite(playing.official_seconds)
+    ? seconds(playing.official_seconds) : split(stop ?? (camera.currentTime + offset), start));
+  setText("result-elapsed-two", finished ? byId("result-total").textContent : split(second, start));
+  byId("race-results").hidden = false;
   raceEndTimer = window.setTimeout(() => {
     cancelRaceEnd();
     if (queuedReplay) {
@@ -498,7 +502,7 @@ camera.addEventListener("ended", () => {
     }
     camera.currentTime = 0;
     startRacePlayback();
-  }, finished ? 5000 : 3000);
+  }, 5000);
 });
 
 camera.addEventListener("seeking", () => {

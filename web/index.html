@@ -6,7 +6,7 @@
   <meta name="description" content="FPV policy evaluation, training metrics, and checkpoint replays">
   <title>Flight Policy Research</title>
   <link rel="stylesheet" href="style.css?v=race-hud">
-  <script src="dashboard.js?v=complete-download" defer></script>
+  <script src="dashboard.js?v=all-race-results" defer></script>
 </head>
 <body>
   <main>
@@ -39,7 +39,7 @@
           <div class="race-countdown" id="race-countdown" role="status" hidden>3</div>
           <section class="race-results" id="race-results" aria-labelledby="race-results-title" hidden>
             <h3 id="race-results-title">Race complete</h3>
-            <div class="race-results-total"><span>Finish time</span><strong id="result-total">—</strong></div>
+            <div class="race-results-total"><span id="result-total-label">Finish time</span><strong id="result-total">—</strong></div>
             <table aria-label="Lap splits">
               <thead><tr><th scope="col">Lap</th><th scope="col">Split</th><th scope="col">Elapsed</th></tr></thead>
               <tbody>

@@ -5,6 +5,7 @@ import torch
 
 from tools import evaluate_rgb_imu_race as evaluator
 from tools.evaluate_rgb_imu_race import completion_profile, handoff_schedule, replay_timing, succeeds
+from tools.replay_export import race_summary
 from training.curriculum import FINISH_MARKER, PACE_MARKER, SPEED_MARKER, SPEED_RUN
 from training.live_feed import status
 from training.speed_elodin import perturb
@@ -56,6 +57,15 @@ def test_replay_timing_uses_recorded_crossings_and_ends_at_finish_or_contact():
     assert replay_timing(crash)["stop_seconds"] == 16.2
     assert replay_timing(crash | {"gates": 0, "gate_times": []})["start_seconds"] is None
     assert replay_timing(race | {"gate_times": None}) is None
+
+
+def test_incomplete_replay_keeps_only_completed_lap_splits():
+    replay = {"status": 1, "gates": 23, "gates_per_race": 24, "official_seconds": None,
+              "timing": {"start_seconds": 2., "lap_end_seconds": [16.],
+                         "stop_seconds": 31., "video_start_seconds": 0.}}
+    title, label, total, rows = race_summary(replay, 35.)
+    assert (title, label, total) == ("Crash · 23 / 24 gates", "Elapsed time", "29.000 s")
+    assert rows[1:] == (("1", "14.000 s", "14.000 s"), ("2", "—", "—"))
 
 
 def test_speed_score_prefers_clean_progress_and_a_faster_finish():

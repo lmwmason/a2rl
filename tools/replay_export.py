@@ -27,6 +27,29 @@ def font(size, bold=False):
     return ImageFont.truetype(path, size)
 
 
+def race_summary(replay, playback):
+    timing = replay["timing"]
+    ends = timing["lap_end_seconds"]
+    first, second = (ends + [None, None])[:2]
+    start = timing["start_seconds"]
+    stop = timing["stop_seconds"]
+    timestamp = stop if stop is not None else playback + timing["video_start_seconds"]
+    finished = replay["status"] == 4
+    status = {1: "Crash", 2: "Timed out", 3: "Stalled"}.get(replay["status"], "Race ended")
+    title = "Race complete" if finished else f"{status} · {replay['gates']} / {replay['gates_per_race']} gates"
+
+    def split(end, begin):
+        return f"{max(0., end - begin):.3f} s" if end is not None and begin is not None else "—"
+
+    official = replay.get("official_seconds")
+    total = f"{official:.3f} s" if finished and official is not None else split(timestamp, start)
+    first_split = split(first, start)
+    return title, "Finish time" if finished else "Elapsed time", total, (
+        ("Lap", "Split", "Elapsed"), ("1", first_split, first_split),
+        ("2", split(second, first), total if finished else split(second, start)),
+    )
+
+
 def overlay(image, replay, actions, sample_rate, playback, countdown=None, results=False):
     draw = ImageDraw.Draw(image)
     timing = replay["timing"]
@@ -68,16 +91,13 @@ def overlay(image, replay, actions, sample_rate, playback, countdown=None, resul
         draw.text((240, 173), countdown, font=font(53, True),
                   fill=GREEN if countdown == "GO" else PAPER, anchor="mm")
     if results:
-        first, second = ends
-        total = replay["official_seconds"]
+        title, total_label, total, rows = race_summary(replay, playback)
         draw.rounded_rectangle((69, 88, 411, 264), 8, fill=INK, outline="#50616b")
         draw.line((77, 89, 403, 89), fill=GREEN, width=3)
-        draw.text((86, 104), "Race complete", font=font(15, True), fill=PAPER)
-        draw.text((86, 137), "Finish time", font=font(12), fill=MUTED)
-        draw.text((394, 128), f"{total:.3f} s", font=font(28, True), fill=GREEN, anchor="rt")
-        for index, values in enumerate((("Lap", "Split", "Elapsed"),
-                                         ("1", f"{first-start:.3f} s", f"{first-start:.3f} s"),
-                                         ("2", f"{second-first:.3f} s", f"{total:.3f} s"))):
+        draw.text((86, 104), title, font=font(15, True), fill=PAPER)
+        draw.text((86, 137), total_label, font=font(12), fill=MUTED)
+        draw.text((394, 128), total, font=font(28, True), fill=GREEN, anchor="rt")
+        for index, values in enumerate(rows):
             y = 169 + index * 26
             draw.line((86, y, 394, y), fill="#41515a")
             for x, value in zip((87, 234, 394), values):
@@ -140,7 +160,7 @@ def render(source, destination, replay, controls):
     actions = np.clip(np.asarray(controls["actions"], dtype=float), -1., 1.)
     sample_rate = controls["sample_rate"]
     size = WIDTH * HEIGHT * 3
-    hold = 5 if replay["status"] == 4 else 3
+    hold = 5
     duration = float(subprocess.check_output(
         ["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=duration",
          "-of", "default=noprint_wrappers=1:nokey=1", str(source)], text=True))
@@ -175,7 +195,7 @@ def render(source, destination, replay, controls):
                     raw = decoder.stdout.read(size)
                 if decoder.wait() or raw:
                     raise ValueError(f"Incomplete replay decode for {source}")
-                frame = overlay(last, replay, actions, sample_rate, frames / FPS, results=hold == 5)
+                frame = overlay(last, replay, actions, sample_rate, frames / FPS, results=True)
                 for _ in range(hold):
                     encoder.stdin.write(frame * FPS)
                 encoder.stdin.close()

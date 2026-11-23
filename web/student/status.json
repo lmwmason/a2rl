@@ -4,374 +4,314 @@
   "course": "2026-practice",
   "physics_engine": "elodin",
   "gates_per_race": 24,
-  "round": 864,
-  "steps": 16588800,
+  "round": 1166,
+  "steps": 21100800,
   "curriculum_stage": "finish",
   "recent_gates": [
-    1,
-    2,
+    5,
+    5,
     3,
-    2,
+    5,
+    7,
+    5,
     3,
-    2,
-    2,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    2,
-    3,
-    2,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    3,
-    2,
-    1,
-    1,
-    2,
-    2,
-    2,
-    2,
-    3,
-    1,
-    1,
-    1,
-    1,
-    2,
-    2,
-    2,
-    2,
-    1,
-    3,
-    2,
-    2,
-    3,
-    3,
-    2,
+    5,
     4,
+    9,
     3,
-    1,
-    3,
+    8,
+    5,
+    5,
     4,
-    4,
-    1,
-    2,
+    5,
+    8,
+    5,
+    5,
+    7,
+    5,
+    5,
     3,
-    4,
-    2,
+    7,
     3,
-    1
+    7,
+    9,
+    4,
+    8,
+    7,
+    8,
+    7,
+    3,
+    8,
+    11,
+    7,
+    13,
+    11,
+    10,
+    5,
+    3,
+    9,
+    10,
+    12,
+    8,
+    5,
+    3,
+    10,
+    8,
+    13,
+    8,
+    10,
+    3,
+    8,
+    10,
+    8,
+    6,
+    11,
+    13,
+    14
   ],
   "recent_finish_times": [
     {
-      "at": 264,
-      "standard_s": null,
+      "at": 1,
       "comparison_s": null
     },
     {
-      "at": 281,
-      "standard_s": null,
+      "at": 2,
       "comparison_s": null
     },
     {
-      "at": 298,
-      "standard_s": null,
+      "at": 3,
       "comparison_s": null
     },
     {
-      "at": 314,
-      "standard_s": null,
+      "at": 4,
       "comparison_s": null
     },
     {
-      "at": 332,
-      "standard_s": null,
+      "at": 5,
       "comparison_s": null
     },
     {
-      "at": 349,
-      "standard_s": null,
+      "at": 6,
       "comparison_s": null
     },
     {
-      "at": 366,
-      "standard_s": null,
+      "at": 7,
       "comparison_s": null
     },
     {
-      "at": 384,
-      "standard_s": null,
+      "at": 8,
       "comparison_s": null
     },
     {
-      "at": 401,
-      "standard_s": null,
+      "at": 9,
       "comparison_s": null
     },
     {
-      "at": 417,
-      "standard_s": null,
+      "at": 10,
       "comparison_s": null
     },
     {
-      "at": 434,
-      "standard_s": null,
+      "at": 11,
       "comparison_s": null
     },
     {
-      "at": 451,
-      "standard_s": null,
+      "at": 12,
       "comparison_s": null
     },
     {
-      "at": 467,
-      "standard_s": null,
+      "at": 13,
       "comparison_s": null
     },
     {
-      "at": 484,
-      "standard_s": null,
+      "at": 14,
       "comparison_s": null
     },
     {
-      "at": 499,
-      "standard_s": null,
+      "at": 15,
       "comparison_s": null
     },
     {
-      "at": 515,
-      "standard_s": null,
+      "at": 16,
       "comparison_s": null
     },
     {
-      "at": 531,
-      "standard_s": null,
+      "at": 17,
       "comparison_s": null
     },
     {
-      "at": 547,
-      "standard_s": null,
+      "at": 18,
       "comparison_s": null
     },
     {
-      "at": 563,
-      "standard_s": null,
+      "at": 19,
       "comparison_s": null
     },
     {
-      "at": 579,
-      "standard_s": null,
+      "at": 20,
       "comparison_s": null
     },
     {
-      "at": 595,
-      "standard_s": null,
+      "at": 21,
       "comparison_s": null
     },
     {
-      "at": 610,
-      "standard_s": null,
+      "at": 22,
       "comparison_s": null
     },
     {
-      "at": 625,
-      "standard_s": null,
+      "at": 23,
       "comparison_s": null
     },
     {
-      "at": 642,
-      "standard_s": null,
+      "at": 24,
       "comparison_s": null
     },
     {
-      "at": 659,
-      "standard_s": null,
+      "at": 25,
       "comparison_s": null
     },
     {
-      "at": 675,
-      "standard_s": null,
+      "at": 26,
       "comparison_s": null
     },
     {
-      "at": 691,
-      "standard_s": null,
+      "at": 27,
       "comparison_s": null
     },
     {
-      "at": 706,
-      "standard_s": null,
+      "at": 28,
       "comparison_s": null
     },
     {
-      "at": 723,
-      "standard_s": null,
+      "at": 29,
       "comparison_s": null
     },
     {
-      "at": 739,
-      "standard_s": null,
+      "at": 30,
       "comparison_s": null
     },
     {
-      "at": 755,
-      "standard_s": null,
+      "at": 31,
       "comparison_s": null
     },
     {
-      "at": 771,
-      "standard_s": null,
+      "at": 32,
       "comparison_s": null
     },
     {
-      "at": 787,
-      "standard_s": null,
+      "at": 33,
       "comparison_s": null
     },
     {
-      "at": 817,
-      "standard_s": null,
+      "at": 34,
       "comparison_s": null
     },
     {
-      "at": 818,
-      "standard_s": null,
+      "at": 35,
       "comparison_s": null
     },
     {
-      "at": 819,
-      "standard_s": null,
+      "at": 36,
       "comparison_s": null
     },
     {
-      "at": 820,
-      "standard_s": null,
+      "at": 37,
       "comparison_s": null
     },
     {
-      "at": 821,
-      "standard_s": null,
+      "at": 38,
       "comparison_s": null
     },
     {
-      "at": 822,
-      "standard_s": null,
+      "at": 39,
       "comparison_s": null
     },
     {
-      "at": 825,
-      "standard_s": null,
+      "at": 40,
       "comparison_s": null
     },
     {
-      "at": 827,
-      "standard_s": null,
+      "at": 41,
       "comparison_s": null
     },
     {
-      "at": 828,
-      "standard_s": null,
+      "at": 42,
       "comparison_s": null
     },
     {
-      "at": 830,
-      "standard_s": null,
+      "at": 43,
       "comparison_s": null
     },
     {
-      "at": 832,
-      "standard_s": null,
+      "at": 44,
       "comparison_s": null
     },
     {
-      "at": 834,
-      "standard_s": null,
+      "at": 45,
       "comparison_s": null
     },
     {
-      "at": 836,
-      "standard_s": null,
+      "at": 46,
       "comparison_s": null
     },
     {
-      "at": 838,
-      "standard_s": null,
+      "at": 47,
       "comparison_s": null
     },
     {
-      "at": 841,
-      "standard_s": null,
+      "at": 48,
       "comparison_s": null
     },
     {
-      "at": 842,
-      "standard_s": null,
+      "at": 49,
       "comparison_s": null
     },
     {
-      "at": 844,
-      "standard_s": null,
+      "at": 50,
       "comparison_s": null
     },
     {
-      "at": 846,
-      "standard_s": null,
+      "at": 51,
       "comparison_s": null
     },
     {
-      "at": 848,
-      "standard_s": null,
+      "at": 52,
       "comparison_s": null
     },
     {
-      "at": 850,
-      "standard_s": null,
+      "at": 53,
       "comparison_s": null
     },
     {
-      "at": 852,
-      "standard_s": null,
+      "at": 54,
       "comparison_s": null
     },
     {
-      "at": 854,
-      "standard_s": null,
+      "at": 55,
       "comparison_s": null
     },
     {
-      "at": 856,
-      "standard_s": null,
+      "at": 56,
       "comparison_s": null
     },
     {
-      "at": 859,
-      "standard_s": null,
+      "at": 57,
       "comparison_s": null
     },
     {
-      "at": 860,
-      "standard_s": null,
+      "at": 58,
       "comparison_s": null
     },
     {
-      "at": 862,
-      "standard_s": null,
+      "at": 59,
       "comparison_s": null
     },
     {
-      "at": 864,
-      "standard_s": null,
+      "at": 60,
       "comparison_s": null
     }
   ],
   "finish_rate": 0.0,
-  "collision_rate": 1.0,
+  "collision_rate": 0.9833333333333333,
   "best_two_lap_seconds": null
 }

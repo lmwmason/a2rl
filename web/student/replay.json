@@ -1,447 +1,104 @@
 {
-  "round": 864,
-  "steps": 16588800,
-  "version": "1795399179535823407",
+  "round": 1166,
+  "steps": 21100800,
+  "version": "1795405548682076382",
   "phase": "IMITATION",
-  "gates": 1,
+  "gates": 14,
   "status": 1,
   "official_seconds": null,
   "curriculum_stage": "finish",
   "kind": "student-evaluation",
-  "url": "replay-1795399179535823407.mp4",
-  "chase_url": "chase-1795399179535823407.mp4",
-  "controls_url": "controls-1795399179535823407.json",
+  "url": "replay-1795405548682076382.mp4",
+  "chase_url": "chase-1795405548682076382.mp4",
+  "controls_url": "controls-1795405548682076382.json",
   "course": "2026-practice",
   "physics_engine": "elodin",
   "gates_per_race": 24,
   "history": [
     {
-      "round": 264,
-      "steps": 5068800,
-      "version": "1795394144245455685",
+      "round": 951,
+      "steps": 18259200,
+      "version": "1795401597718389564",
       "phase": "IMITATION",
-      "gates": 1,
+      "gates": 5,
       "status": 1,
-      "official_seconds": null
+      "official_seconds": null,
+      "curriculum_stage": "finish"
     },
     {
-      "round": 281,
-      "steps": 5395200,
-      "version": "1795394202518424703",
+      "round": 957,
+      "steps": 18374400,
+      "version": "1795401724811334226",
       "phase": "IMITATION",
-      "gates": 2,
+      "gates": 5,
       "status": 1,
-      "official_seconds": null
+      "official_seconds": null,
+      "curriculum_stage": "finish"
     },
     {
-      "round": 298,
-      "steps": 5721600,
-      "version": "1795394259857857288",
-      "phase": "IMITATION",
-      "gates": 3,
-      "status": 1,
-      "official_seconds": null
-    },
-    {
-      "round": 314,
-      "steps": 6028800,
-      "version": "1795394322521802882",
-      "phase": "IMITATION",
-      "gates": 2,
-      "status": 1,
-      "official_seconds": null
-    },
-    {
-      "round": 332,
-      "steps": 6374400,
-      "version": "1795394384042248235",
+      "round": 963,
+      "steps": 18489600,
+      "version": "1795401801248698804",
       "phase": "IMITATION",
       "gates": 3,
       "status": 1,
-      "official_seconds": null
+      "official_seconds": null,
+      "curriculum_stage": "finish"
     },
     {
-      "round": 349,
-      "steps": 6700800,
-      "version": "1795394444462722412",
+      "round": 973,
+      "steps": 18681600,
+      "version": "1795402022720877846",
       "phase": "IMITATION",
-      "gates": 2,
+      "gates": 5,
       "status": 1,
-      "official_seconds": null
+      "official_seconds": null,
+      "curriculum_stage": "finish"
     },
     {
-      "round": 366,
-      "steps": 7027200,
-      "version": "1795394507790594410",
+      "round": 978,
+      "steps": 18777600,
+      "version": "1795402160187939393",
       "phase": "IMITATION",
-      "gates": 2,
+      "gates": 7,
       "status": 1,
-      "official_seconds": null
+      "official_seconds": null,
+      "curriculum_stage": "finish"
     },
     {
-      "round": 384,
-      "steps": 7372800,
-      "version": "1795394568021089598",
+      "round": 985,
+      "steps": 18912000,
+      "version": "1795402274717605025",
       "phase": "IMITATION",
-      "gates": 1,
+      "gates": 5,
       "status": 1,
-      "official_seconds": null
+      "official_seconds": null,
+      "curriculum_stage": "finish"
     },
     {
-      "round": 401,
-      "steps": 7699200,
-      "version": "1795394623015555296",
-      "phase": "IMITATION",
-      "gates": 1,
-      "status": 1,
-      "official_seconds": null
-    },
-    {
-      "round": 417,
-      "steps": 8006400,
-      "version": "1795394682077077971",
-      "phase": "IMITATION",
-      "gates": 1,
-      "status": 1,
-      "official_seconds": null
-    },
-    {
-      "round": 434,
-      "steps": 8332800,
-      "version": "1795394742361252157",
-      "phase": "IMITATION",
-      "gates": 1,
-      "status": 1,
-      "official_seconds": null
-    },
-    {
-      "round": 451,
-      "steps": 8659200,
-      "version": "1795394797653396925",
-      "phase": "IMITATION",
-      "gates": 1,
-      "status": 1,
-      "official_seconds": null
-    },
-    {
-      "round": 467,
-      "steps": 8966400,
-      "version": "1795394857752353181",
-      "phase": "IMITATION",
-      "gates": 1,
-      "status": 1,
-      "official_seconds": null
-    },
-    {
-      "round": 484,
-      "steps": 9292800,
-      "version": "1795394913163488423",
-      "phase": "IMITATION",
-      "gates": 1,
-      "status": 1,
-      "official_seconds": null
-    },
-    {
-      "round": 499,
-      "steps": 9580800,
-      "version": "1795394969461090245",
-      "phase": "IMITATION",
-      "gates": 2,
-      "status": 1,
-      "official_seconds": null
-    },
-    {
-      "round": 515,
-      "steps": 9888000,
-      "version": "1795395027497816104",
+      "round": 1005,
+      "steps": 19204800,
+      "version": "1795402607963667187",
       "phase": "IMITATION",
       "gates": 3,
       "status": 1,
-      "official_seconds": null
+      "official_seconds": null,
+      "curriculum_stage": "finish"
     },
     {
-      "round": 531,
-      "steps": 10195200,
-      "version": "1795395082885910510",
+      "round": 1018,
+      "steps": 19360800,
+      "version": "1795402926176625385",
       "phase": "IMITATION",
-      "gates": 2,
+      "gates": 5,
       "status": 1,
-      "official_seconds": null
+      "official_seconds": null,
+      "curriculum_stage": "finish"
     },
     {
-      "round": 547,
-      "steps": 10502400,
-      "version": "1795395142394370612",
-      "phase": "IMITATION",
-      "gates": 1,
-      "status": 1,
-      "official_seconds": null
-    },
-    {
-      "round": 563,
-      "steps": 10809600,
-      "version": "1795395199355302631",
-      "phase": "IMITATION",
-      "gates": 1,
-      "status": 1,
-      "official_seconds": null
-    },
-    {
-      "round": 579,
-      "steps": 11116800,
-      "version": "1795395256369958821",
-      "phase": "IMITATION",
-      "gates": 1,
-      "status": 1,
-      "official_seconds": null
-    },
-    {
-      "round": 595,
-      "steps": 11424000,
-      "version": "1795395313401693113",
-      "phase": "IMITATION",
-      "gates": 1,
-      "status": 1,
-      "official_seconds": null
-    },
-    {
-      "round": 610,
-      "steps": 11712000,
-      "version": "1795395370077456314",
-      "phase": "IMITATION",
-      "gates": 1,
-      "status": 1,
-      "official_seconds": null
-    },
-    {
-      "round": 625,
-      "steps": 12000000,
-      "version": "1795395428681897430",
-      "phase": "IMITATION",
-      "gates": 1,
-      "status": 1,
-      "official_seconds": null
-    },
-    {
-      "round": 642,
-      "steps": 12326400,
-      "version": "1795395489126829502",
-      "phase": "IMITATION",
-      "gates": 3,
-      "status": 1,
-      "official_seconds": null
-    },
-    {
-      "round": 659,
-      "steps": 12652800,
-      "version": "1795395549177856914",
-      "phase": "IMITATION",
-      "gates": 2,
-      "status": 1,
-      "official_seconds": null
-    },
-    {
-      "round": 675,
-      "steps": 12960000,
-      "version": "1795395605852827382",
-      "phase": "IMITATION",
-      "gates": 1,
-      "status": 1,
-      "official_seconds": null
-    },
-    {
-      "round": 691,
-      "steps": 13267200,
-      "version": "1795395661717404125",
-      "phase": "IMITATION",
-      "gates": 1,
-      "status": 1,
-      "official_seconds": null
-    },
-    {
-      "round": 706,
-      "steps": 13555200,
-      "version": "1795395722461466412",
-      "phase": "IMITATION",
-      "gates": 2,
-      "status": 1,
-      "official_seconds": null
-    },
-    {
-      "round": 723,
-      "steps": 13881600,
-      "version": "1795395781718362960",
-      "phase": "IMITATION",
-      "gates": 2,
-      "status": 1,
-      "official_seconds": null
-    },
-    {
-      "round": 739,
-      "steps": 14188800,
-      "version": "1795395839498562413",
-      "phase": "IMITATION",
-      "gates": 2,
-      "status": 1,
-      "official_seconds": null
-    },
-    {
-      "round": 755,
-      "steps": 14496000,
-      "version": "1795395896846050353",
-      "phase": "IMITATION",
-      "gates": 2,
-      "status": 1,
-      "official_seconds": null
-    },
-    {
-      "round": 771,
-      "steps": 14803200,
-      "version": "1795395956457826234",
-      "phase": "IMITATION",
-      "gates": 3,
-      "status": 1,
-      "official_seconds": null
-    },
-    {
-      "round": 787,
-      "steps": 15110400,
-      "version": "1795396016684470889",
-      "phase": "IMITATION",
-      "gates": 1,
-      "status": 1,
-      "official_seconds": null
-    },
-    {
-      "round": 817,
-      "steps": 15686400,
-      "version": "1795396248505497776",
-      "phase": "IMITATION",
-      "gates": 1,
-      "status": 1,
-      "official_seconds": null
-    },
-    {
-      "round": 818,
-      "steps": 15705600,
-      "version": "1795396315908342390",
-      "phase": "IMITATION",
-      "gates": 1,
-      "status": 1,
-      "official_seconds": null
-    },
-    {
-      "round": 819,
-      "steps": 15724800,
-      "version": "1795396381344983489",
-      "phase": "IMITATION",
-      "gates": 1,
-      "status": 1,
-      "official_seconds": null
-    },
-    {
-      "round": 820,
-      "steps": 15744000,
-      "version": "1795396443003798230",
-      "phase": "IMITATION",
-      "gates": 2,
-      "status": 1,
-      "official_seconds": null
-    },
-    {
-      "round": 821,
-      "steps": 15763200,
-      "version": "1795396594093833412",
-      "phase": "IMITATION",
-      "gates": 2,
-      "status": 1,
-      "official_seconds": null
-    },
-    {
-      "round": 822,
-      "steps": 15782400,
-      "version": "1795396688525657865",
-      "phase": "IMITATION",
-      "gates": 2,
-      "status": 1,
-      "official_seconds": null
-    },
-    {
-      "round": 825,
-      "steps": 15840000,
-      "version": "1795396854880772435",
-      "phase": "IMITATION",
-      "gates": 2,
-      "status": 1,
-      "official_seconds": null
-    },
-    {
-      "round": 827,
-      "steps": 15878400,
-      "version": "1795397024249418534",
-      "phase": "IMITATION",
-      "gates": 1,
-      "status": 1,
-      "official_seconds": null
-    },
-    {
-      "round": 828,
-      "steps": 15897600,
-      "version": "1795397124360732042",
-      "phase": "IMITATION",
-      "gates": 3,
-      "status": 1,
-      "official_seconds": null
-    },
-    {
-      "round": 830,
-      "steps": 15936000,
-      "version": "1795397217454297394",
-      "phase": "IMITATION",
-      "gates": 2,
-      "status": 1,
-      "official_seconds": null
-    },
-    {
-      "round": 832,
-      "steps": 15974400,
-      "version": "1795397308265772414",
-      "phase": "IMITATION",
-      "gates": 2,
-      "status": 1,
-      "official_seconds": null
-    },
-    {
-      "round": 834,
-      "steps": 16012800,
-      "version": "1795397412388998169",
-      "phase": "IMITATION",
-      "gates": 3,
-      "status": 1,
-      "official_seconds": null
-    },
-    {
-      "round": 836,
-      "steps": 16051200,
-      "version": "1795397511468931102",
-      "phase": "IMITATION",
-      "gates": 3,
-      "status": 1,
-      "official_seconds": null
-    },
-    {
-      "round": 838,
-      "steps": 16089600,
-      "version": "1795397609112594381",
-      "phase": "IMITATION",
-      "gates": 2,
-      "status": 1,
-      "official_seconds": null
-    },
-    {
-      "round": 841,
-      "steps": 16147200,
-      "version": "1795397734095097464",
+      "round": 1026,
+      "steps": 19456800,
+      "version": "1795403041595526275",
       "phase": "IMITATION",
       "gates": 4,
       "status": 1,
@@ -449,9 +106,19 @@
       "curriculum_stage": "finish"
     },
     {
-      "round": 842,
-      "steps": 16166400,
-      "version": "1795397829132527716",
+      "round": 1034,
+      "steps": 19552800,
+      "version": "1795403215051537708",
+      "phase": "IMITATION",
+      "gates": 9,
+      "status": 1,
+      "official_seconds": null,
+      "curriculum_stage": "finish"
+    },
+    {
+      "round": 1047,
+      "steps": 19708800,
+      "version": "1795403291234721878",
       "phase": "IMITATION",
       "gates": 3,
       "status": 1,
@@ -459,29 +126,39 @@
       "curriculum_stage": "finish"
     },
     {
-      "round": 844,
-      "steps": 16204800,
-      "version": "1795397919766072336",
+      "round": 1051,
+      "steps": 19756800,
+      "version": "1795403471502556980",
       "phase": "IMITATION",
-      "gates": 1,
+      "gates": 8,
       "status": 1,
       "official_seconds": null,
       "curriculum_stage": "finish"
     },
     {
-      "round": 846,
-      "steps": 16243200,
-      "version": "1795398019841693407",
+      "round": 1062,
+      "steps": 19888800,
+      "version": "1795403583406949002",
       "phase": "IMITATION",
-      "gates": 3,
+      "gates": 5,
       "status": 1,
       "official_seconds": null,
       "curriculum_stage": "finish"
     },
     {
-      "round": 848,
-      "steps": 16281600,
-      "version": "1795398121064320217",
+      "round": 1067,
+      "steps": 19936800,
+      "version": "1795403610323487873",
+      "phase": "IMITATION",
+      "gates": 5,
+      "status": 1,
+      "official_seconds": null,
+      "curriculum_stage": "finish"
+    },
+    {
+      "round": 1069,
+      "steps": 19960800,
+      "version": "1795403643873943141",
       "phase": "IMITATION",
       "gates": 4,
       "status": 1,
@@ -489,39 +166,79 @@
       "curriculum_stage": "finish"
     },
     {
-      "round": 850,
-      "steps": 16320000,
-      "version": "1795398227651525526",
+      "round": 1071,
+      "steps": 19984800,
+      "version": "1795403682691575855",
       "phase": "IMITATION",
-      "gates": 4,
+      "gates": 5,
       "status": 1,
       "official_seconds": null,
       "curriculum_stage": "finish"
     },
     {
-      "round": 852,
-      "steps": 16358400,
-      "version": "1795398325930226374",
+      "round": 1074,
+      "steps": 20020800,
+      "version": "1795403737151985625",
       "phase": "IMITATION",
-      "gates": 1,
+      "gates": 8,
       "status": 1,
       "official_seconds": null,
       "curriculum_stage": "finish"
     },
     {
-      "round": 854,
-      "steps": 16396800,
-      "version": "1795398418511832762",
+      "round": 1076,
+      "steps": 20044800,
+      "version": "1795403766357474328",
       "phase": "IMITATION",
-      "gates": 2,
+      "gates": 5,
       "status": 1,
       "official_seconds": null,
       "curriculum_stage": "finish"
     },
     {
-      "round": 856,
-      "steps": 16435200,
-      "version": "1795398514873251744",
+      "round": 1078,
+      "steps": 20068800,
+      "version": "1795403798946568872",
+      "phase": "IMITATION",
+      "gates": 5,
+      "status": 1,
+      "official_seconds": null,
+      "curriculum_stage": "finish"
+    },
+    {
+      "round": 1080,
+      "steps": 20092800,
+      "version": "1795403836635855665",
+      "phase": "IMITATION",
+      "gates": 7,
+      "status": 1,
+      "official_seconds": null,
+      "curriculum_stage": "finish"
+    },
+    {
+      "round": 1082,
+      "steps": 20116800,
+      "version": "1795403865181348741",
+      "phase": "IMITATION",
+      "gates": 5,
+      "status": 1,
+      "official_seconds": null,
+      "curriculum_stage": "finish"
+    },
+    {
+      "round": 1084,
+      "steps": 20140800,
+      "version": "1795403898563593258",
+      "phase": "IMITATION",
+      "gates": 5,
+      "status": 1,
+      "official_seconds": null,
+      "curriculum_stage": "finish"
+    },
+    {
+      "round": 1086,
+      "steps": 20164800,
+      "version": "1795403926141493986",
       "phase": "IMITATION",
       "gates": 3,
       "status": 1,
@@ -529,29 +246,19 @@
       "curriculum_stage": "finish"
     },
     {
-      "round": 859,
-      "steps": 16492800,
-      "version": "1795398723931604056",
+      "round": 1089,
+      "steps": 20200800,
+      "version": "1795403975104002884",
       "phase": "IMITATION",
-      "gates": 4,
+      "gates": 7,
       "status": 1,
       "official_seconds": null,
       "curriculum_stage": "finish"
     },
     {
-      "round": 860,
-      "steps": 16512000,
-      "version": "1795398873702792678",
-      "phase": "IMITATION",
-      "gates": 2,
-      "status": 1,
-      "official_seconds": null,
-      "curriculum_stage": "finish"
-    },
-    {
-      "round": 862,
-      "steps": 16550400,
-      "version": "1795399041888892075",
+      "round": 1091,
+      "steps": 20224800,
+      "version": "1795403995435313957",
       "phase": "IMITATION",
       "gates": 3,
       "status": 1,
@@ -559,11 +266,351 @@
       "curriculum_stage": "finish"
     },
     {
-      "round": 864,
-      "steps": 16588800,
-      "version": "1795399179535823407",
+      "round": 1093,
+      "steps": 20248800,
+      "version": "1795404043370688756",
       "phase": "IMITATION",
-      "gates": 1,
+      "gates": 7,
+      "status": 1,
+      "official_seconds": null,
+      "curriculum_stage": "finish"
+    },
+    {
+      "round": 1095,
+      "steps": 20272800,
+      "version": "1795404080098552501",
+      "phase": "IMITATION",
+      "gates": 9,
+      "status": 1,
+      "official_seconds": null,
+      "curriculum_stage": "finish"
+    },
+    {
+      "round": 1097,
+      "steps": 20296800,
+      "version": "1795404099953879509",
+      "phase": "IMITATION",
+      "gates": 4,
+      "status": 1,
+      "official_seconds": null,
+      "curriculum_stage": "finish"
+    },
+    {
+      "round": 1099,
+      "steps": 20320800,
+      "version": "1795404148705471470",
+      "phase": "IMITATION",
+      "gates": 8,
+      "status": 1,
+      "official_seconds": null,
+      "curriculum_stage": "finish"
+    },
+    {
+      "round": 1101,
+      "steps": 20344800,
+      "version": "1795404184232583605",
+      "phase": "IMITATION",
+      "gates": 7,
+      "status": 1,
+      "official_seconds": null,
+      "curriculum_stage": "finish"
+    },
+    {
+      "round": 1103,
+      "steps": 20368800,
+      "version": "1795404226748599302",
+      "phase": "IMITATION",
+      "gates": 8,
+      "status": 1,
+      "official_seconds": null,
+      "curriculum_stage": "finish"
+    },
+    {
+      "round": 1106,
+      "steps": 20404800,
+      "version": "1795404260289484828",
+      "phase": "IMITATION",
+      "gates": 7,
+      "status": 1,
+      "official_seconds": null,
+      "curriculum_stage": "finish"
+    },
+    {
+      "round": 1108,
+      "steps": 20428800,
+      "version": "1795404282065564072",
+      "phase": "IMITATION",
+      "gates": 3,
+      "status": 1,
+      "official_seconds": null,
+      "curriculum_stage": "finish"
+    },
+    {
+      "round": 1110,
+      "steps": 20452800,
+      "version": "1795404329747073925",
+      "phase": "IMITATION",
+      "gates": 8,
+      "status": 1,
+      "official_seconds": null,
+      "curriculum_stage": "finish"
+    },
+    {
+      "round": 1112,
+      "steps": 20476800,
+      "version": "1795404377629055811",
+      "phase": "IMITATION",
+      "gates": 11,
+      "status": 1,
+      "official_seconds": null,
+      "curriculum_stage": "finish"
+    },
+    {
+      "round": 1114,
+      "steps": 20500800,
+      "version": "1795404411167019942",
+      "phase": "IMITATION",
+      "gates": 7,
+      "status": 1,
+      "official_seconds": null,
+      "curriculum_stage": "finish"
+    },
+    {
+      "round": 1115,
+      "steps": 20512800,
+      "version": "1795404472553578837",
+      "phase": "IMITATION",
+      "gates": 13,
+      "status": 1,
+      "official_seconds": null,
+      "curriculum_stage": "finish"
+    },
+    {
+      "round": 1118,
+      "steps": 20548800,
+      "version": "1795404526989207204",
+      "phase": "IMITATION",
+      "gates": 11,
+      "status": 1,
+      "official_seconds": null,
+      "curriculum_stage": "finish"
+    },
+    {
+      "round": 1121,
+      "steps": 20584800,
+      "version": "1795404566164991747",
+      "phase": "IMITATION",
+      "gates": 10,
+      "status": 1,
+      "official_seconds": null,
+      "curriculum_stage": "finish"
+    },
+    {
+      "round": 1124,
+      "steps": 20620800,
+      "version": "1795404598849968225",
+      "phase": "IMITATION",
+      "gates": 5,
+      "status": 1,
+      "official_seconds": null,
+      "curriculum_stage": "finish"
+    },
+    {
+      "round": 1126,
+      "steps": 20644800,
+      "version": "1795404636239328841",
+      "phase": "IMITATION",
+      "gates": 3,
+      "status": 1,
+      "official_seconds": null,
+      "curriculum_stage": "finish"
+    },
+    {
+      "round": 1128,
+      "steps": 20668800,
+      "version": "1795404695831942288",
+      "phase": "IMITATION",
+      "gates": 9,
+      "status": 1,
+      "official_seconds": null,
+      "curriculum_stage": "finish"
+    },
+    {
+      "round": 1130,
+      "steps": 20692800,
+      "version": "1795404756644918380",
+      "phase": "IMITATION",
+      "gates": 10,
+      "status": 3,
+      "official_seconds": null,
+      "curriculum_stage": "finish"
+    },
+    {
+      "round": 1133,
+      "steps": 20728800,
+      "version": "1795404804047843590",
+      "phase": "IMITATION",
+      "gates": 12,
+      "status": 1,
+      "official_seconds": null,
+      "curriculum_stage": "finish"
+    },
+    {
+      "round": 1136,
+      "steps": 20764800,
+      "version": "1795404841216029177",
+      "phase": "IMITATION",
+      "gates": 8,
+      "status": 1,
+      "official_seconds": null,
+      "curriculum_stage": "finish"
+    },
+    {
+      "round": 1138,
+      "steps": 20788800,
+      "version": "1795404871567362026",
+      "phase": "IMITATION",
+      "gates": 5,
+      "status": 1,
+      "official_seconds": null,
+      "curriculum_stage": "finish"
+    },
+    {
+      "round": 1140,
+      "steps": 20812800,
+      "version": "1795404908875266378",
+      "phase": "IMITATION",
+      "gates": 3,
+      "status": 1,
+      "official_seconds": null,
+      "curriculum_stage": "finish"
+    },
+    {
+      "round": 1142,
+      "steps": 20824800,
+      "version": "1795404965010868343",
+      "phase": "IMITATION",
+      "gates": 10,
+      "status": 1,
+      "official_seconds": null,
+      "curriculum_stage": "finish"
+    },
+    {
+      "round": 1143,
+      "steps": 20836800,
+      "version": "1795405002927261419",
+      "phase": "IMITATION",
+      "gates": 8,
+      "status": 1,
+      "official_seconds": null,
+      "curriculum_stage": "finish"
+    },
+    {
+      "round": 1145,
+      "steps": 20860800,
+      "version": "1795405064681971830",
+      "phase": "IMITATION",
+      "gates": 13,
+      "status": 1,
+      "official_seconds": null,
+      "curriculum_stage": "finish"
+    },
+    {
+      "round": 1147,
+      "steps": 20884800,
+      "version": "1795405106691228059",
+      "phase": "IMITATION",
+      "gates": 8,
+      "status": 1,
+      "official_seconds": null,
+      "curriculum_stage": "finish"
+    },
+    {
+      "round": 1150,
+      "steps": 20920800,
+      "version": "1795405152170873975",
+      "phase": "IMITATION",
+      "gates": 10,
+      "status": 1,
+      "official_seconds": null,
+      "curriculum_stage": "finish"
+    },
+    {
+      "round": 1152,
+      "steps": 20944800,
+      "version": "1795405179580812773",
+      "phase": "IMITATION",
+      "gates": 3,
+      "status": 1,
+      "official_seconds": null,
+      "curriculum_stage": "finish"
+    },
+    {
+      "round": 1154,
+      "steps": 20968800,
+      "version": "1795405241034045732",
+      "phase": "IMITATION",
+      "gates": 8,
+      "status": 1,
+      "official_seconds": null,
+      "curriculum_stage": "finish"
+    },
+    {
+      "round": 1156,
+      "steps": 20992800,
+      "version": "1795405288088463455",
+      "phase": "IMITATION",
+      "gates": 10,
+      "status": 1,
+      "official_seconds": null,
+      "curriculum_stage": "finish"
+    },
+    {
+      "round": 1158,
+      "steps": 21016800,
+      "version": "1795405330622290363",
+      "phase": "IMITATION",
+      "gates": 8,
+      "status": 1,
+      "official_seconds": null,
+      "curriculum_stage": "finish"
+    },
+    {
+      "round": 1160,
+      "steps": 21040800,
+      "version": "1795405384206270675",
+      "phase": "IMITATION",
+      "gates": 6,
+      "status": 1,
+      "official_seconds": null,
+      "curriculum_stage": "finish"
+    },
+    {
+      "round": 1162,
+      "steps": 21064800,
+      "version": "1795405441677483059",
+      "phase": "IMITATION",
+      "gates": 11,
+      "status": 1,
+      "official_seconds": null,
+      "curriculum_stage": "finish"
+    },
+    {
+      "round": 1165,
+      "steps": 21088800,
+      "version": "1795405492985100709",
+      "phase": "IMITATION",
+      "gates": 13,
+      "status": 1,
+      "official_seconds": null,
+      "curriculum_stage": "finish"
+    },
+    {
+      "round": 1166,
+      "steps": 21100800,
+      "version": "1795405548682076382",
+      "phase": "IMITATION",
+      "gates": 14,
       "status": 1,
       "official_seconds": null,
       "curriculum_stage": "finish"

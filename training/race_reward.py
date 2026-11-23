@@ -82,6 +82,6 @@ def matched_improvement(candidate, incumbent):
         return False
     deltas = [base["official_seconds"] - trial["official_seconds"]
               for trial, base in zip(candidate, incumbent) if clean_finish(base)]
-    if deltas and (min(deltas) < -.15 or sum(deltas) / len(deltas) < (-.015 if len(deltas) < len(candidate) else .015)):
+    if deltas and min(deltas) < -.15:
         return False
-    return True
+    return len(deltas) < len(candidate) or sum(deltas) / len(deltas) >= .015

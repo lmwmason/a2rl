@@ -62,6 +62,7 @@ def test_speed_score_prefers_clean_progress_and_a_faster_finish():
     wide = finish | {"reward_trace": finish["reward_trace"] | {"crossing_offsets_m": [.53] * 24}}
     assert score(wide) < score(finish)
     assert matched_improvement([finish | {"official_seconds": 23.}] * 3, [finish] * 3)
+    assert matched_improvement([finish | {"official_seconds": 24.07}, finish, finish], [finish, crash, crash])
     assert not matched_improvement([finish | {"official_seconds": 24.2}, finish, finish], [finish] * 3)
     assert not matched_improvement([finish, crash, finish], [finish] * 3)
 

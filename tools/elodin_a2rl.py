@@ -216,10 +216,11 @@ def configure_course(course, lib, season2, asset, camera_feed, report_path):
         nonlocal stalled
         handoff = elodin_policy.handoff
         target_reached = handoff is not None and len(passed_times) >= handoff["target_gates"]
+        scored_finish = trace is not None and len(passed_times) >= len(course.EASY_COURSE)
         last_crossing = passed_times[-1] if passed_times else 0.
         stalled = (max_gate_gap > 0 and not contact and len(passed_times) < len(course.EASY_COURSE)
                    and elapsed - last_crossing >= max_gate_gap)
-        if not (contact or target_reached or stalled) or elodin_policy.heat is not None:
+        if not (contact or target_reached or scored_finish or stalled) or elodin_policy.heat is not None:
             return False
         summary(course.EASY_COURSE, len(passed_times) - 1, passed_times, elapsed)
         return True

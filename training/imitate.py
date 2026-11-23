@@ -1,5 +1,6 @@
 """Pretrain the Mode 2 actor on recorded FPV demonstrations."""
 import argparse
+from itertools import count
 import json
 from pathlib import Path
 
@@ -28,8 +29,13 @@ def main():
     parser.add_argument("--sim", type=Path, nargs="*", default=[])
     parser.add_argument("--held-out", type=Path, nargs="*", default=[])
     parser.add_argument("--out", type=Path, required=True)
+    parser.add_argument("--initialize", type=Path, help="Start from an existing policy checkpoint.")
+    parser.add_argument("--until", type=Path, help="Keep training offline until the evaluator writes this file.")
     parser.add_argument("--device", choices=("cuda", "cpu"), default="cuda")
     parser.add_argument("--updates", type=int, default=1400)
+    parser.add_argument("--learning-rate", type=float, default=3e-4)
+    parser.add_argument("--primary-fraction", type=float, default=.40,
+                        help="Batch fraction drawn from --real when both dataset groups are supplied.")
     parser.add_argument("--batch", type=int, default=96)
     parser.add_argument("--seed", type=int, default=21)
     parser.add_argument("--stack", type=int, default=4, help="Number of consecutive RGB frames per observation.")
@@ -41,8 +47,14 @@ def main():
     parser.add_argument("--eval-every", type=int, default=200)
     parser.add_argument("--eval-episodes", type=int, default=3)
     args = parser.parse_args()
-    if min(args.updates, args.batch, args.stack, args.eval_every, args.eval_episodes) <= 0:
+    if min(args.batch, args.stack, args.eval_every, args.eval_episodes) <= 0 or args.updates < 0:
         parser.error("Counts must be positive.")
+    if args.updates == 0 and not args.until:
+        parser.error("Unlimited training requires an evaluator marker.")
+    if (args.until and not args.offline) or not np.isfinite(args.learning_rate) or args.learning_rate <= 0:
+        parser.error("Use a positive learning rate and offline mode for evaluator-controlled training.")
+    if not 0 < args.primary_fraction <= 1:
+        parser.error("The primary dataset fraction must be greater than zero and at most one.")
     if args.offline and args.official_eval:
         parser.error("Official Rust evaluation is unavailable in offline mode.")
     if args.device == "cuda" and not torch.cuda.is_available():
@@ -53,23 +65,40 @@ def main():
         torch.backends.cudnn.benchmark = True
 
     stack, height, width = args.stack, 72, 96
-    lib = load_sim()
-    agent = Agent(stack, args.device, lib.sim_hover_stick(), with_imu=args.imu,
-                  backbone=args.backbone, pretrained=args.backbone != "cnn")
-    demos = Demonstrations(args.real, args.sim, stack, height, width, args.seed, with_imu=args.imu)
+    latest = args.out / "latest.pt"
+    resumed = bool(args.until and latest.is_file())
+    source = latest if resumed else args.initialize
+    weights = torch.load(source, map_location="cpu", weights_only=True) if source else None
+    lib = load_sim() if not args.offline or weights is None else None
+    agent = Agent(stack, args.device, lib.sim_hover_stick() if lib else 0., with_imu=args.imu,
+                  backbone=weights.get("vision_backbone", "cnn") if weights else args.backbone,
+                  pretrained=weights is None and args.backbone != "cnn")
+    if weights is not None:
+        agent.set_weights(weights)
+    progress = weights.get("training_progress", {}) if resumed else {}
+    first_round, first_step, first_samples = (progress.get(key, 0) for key in ("round", "updates", "steps"))
+    demos = Demonstrations(args.real, args.sim, stack, height, width, args.seed, with_imu=args.imu,
+                           primary_fraction=args.primary_fraction)
+    if args.until:
+        print(json.dumps({"imitation_datasets": [
+            {"path": str(path), "frames": len(clip)}
+            for path, clip in zip(args.real + args.sim, demos.real + demos.sim)
+        ], "batch": args.batch, "primary_fraction": args.primary_fraction, "device": args.device}), flush=True)
     if {path.resolve() for path in args.real + args.sim} & {path.resolve() for path in args.held_out}:
         parser.error("Hold out complete flights from training.")
     held_out = [Clip(path, stack, height, width, args.imu) for path in args.held_out]
     parameters = [*agent.encoder.parameters(), *agent.actor.parameters()]
     if agent.imu_encoder is not None:
         parameters.extend(agent.imu_encoder.parameters())
-    optimizer = torch.optim.AdamW(parameters, lr=3e-4)
+    optimizer = torch.optim.AdamW(parameters, lr=args.learning_rate)
     run = None if args.offline else Environment(lib, width, height)
     args.out.mkdir(parents=True, exist_ok=True)
     best_rank = None
     try:
-        with (args.out / "metrics.jsonl").open("w", encoding="utf-8", buffering=1) as log:
-            for step in range(1, args.updates + 1):
+        with (args.out / "metrics.jsonl").open("a" if resumed else "w", encoding="utf-8", buffering=1) as log:
+            for step in range(1, args.updates + 1) if args.updates else count(1):
+                if args.until and args.until.is_file():
+                    break
                 frames, labels, weight, *imu = demos.sample(args.batch)
                 obs = random_shift(pixel_tensor(frames, args.device).float() / 255. - 0.5, pad=3)
                 scale = torch.empty((len(frames), 1, 1, 1), device=args.device).uniform_(.85, 1.15)
@@ -95,11 +124,14 @@ def main():
                             -metrics["crash_rate"], -record if record else 0., metrics["return"])
                     if not args.sim and real_error is not None:
                         rank = (-float(np.mean(real_error)),)
-                metrics.update(update=step, steps=step, round=(step + args.eval_every - 1) // args.eval_every,
-                               bc_loss=float(loss.detach()), real_holdout_mae=real_error)
+                round_no = first_round + (step + args.eval_every - 1) // args.eval_every
+                updates = first_step + step
+                steps = first_samples + step * args.batch if args.until else step
+                metrics.update(update=updates, steps=steps, round=round_no,
+                               bc_loss=float(loss.detach()), real_holdout_mae=real_error, offline=args.offline)
                 print(json.dumps(metrics), flush=True)
                 log.write(json.dumps(metrics) + "\n")
-                agent.save(args.out / "latest.pt")
+                agent.save(latest, round=round_no, steps=steps, updates=updates)
                 if best_rank is None or rank > best_rank:
                     agent.save(args.out / "best.pt")
                     best_rank = rank

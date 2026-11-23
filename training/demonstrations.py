@@ -45,10 +45,11 @@ class Clip:
 
 
 class Demonstrations:
-    def __init__(self, real_paths, sim_paths, stack, height, width, seed, with_imu=False):
+    def __init__(self, real_paths, sim_paths, stack, height, width, seed, with_imu=False, primary_fraction=.40):
         self.real = [Clip(path, stack, height, width, with_imu) for path in real_paths]
         self.sim = [Clip(path, stack, height, width, with_imu) for path in sim_paths]
         self.rng = np.random.default_rng(seed)
+        self.primary_fraction = primary_fraction
         if not self.real and not self.sim:
             raise ValueError("At least one demonstration is required.")
 
@@ -58,7 +59,7 @@ class Demonstrations:
                 for i, clip in enumerate(group) if np.any(ids == i)]
 
     def sample(self, count):
-        real_count = (max(1, round(.40 * count)) if self.sim else count) if self.real else 0
+        real_count = (max(1, round(self.primary_fraction * count)) if self.sim else count) if self.real else 0
         batches = []
         if real_count:
             batches += self._sample_group(self.real, real_count)

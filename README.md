@@ -212,7 +212,7 @@ python3 -m tools.evaluate_rgb_imu_race \
 python3 -m training.live_feed --run runs/target-12 --media runs/target-12/public --port 8766
 ```
 
-The worker collects student rollouts with corrective expert labels in Rust. The evaluator steps the Elodin JAX plant directly in the container and uses real Betaflight SITL. It accepts a checkpoint after three clean full-course starts at or below 30 seconds. That checkpoint starts speed reinforcement learning with the same RGB and IMU input. The evaluator applies a 12-second time limit to all three starts before marking the speed phase complete. Use `--host` and `--remote-run` if the worker and evaluator are on separate hosts.
+The imitation worker samples synchronized RGB, IMU, and Mode 2 labels directly from the recorded teacher runs and the saved clips in `runs/target-12/firmware-launch`. The GPU processes batches of 128 examples, and the simulated aircraft flies only during evaluation. The evaluator runs the Elodin JAX plant with Betaflight SITL and accepts a checkpoint after three clean full-course starts at or below 30 seconds. The existing speed reinforcement learning worker uses parallel Rust simulations and the same RGB and IMU input. The Elodin evaluator applies a 12-second time limit to all three starts before marking the speed phase complete. Use `--host` and `--remote-run` if the worker and evaluator are on separate hosts.
 
 The dashboard's Student view opens the latest Elodin + Betaflight student recording with its matching stick inputs. The status panel reports the worker’s training progress. The loopback feed serves only the status and published replay assets. An HTTPS tunnel connects the public dashboard to this feed on GPU 4.
 

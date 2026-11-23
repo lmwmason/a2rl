@@ -19,25 +19,17 @@ speed="$run/speed"
 qualified="$run/imitation-qualified.pt"
 recorded="$run/speed-qualified.pt"
 
-while [[ ! -s "$qualified" ]]; do
-    checkpoint=(--initialize "$seed")
-    if [[ -s "$imitation/imitation-state.zip" ]]; then
-        checkpoint=(--resume "$imitation/imitation-state.zip")
-    fi
-    round=$("$python" - "$imitation/metrics.jsonl" <<'PY'
-import json, sys
-from pathlib import Path
-
-path = Path(sys.argv[1])
-print(json.loads(path.read_text().splitlines()[-1])["round"] if path.is_file() and path.stat().st_size else 0)
-PY
-)
-    "$python" -u -m training.racing_school --device "$device" --imu --stack 8 --full-course \
-        --external-qualification "${checkpoint[@]}" --human-demos "$@" --out "$imitation" \
-        --firmware-launch-demos "$run/firmware-launch" \
-        --rounds "$((round + 2))" --envs 8 --collect-ticks 700 --updates 200 --batch 64 \
-        --eval-episodes 2 --save-every 2
-done
+if [[ ! -s "$qualified" ]]; then
+    shopt -s nullglob
+    corrections=()
+    for clip in "$run"/firmware-launch/*.npz; do
+        [[ "$clip" == *.tmp.npz ]] || corrections+=("$clip")
+    done
+    "$python" -u -m training.imitate --device "$device" --imu --stack 8 --offline \
+        --initialize "$seed" --real "$@" --sim "${corrections[@]}" --out "$imitation" \
+        --until "$qualified" --updates 0 --eval-every 150 --batch 128 --learning-rate 5e-5 \
+        --primary-fraction .75
+fi
 
 export A2RL_REWARD_PROFILE=pace
 while [[ ! -s "$recorded" ]]; do

@@ -15,43 +15,14 @@ mkdir -p "$run"
 exec 9>"$run/training.lock"
 flock -n 9
 imitation="$run/recovery"
-speed="$run/speed"
 qualified="$run/imitation-qualified.pt"
-recorded="$run/speed-qualified.pt"
 
 if [[ ! -s "$qualified" ]]; then
-    "$python" -u -m training.imitate --device "$device" --imu --stack 8 --offline \
+    "$python" -u -m training.imitate --device "$device" --imu --stack 8 \
         --initialize "$seed" --real "$@" --out "$imitation" \
         --correction-directory "$run/firmware-recovery" --until "$qualified" \
         --completion-marker "$run/completion-qualified.pt" \
         --updates 0 --eval-every 150 --batch 128 --learning-rate 5e-5 --primary-fraction .60
 fi
 
-export A2RL_REWARD_PROFILE=pace
-while [[ ! -s "$recorded" ]]; do
-    checkpoint=(--initialize "$qualified")
-    if [[ -s "$speed/training-state.zip" ]]; then
-        checkpoint=(--resume "$speed/training-state.zip")
-    fi
-    steps=$("$python" - "$speed/training-state.zip" <<'PY'
-from io import BytesIO
-from pathlib import Path
-import sys
-import zipfile
-
-import torch
-
-path = Path(sys.argv[1])
-steps = 0
-if path.exists():
-    with zipfile.ZipFile(path) as archive:
-        state = torch.load(BytesIO(archive.read("training.pt")), map_location="cpu", weights_only=True)
-        steps = state["progress"]["steps"]
-print(steps)
-PY
-)
-    "$python" -u -m training.train --device "$device" --imu --stack 8 \
-        "${checkpoint[@]}" --protect-qualified "$qualified" --demo-sim "$@" --run-dir "$speed" \
-        --steps "$((steps + 24000))" --envs 8 --batch 64 --update-every 32 \
-        --official-eval --eval-episodes 3 --eval-every 8000 --checkpoint-every 24000
-done
+echo "Stage 3 is awaiting an Elodin + Betaflight reinforcement learner."

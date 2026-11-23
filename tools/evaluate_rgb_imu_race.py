@@ -13,7 +13,7 @@ import subprocess
 from tempfile import mkdtemp
 import time
 
-from training.curriculum import FINISH_MARKER, FINISH_WINDOW, PACE_MARKER, PACE_TARGET, SPEED_MARKER, SPEED_TARGET
+from training.curriculum import FINISH_MARKER, FINISH_WINDOW, PACE_MARKER, PACE_TARGET, SPEED_MARKER, SPEED_RUN, SPEED_TARGET
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -42,12 +42,15 @@ def evaluate(args, weights, session, side, correction=None, *, assisted=False, s
         "A2RL_ELODIN_ROOT": str(args.harness),
         "A2RL_ELODIN_DB": str(database / "flight"),
         "A2RL_ELODIN_FPV": str(session / "replay.mp4"),
+        "A2RL_ELODIN_CHASE": "1" if args.public is not None and side == 0. and not assisted else "0",
         "A2RL_ELODIN_FLOW_TEACHER": "0",
         "A2RL_ELODIN_IN_PROCESS": "1" if args.in_process else "0",
         "A2RL_ELODIN_POLICY": str(weights),
         "A2RL_ELODIN_START_SIDE": str(side),
         "A2RL_ELODIN_SECONDS": str(seconds),
         "A2RL_FPV_BREAKUP": "0",
+        "A2RL_FPV_EXPOSURE": "1",
+        "A2RL_AIRFRAME": str(ROOT / "assets/a2rl-2025-airframe.toml"),
         "A2RL_ELODIN_ASSISTED": "1" if assisted else "0",
         "A2RL_ELODIN_COMPLETION_PROFILE": json.dumps(profile or {}),
         "OMP_NUM_THREADS": "1",
@@ -57,6 +60,7 @@ def evaluate(args, weights, session, side, correction=None, *, assisted=False, s
         "ELODIN_ASSETS_DIR": str(args.out / "assets"),
         "A2RL_SIM_LIB": str(ROOT / "target/release/liba2rl_sim.so"),
     }
+    environment.pop("A2RL_FPV_MOUNT_PITCH", None)
     if correction is not None:
         environment["A2RL_ELODIN_DEMONSTRATION"] = str(correction)
         environment["A2RL_ELODIN_CORRECTION_SCOPE"] = "rollout" if args.rollout_corrections else "launch"
@@ -137,6 +141,12 @@ def publish_replay(directory, session, phase, result, progress, stage=None):
     # The result is written after FFmpeg and the RC trace have closed.
     copyfile(session / "replay.mp4", directory / video)
     copyfile(session / "replay.controls.json", directory / controls)
+    chase = session / "replay-chase.mp4"
+    chase_urls = {}
+    if chase.is_file():
+        chase_name = f"chase-{version}.mp4"
+        copyfile(chase, directory / chase_name)
+        chase_urls["chase_url"] = chase_name
     evaluation = {
         **{key: progress[key] for key in ("round", "steps") if key in progress},
         "version": version, "phase": phase, "gates": result["gates"],
@@ -151,12 +161,12 @@ def publish_replay(directory, session, phase, result, progress, stage=None):
     temporary = manifest.with_suffix(".tmp")
     temporary.write_text(json.dumps({
         **evaluation, "kind": "student-evaluation",
-        "url": video, "controls_url": controls, "course": result["course"],
+        "url": video, **chase_urls, "controls_url": controls, "course": result["course"],
         "physics_engine": result["physics_engine"], "gates_per_race": result["gates_per_race"],
         "history": [*history[-59:], evaluation],
     }) + "\n")
     temporary.replace(manifest)
-    for prefix, suffix in (("replay", ".mp4"), ("controls", ".json")):
+    for prefix, suffix in (("replay", ".mp4"), ("chase", ".mp4"), ("controls", ".json")):
         old = sorted(directory.glob(f"{prefix}-[0-9]*{suffix}"), reverse=True)
         for path in old[3:]:
             path.unlink(missing_ok=True)
@@ -168,7 +178,7 @@ def watch(args):
     stages = (
         ("IMITATION", "finish", "recovery/latest.pt", FINISH_MARKER, FINISH_WINDOW),
         ("IMITATION", "pace", "recovery/latest.pt", PACE_MARKER, PACE_TARGET),
-        ("SPEED RL", "speed", "speed/latest.pt", SPEED_MARKER, SPEED_TARGET),
+        ("SPEED RL", "speed", f"{SPEED_RUN}/latest.pt", SPEED_MARKER, SPEED_TARGET),
     )
     for phase, stage, source, marker, target in stages:
         examined = set()
@@ -182,6 +192,10 @@ def watch(args):
                     time.sleep(3)
                     continue
                 progress = torch.load(BytesIO(raw), map_location="cpu", weights_only=True).get("training_progress", {})
+                if stage == "speed" and progress.get("physics_engine") != "elodin":
+                    print(f"Skipping speed checkpoint {digest}: Elodin training metadata is missing.", flush=True)
+                    examined.add(digest)
+                    continue
                 weights = args.out / (digest + ".pt")
                 weights.write_bytes(raw)
                 trial = args.out / stage / digest
@@ -195,7 +209,7 @@ def watch(args):
                     session = trial / "assisted"
                     clip = args.rollout_corrections / f"{clip_prefix}-assisted.npz"
                     result = evaluate(args, weights, session, 0., clip, assisted=True, profile=profile)
-                    for name in ("replay.mp4", "replay.controls.json"):
+                    for name in ("replay.mp4", "replay-chase.mp4", "replay.controls.json"):
                         (session / name).unlink(missing_ok=True)
                     print(json.dumps({"phase": phase, "curriculum_stage": stage, "checkpoint": digest, **result}), flush=True)
                 qualified = stage != "pace" or progress.get("curriculum_stage") == "pace"
@@ -211,7 +225,7 @@ def watch(args):
                     if index == 0:
                         publish_replay(args.public, session, phase, result, progress, stage)
                     if args.public is not None:
-                        for name in ("replay.mp4", "replay.controls.json"):
+                        for name in ("replay.mp4", "replay-chase.mp4", "replay.controls.json"):
                             (session / name).unlink(missing_ok=True)
                     print(json.dumps({"phase": phase, "curriculum_stage": stage, "checkpoint": digest, "start_side": side,
                                       "target_seconds": target, **result}), flush=True)

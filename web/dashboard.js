@@ -24,6 +24,8 @@ const finishTrend = { values: [], key: "", speed: false };
 let playing = null;
 let displayedControl = -1;
 let pilot = "teacher";
+let preferredCamera = new URLSearchParams(window.location.search).get("camera") === "chase" ? "chase" : "fpv";
+let cameraSelection = 0;
 let selection = 0;
 const hosted = !["127.0.0.1", "localhost", "[::1]"].includes(window.location.hostname);
 const feeds = hosted ? [
@@ -189,16 +191,52 @@ function drawFinishHistory() {
   }
 }
 
-function startReplay(replay) {
+function showsChase(replay) {
+  return /^chase-[0-9]+\.mp4$/.test(replay?.chase_url);
+}
+
+function updateCameraButtons() {
+  const chase = playing?.perspective === "chase";
+  byId("show-fpv").setAttribute("aria-pressed", String(!chase));
+  byId("show-chase").setAttribute("aria-pressed", String(chase));
+  byId("show-chase").disabled = !showsChase(playing);
+}
+
+async function selectCamera(perspective) {
+  const current = playing;
+  preferredCamera = perspective;
+  const request = ++cameraSelection;
+  if (!current || current.perspective === perspective || (perspective === "chase" && !showsChase(current))) return;
+  try {
+    const filename = perspective === "chase" ? current.chase_url : current.url;
+    const { value: video } = await requestData(new URL(filename, current.manifestUrl), true);
+    if (request !== cameraSelection || current !== playing) return;
+    const blob = URL.createObjectURL(video.slice(0, video.size, "video/mp4"));
+    const page = new URL(window.location.href);
+    page.searchParams.set("camera", perspective);
+    window.history.replaceState(null, "", page.href);
+    startReplay({ ...current, blob, perspective }, camera.currentTime, !camera.paused);
+  } catch {
+    if (request === cameraSelection && current === playing) preferredCamera = current.perspective;
+  }
+}
+
+function startReplay(replay, resumeTime = 0, autoplay = true) {
   const previous = playing;
   playing = replay;
   camera.src = playing.blob;
+  updateCameraButtons();
+  if (resumeTime > 0) {
+    camera.addEventListener("loadedmetadata", () => {
+      if (playing === replay) camera.currentTime = Math.min(resumeTime, camera.duration);
+    }, { once: true });
+  }
   camera.muted = true;
   camera.loop = true;
   camera.hidden = false;
   byId("mode2-sticks").hidden = !playing.controls;
   displayedControl = -1;
-  showSticks(0);
+  showSticks(resumeTime);
   const download = byId("download-replay");
   download.href = playing.blob;
   const firmwareCheck = playing.kind === "takeoff-check";
@@ -210,6 +248,7 @@ function startReplay(replay) {
     : !Number.isFinite(progress) ? `a2rl-${season}-student-${playing.version}.mp4`
     : playing.phase === "SPEED RL" ? `a2rl-${season}-rl-${playing.steps}.mp4`
     : `a2rl-${season}-imitation-round-${playing.round}.mp4`;
+  download.download = download.download.replace(/\.mp4$/, `-${playing.perspective}.mp4`);
   download.hidden = false;
   byId("waiting").hidden = true;
   const stage = teacher ? "Flow teacher evaluation"
@@ -233,7 +272,7 @@ function startReplay(replay) {
   }
   if (pilot === "student") renderStudentEvaluation();
   if (previous) URL.revokeObjectURL(previous.blob);
-  camera.play().catch(() => {});
+  if (autoplay) camera.play().catch(() => {});
 }
 let stickAnimation = null;
 function animateSticks() {
@@ -252,7 +291,7 @@ for (const event of ["timeupdate", "seeked", "loadeddata"]) {
 }
 
 function physicsLabel(run) {
-  return { elodin: "Elodin + Betaflight SITL", rust: "Rust" }[run.physics_engine] ?? "—";
+  return run.physics_engine === "elodin" ? "Elodin + Betaflight SITL" : "—";
 }
 
 function renderStatus(info) {
@@ -275,6 +314,7 @@ function renderStatus(info) {
   }
   setText("phase", teacher ? "Teacher validation"
     : info.phase === "VALIDATION" ? "Firmware validation" : info.target_beaten ? "Target reached"
+    : info.awaiting_speed_trainer ? "Stage 3 · Awaiting Elodin reinforcement learning"
     : curriculumLabels[info.curriculum_stage] ?? (speedTraining ? "Reinforcement learning"
       : info.full_course ? "Full-course imitation" : info.phase ? "Imitation learning" : "—"));
   setText("progress-label", speedTraining ? "Current training steps" : "Current training round");
@@ -406,6 +446,7 @@ function selectPilot(view, refresh = true) {
   camera.load();
   if (playing) URL.revokeObjectURL(playing.blob);
   playing = null;
+  updateCameraButtons();
   byId("download-replay").hidden = true;
   byId("mode2-sticks").hidden = true;
   byId("replay-recorded").closest("div").hidden = true;
@@ -421,6 +462,8 @@ function selectPilot(view, refresh = true) {
 
 byId("show-teacher").addEventListener("click", () => selectPilot("teacher"));
 byId("show-student").addEventListener("click", () => selectPilot("student"));
+byId("show-fpv").addEventListener("click", () => selectCamera("fpv"));
+byId("show-chase").addEventListener("click", () => selectCamera("chase"));
 
 function isNewReplay(info, selected) {
   if (selected !== selection) return false;
@@ -441,10 +484,13 @@ async function loadReplay({ url, value: info }, selected) {
         && value.actions.every((axes) => Array.isArray(axes) && axes.length === 4
           && axes.every((axis) => Number.isFinite(axis) && Math.abs(axis) <= 1)) ? value : null
     )).catch(() => null) : null;
-  const [video, controls] = await Promise.all([requestData(new URL(info.url, url), true), controlsRequest]);
-  if (!isNewReplay(info, selected)) return;
+  const cameraRequest = cameraSelection;
+  const perspective = preferredCamera === "chase" && showsChase(info) ? "chase" : "fpv";
+  const filename = perspective === "chase" ? info.chase_url : info.url;
+  const [video, controls] = await Promise.all([requestData(new URL(filename, url), true), controlsRequest]);
+  if (cameraRequest !== cameraSelection || !isNewReplay(info, selected)) return;
   const blob = URL.createObjectURL(video.value.slice(0, video.value.size, "video/mp4"));
-  startReplay({ ...info, blob, controls });
+  startReplay({ ...info, blob, controls, perspective, manifestUrl: url });
 }
 
 new ResizeObserver(drawHistory).observe(chart);

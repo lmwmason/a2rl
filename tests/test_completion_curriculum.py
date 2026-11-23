@@ -4,7 +4,7 @@ import torch
 
 from tools import evaluate_rgb_imu_race as evaluator
 from tools.evaluate_rgb_imu_race import completion_profile, succeeds
-from training.curriculum import FINISH_MARKER, PACE_MARKER, SPEED_MARKER
+from training.curriculum import FINISH_MARKER, PACE_MARKER, SPEED_MARKER, SPEED_RUN
 
 
 def test_focus_uses_recent_failures_and_releases_reliably_cleared_gates():
@@ -26,10 +26,12 @@ def test_curriculum_requires_a_pace_trained_checkpoint_before_rl(tmp_path, monke
     out = tmp_path / "out"
     out.mkdir()
     (run / "recovery").mkdir(parents=True)
-    (run / "speed").mkdir()
+    (run / SPEED_RUN).mkdir()
     recovery = run / "recovery/latest.pt"
     torch.save({"training_progress": {"curriculum_stage": "finish"}}, recovery)
-    torch.save({"training_progress": {"steps": 600}}, run / "speed/latest.pt")
+    torch.save({"training_progress": {"steps": 600, "physics_engine": "elodin"}}, run / SPEED_RUN / "latest.pt")
+    (run / "speed").mkdir()
+    torch.save({"training_progress": {"steps": 99}}, run / "speed/latest.pt")
     args = SimpleNamespace(local_run=run, out=out, public=None, adaptive_completion=False,
                            completion_rollouts=False, rollout_corrections=None, launch_corrections=None)
     checked = {"finish": [], "pace": [], "speed": []}

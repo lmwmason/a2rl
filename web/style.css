@@ -114,3 +114,16 @@ dd { margin: 0; text-align: right; font: 600 0.95rem ui-monospace, monospace; }
   color: var(--accent);
   background: #142b22;
 }
+
+.flight > .bar,
+.replay-options {
+  flex-wrap: wrap;
+}
+.replay-options {
+  display: flex;
+  gap: 8px;
+}
+.pilot-switch button:disabled {
+  opacity: .48;
+  cursor: default;
+}

@@ -1,5 +1,5 @@
 use crate::{ray_box, Course, Race, ARENA_MAX, ARENA_MIN};
-use glam::Vec3;
+use glam::{Quat, Vec3};
 
 pub const H_FOV: f32 = 155.;
 pub const V_FOV: f32 = 115.;
@@ -30,13 +30,30 @@ pub fn mount_angle(course: Course) -> f32 {
 
 pub fn camera_pose(race: &Race) -> [Vec3; 4] {
     let drone = &race.drone;
-    let (sin, cos) = mount_angle(race.course).to_radians().sin_cos();
+    let (sin, cos) = race.camera_tilt.to_radians().sin_cos();
     [
         drone.position + drone.rotation * Vec3::new(0.12, 0., 0.02),
         drone.rotation * -Vec3::Y,
         drone.rotation * Vec3::new(-sin, 0., cos),
         drone.rotation * Vec3::new(cos, 0., sin),
     ]
+}
+
+fn chase_pose(race: &Race) -> [Vec3; 4] {
+    let drone = &race.drone;
+    let nose = drone.rotation * Vec3::X;
+    let mut heading = Vec3::new(nose.x, nose.y, 0.).normalize_or_zero();
+    if heading == Vec3::ZERO {
+        heading = (drone.rotation * Vec3::Y)
+            .cross(Vec3::Z)
+            .normalize_or_zero();
+    }
+    let (min, max) = race.course.bounds();
+    let margin = Vec3::splat(0.05);
+    let sensor = (drone.position - 2.6 * heading + 1.2 * Vec3::Z).clamp(min + margin, max - margin);
+    let forward = (drone.position + 0.7 * heading - sensor).normalize();
+    let right = forward.cross(Vec3::Z).normalize_or_zero();
+    [sensor, right, right.cross(forward), forward]
 }
 
 pub fn hall_bounds() -> [Vec3; 2] {
@@ -57,7 +74,7 @@ fn hash(mut n: u32) -> u32 {
 }
 
 fn hdzero_breakup(image: &mut [u8], width: usize, tick: usize, seed: u32, strength: f32) {
-    let frame = (tick / (crate::PHYSICS_HZ / crate::CONTROL_HZ)) as u32;
+    let frame = (tick / (crate::VIDEO_CLOCK_HZ / crate::VIDEO_FRAME_HZ)) as u32;
     let phase = hash(seed ^ (frame / 8));
     let noise = strength.clamp(0., 1.) * (0.15 + 0.85 * (phase & 255) as f32 / 255.);
     let frame_seed = hash(seed ^ frame.wrapping_mul(0x9e37_79b9));
@@ -171,13 +188,17 @@ impl Camera {
     }
 
     pub fn render(&self, race: &Race, image: &mut [u8]) {
-        self.render_with_peers(race, &[], image);
+        self.render_with_peers(race, &[], false, image);
     }
 
-    pub fn render_with_peers(&self, race: &Race, peers: &[Vec3], image: &mut [u8]) {
+    pub fn render_with_peers(&self, race: &Race, peers: &[Vec3], chase: bool, image: &mut [u8]) {
         let bars = race.course.gate_bars();
         let face_depth = race.course.gate_half_depth() - 0.005;
-        let [sensor, right, up, forward] = camera_pose(race);
+        let [sensor, right, up, forward] = if chase {
+            chase_pose(race)
+        } else {
+            camera_pose(race)
+        };
         let [px, py, pz] = sensor.to_array();
         let (arena_min, arena_max) = race.course.bounds();
         let arena_min = arena_min - sensor;
@@ -194,19 +215,24 @@ impl Camera {
                 )
             })
             .collect();
-        let peers: Vec<_> = peers
+        let drones: Vec<_> = peers
             .iter()
-            .map(|peer| {
-                let delta = *peer - sensor;
-                (
-                    delta,
-                    (delta.length_squared() - 0.25_f32.powi(2)).max(0.).sqrt(),
-                )
+            .copied()
+            .map(|position| (position, Quat::IDENTITY, false))
+            .chain(chase.then_some((race.drone.position, race.drone.rotation.conjugate(), true)))
+            .map(|(position, inverse, follows)| {
+                let delta = position - sensor;
+                let threshold = (delta.length_squared() - 0.25_f32.powi(2)).max(0.).sqrt();
+                (delta, threshold, inverse, follows)
             })
             .collect();
 
         for (pixel, ray) in image.as_chunks_mut::<3>().0.iter_mut().zip(&self.rays) {
-            let direction = right * ray.x + up * ray.y + forward * ray.z;
+            let direction = if chase {
+                (right * ray.x + up * ray.y + forward * (ray.z + 1.)).normalize()
+            } else {
+                right * ray.x + up * ray.y + forward * ray.z
+            };
             let [dx, dy, dz] = direction.to_array();
             let tx = if dx > 0. {
                 arena_max.x / dx
@@ -267,15 +293,20 @@ impl Camera {
                     distance = hit;
                 }
             }
-            for &(delta, threshold) in &peers {
+            for &(delta, threshold, inverse, follows) in &drones {
                 if delta.dot(direction) < threshold {
                     continue;
                 }
-                let origin = -delta;
+                let origin = inverse * -delta;
+                let direction = inverse * direction;
                 let body = Vec3::new(0.12, 0.10, 0.052);
                 if let Some(hit) = ray_box(origin, direction, -body, body, 0.015, distance) {
                     distance = hit;
-                    color = [49, 52, 56];
+                    color = if follows {
+                        [221, 145, 43]
+                    } else {
+                        [49, 52, 56]
+                    };
                 }
                 for x in [-0.11, 0.11] {
                     for y in [-0.11, 0.11] {
@@ -290,18 +321,23 @@ impl Camera {
                             distance,
                         ) {
                             distance = hit;
-                            color = [100, 104, 109];
+                            color = if follows && x > 0. {
+                                [231, 108, 56]
+                            } else {
+                                [100, 104, 109]
+                            };
                         }
                     }
                 }
             }
             let fog = 1. / (1. + 0.005 * distance.max(0.));
             for (i, backdrop) in [27., 25., 34.].into_iter().enumerate() {
-                pixel[i] = ((color[i] as f32 * fog + backdrop * (1. - fog)) * race.exposure)
-                    .clamp(0., 255.) as u8;
+                pixel[i] = ((color[i] as f32 * fog + backdrop * (1. - fog))
+                    * if chase { 1. } else { race.exposure })
+                .clamp(0., 255.) as u8;
             }
         }
-        if race.video_breakup > 0. {
+        if !chase && race.video_breakup > 0. {
             hdzero_breakup(
                 image,
                 self.width,

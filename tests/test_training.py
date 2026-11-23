@@ -1,6 +1,5 @@
 import unittest
 from unittest.mock import patch
-from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -10,11 +9,9 @@ import torch
 from training.agent import Agent
 from training.betaflight_link import timed_mean_throttle
 from training.demonstrations import Clip
-from training.racing_school import matches_teacher_pace
 from training.replay import Replay
-from training.sim import Environment, gate_count, load_sim
-from training.telemetry import FramePublisher, finish_time_history, read_packet
-from training.train import beats_record
+from training.sim import CameraRenderer, gate_count, load_sim
+from training.telemetry import finish_time_history
 
 
 class ThrottleTimingTest(unittest.TestCase):
@@ -74,15 +71,6 @@ class DemonstrationTest(unittest.TestCase):
 
 
 class TelemetryTest(unittest.TestCase):
-    def test_live_frame_preserves_driver_and_rgb(self):
-        with TemporaryDirectory() as directory:
-            publisher = FramePublisher(directory)
-            image = np.arange(18, dtype=np.uint8).reshape(2, 3, 3)
-            publisher.show(image, gates=2, step=96, phase="IMITATION", status=0, driver="Student")
-            info, pixels = read_packet(BytesIO(publisher.path.read_bytes()))
-        self.assertEqual((info["width"], info["height"], info["driver"], info["gates"]), (3, 2, "Student", 2))
-        self.assertEqual(pixels, image.tobytes())
-
     def test_finish_history_keeps_unfinished_evaluations_as_gaps(self):
         series = finish_time_history([{"steps": 0, "official_start_seconds": 111.7},
                                       {"steps": 8000},
@@ -97,36 +85,23 @@ class SharedCameraTest(unittest.TestCase):
     def test_external_pose_uses_the_native_2026_camera(self):
         with patch.dict("os.environ", {"A2RL_COURSE": "2026-practice"}):
             lib = load_sim()
-            env = Environment(lib, 96, 72)
+            env = CameraRenderer(lib, 96, 72)
+            shifted = CameraRenderer(lib, 96, 72, mount_pitch=60.)
             try:
                 self.assertEqual(gate_count(lib), 12)
-                expected = env.official_start().copy()
-                state = env.rigid_state()
-                np.testing.assert_array_equal(env.render_pose(state, 0.), expected)
-                state[8:10] = [0., 1.]
+                state = [8., 22., .205, 0., 0., 0., 0., 0., 0., 1., 0., 0., 0.]
+                expected = env.render_pose(state, 0.).copy()
+                self.assertEqual(expected.shape, (72, 96, 3))
+                self.assertEqual(env.mount_pitch, 70.)
+                chase = env.render_pose(state, 0., chase=True)
+                self.assertFalse(np.array_equal(chase, expected))
+                self.assertTrue(np.any((chase[..., 0] > 180) & (chase[..., 1] > 100) & (chase[..., 2] < 70)))
+                self.assertFalse(np.array_equal(shifted.render_pose(state, 0.), expected))
+                state[8:10] = [.7071, .7071]
                 self.assertFalse(np.array_equal(env.render_pose(state, 0.), expected))
-                self.assertEqual(env.lap_stats()[0], 0)
             finally:
                 env.close()
-
-
-class RecordTargetTest(unittest.TestCase):
-    def test_course_qualification_requires_continuous_pace(self):
-        expert = {"two_lap_rate": 1., "worst_two_lap_s": 35.,
-                  "longest_completed_run_below_2_m_s": .35, "mean_gate_crossing_speed_m_s": 5.2}
-        self.assertTrue(matches_teacher_pace(expert | {"worst_two_lap_s": 39.}, expert))
-        self.assertFalse(matches_teacher_pace(expert | {"two_lap_rate": 2 / 3}, expert))
-        self.assertFalse(matches_teacher_pace(expert | {"worst_two_lap_s": 45.}, expert))
-        self.assertFalse(matches_teacher_pace(expert | {"longest_completed_run_below_2_m_s": 3.}, expert))
-        self.assertFalse(matches_teacher_pace(expert | {"mean_gate_crossing_speed_m_s": 2.8}, expert))
-
-    def test_strict_time_and_clean_finishes_from_every_start(self):
-        result = {"official_start_seconds": 16.55, "official_finishes": 3, "crash_rate": 0.}
-        self.assertTrue(beats_record(result, 16.56, 3))
-        self.assertFalse(beats_record(result | {"official_start_seconds": 16.56}, 16.56, 3))
-        self.assertFalse(beats_record(result | {"official_finishes": 2}, 16.56, 3))
-        self.assertFalse(beats_record(result | {"crash_rate": 1 / 3}, 16.56, 3))
-        self.assertFalse(beats_record(result | {"official_start_seconds": None}, 16.56, 3))
+                shifted.close()
 
 
 class QualifiedPolicyTest(unittest.TestCase):
@@ -148,49 +123,6 @@ class QualifiedPolicyTest(unittest.TestCase):
             self.assertTrue(all(weight.grad is None for weight in policy.encoder.parameters()))
             policy.restore_actor(path)
             np.testing.assert_array_equal(policy.action(frames), initial)
-
-
-class EnvironmentTest(unittest.TestCase):
-    def test_logged_route_expert_finishes_two_official_laps(self):
-        env = Environment(load_sim(), 16, 12)
-        try:
-            env.official_start()
-            self.assertIsNone(env.official_seconds())
-            for _ in range(180 * 30):
-                _, _, status = env.advance(env.expert_action())
-                if status:
-                    break
-            self.assertEqual(status, 4)
-            self.assertEqual(env.lap_stats()[0], 22)
-            self.assertGreater(env.official_seconds(), 0.)
-        finally:
-            env.close()
-
-    def test_gate_exit_starts_with_an_uncounted_gate_two_approach(self):
-        env = Environment(load_sim(), 96, 72)
-        try:
-            before = env.ground_start().copy()
-            after = env.after_gate(speed=4.).copy()
-            self.assertGreater(np.mean(before != after), 0.1)
-            self.assertEqual(env.lap_stats(), (0, None))
-            _, _, terminated, truncated = env.step([0, env.lib.sim_hover_stick(), 0, 0])
-            self.assertFalse(terminated or truncated)
-        finally:
-            env.close()
-
-    def test_native_interface_returns_pixels_and_reward_without_telemetry(self):
-        env = Environment(load_sim(), 96, 72)
-        try:
-            first = env.reset().copy()
-            self.assertEqual(first.shape, (72, 96, 3))
-            self.assertEqual(first.dtype, np.uint8)
-            for _ in range(8):
-                frame, reward, terminated, truncated = env.step([0, env.lib.sim_hover_stick(), 0, 0.8])
-            self.assertFalse(terminated or truncated)
-            self.assertTrue(np.isfinite(reward))
-            self.assertGreater(np.mean(first != frame), 0.25)
-        finally:
-            env.close()
 
 
 if __name__ == "__main__":

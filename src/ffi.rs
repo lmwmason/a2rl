@@ -1,12 +1,10 @@
 // Python owns the image buffer and one exclusive handle per environment.
 use crate::{
-    axial_specific_force, camera::Camera, mode2_acro, teacher::Teacher, Course, Race,
-    RewardProfile, Status, HOVER_STICK, LAYOUT, MASS_KG, PACE_REWARD_VERSION,
-    PHYSICS_MODEL_VERSION, REWARD_MODEL_VERSION,
+    axial_specific_force, camera::Camera, teacher::Teacher, Course, Race, LAYOUT, MASS_KG,
 };
 use glam::Vec3;
 
-pub struct Environment {
+pub struct RenderScene {
     camera: Camera,
     race: Race,
     teacher: Teacher,
@@ -95,43 +93,8 @@ pub unsafe extern "C" fn sim_course_environment(season2: bool, out: *mut [f32; 1
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn sim_set_season2_course(env: *mut Environment, season2: bool) {
+pub unsafe extern "C" fn sim_set_season2_course(env: *mut RenderScene, season2: bool) {
     (*env).course = course_from_flag(season2);
-}
-
-#[no_mangle]
-pub extern "C" fn sim_hover_stick() -> f32 {
-    HOVER_STICK
-}
-
-#[no_mangle]
-pub extern "C" fn sim_physics_model_version() -> u32 {
-    PHYSICS_MODEL_VERSION
-}
-
-#[no_mangle]
-pub extern "C" fn sim_reward_model_version() -> u32 {
-    REWARD_MODEL_VERSION
-}
-
-#[no_mangle]
-pub extern "C" fn sim_pace_reward_version() -> u32 {
-    PACE_REWARD_VERSION
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn sim_set_reward_profile(env: *mut Environment, pace: bool) {
-    (&mut *env).race.reward_profile = if pace {
-        RewardProfile::Pace
-    } else {
-        RewardProfile::Standard
-    };
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn sim_flow_stats(env: *const Environment, output: *mut [f32; 2]) {
-    let race = &(&*env).race;
-    *output = [race.approach_delay_seconds, race.gate_speed_sum];
 }
 
 #[no_mangle]
@@ -151,13 +114,13 @@ pub extern "C" fn sim_axial_specific_force(
 }
 
 #[no_mangle]
-pub extern "C" fn sim_create(width: usize, height: usize) -> *mut Environment {
+pub extern "C" fn sim_create(width: usize, height: usize) -> *mut RenderScene {
     if !(1..=820).contains(&width) || !(1..=616).contains(&height) {
         return std::ptr::null_mut();
     }
     let race = Race::default();
     let teacher = Teacher::new(&race, false);
-    Box::into_raw(Box::new(Environment {
+    Box::into_raw(Box::new(RenderScene {
         camera: Camera::new(width, height),
         race,
         teacher,
@@ -167,128 +130,38 @@ pub extern "C" fn sim_create(width: usize, height: usize) -> *mut Environment {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn sim_destroy(env: *mut Environment) {
+pub unsafe extern "C" fn sim_destroy(env: *mut RenderScene) {
     if !env.is_null() {
         drop(Box::from_raw(env));
     }
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn sim_reset(
-    env: *mut Environment,
-    gate: i32,
-    side: f32,
-    height: f32,
+pub unsafe extern "C" fn sim_configure_scene(
+    env: *mut RenderScene,
+    camera_tilt: f32,
     exposure: f32,
     video_breakup: f32,
     video_seed: u32,
-    image: *mut u8,
 ) {
     let env = &mut *env;
-    let reward_profile = env.race.reward_profile;
-    env.race = if gate == -3 {
-        let mut race = Race::grand_challenge_on(env.course);
-        race.drone.position.y += side;
-        race.exposure = exposure;
-        race
-    } else if gate == -2 {
-        Race::ground_start_on(env.course, side, exposure)
-    } else if gate < 0 {
-        Race::from_start_on(env.course, side, height, exposure)
-    } else {
-        Race::practice_on(env.course, gate as usize, side, height, exposure)
-    };
-    env.race.reward_profile = reward_profile;
+    env.race = Race::grand_challenge_on(env.course);
+    env.race.camera_tilt = camera_tilt;
+    env.race.exposure = exposure;
+    env.race.video_breakup = video_breakup;
+    env.race.video_seed = video_seed;
     env.teacher = Teacher::new(&env.race, false).with_flow(env.flow_teacher);
-    env.race.video_breakup = video_breakup;
-    env.race.video_seed = video_seed;
-    env.camera.render(
-        &env.race,
-        std::slice::from_raw_parts_mut(image, env.camera.byte_len()),
-    );
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn sim_reset_after_gate(
-    env: *mut Environment,
-    gate: usize,
-    side: f32,
-    height: f32,
-    speed: f32,
-    exposure: f32,
-    video_breakup: f32,
-    video_seed: u32,
-    image: *mut u8,
-) {
-    let env = &mut *env;
-    let reward_profile = env.race.reward_profile;
-    env.race = Race::after_gate_on(env.course, gate, side, height, speed, exposure);
-    env.race.reward_profile = reward_profile;
-    env.teacher = Teacher::new(&env.race, true).with_flow(env.flow_teacher);
-    env.race.video_breakup = video_breakup;
-    env.race.video_seed = video_seed;
-    env.camera.render(
-        &env.race,
-        std::slice::from_raw_parts_mut(image, env.camera.byte_len()),
-    );
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn sim_set_flow_teacher(env: *mut Environment, enabled: bool) {
+pub unsafe extern "C" fn sim_set_flow_teacher(env: *mut RenderScene, enabled: bool) {
     let env = &mut *env;
     env.flow_teacher = enabled;
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn sim_expert_action(env: *mut Environment, out: *mut [f32; 4]) {
-    let env = &mut *env;
-    *out = env.teacher.action(&env.race);
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn sim_sprint_window(env: *const Environment) -> bool {
-    (&*env).race.sprint_window()
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn sim_expert_features(env: *const Environment, out: *mut [f32; 12]) {
-    let env = &*env;
-    let drone = &env.race.drone;
-    let inverse = drone.rotation.conjugate();
-    let target = env.race.gates[env.race.next_gate()].center - drone.position;
-    let vectors = [
-        (inverse * target).normalize_or_zero(),
-        inverse * glam::Vec3::Z,
-        (inverse * drone.velocity / 10.).clamp_length_max(2.),
-        (drone.omega / 5.).clamp_length_max(2.),
-    ];
-    for (i, value) in vectors.into_iter().enumerate() {
-        (&mut *out)[i * 3..i * 3 + 3].copy_from_slice(&value.to_array());
-    }
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn sim_step(
-    env: *mut Environment,
-    action: *const [f32; 4],
-    image: *mut u8,
-    reward: *mut f32,
-) -> i32 {
-    let env = &mut *env;
-    let Some(value) = env.race.step(mode2_acro(*action)) else {
-        return -1;
-    };
-    write_step(env, image, reward, value)
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn sim_rigid_state(env: *const Environment, output: *mut [f32; 13]) {
-    *output = (&*env).race.drone.rigid_state();
-}
-
-#[no_mangle]
 pub unsafe extern "C" fn sim_render_pose(
-    env: *mut Environment,
+    env: *mut RenderScene,
     state: *const [f32; 13],
     elapsed: f64,
     image: *mut u8,
@@ -298,11 +171,35 @@ pub unsafe extern "C" fn sim_render_pose(
 
 #[no_mangle]
 pub unsafe extern "C" fn sim_render_heat_pose(
-    env: *mut Environment,
+    env: *mut RenderScene,
     state: *const [f32; 13],
     elapsed: f64,
     opponents: *const [f32; 3],
     opponent_count: usize,
+    image: *mut u8,
+) -> bool {
+    render_pose(env, state, elapsed, opponents, opponent_count, false, image)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn sim_render_chase_pose(
+    env: *mut RenderScene,
+    state: *const [f32; 13],
+    elapsed: f64,
+    opponents: *const [f32; 3],
+    opponent_count: usize,
+    image: *mut u8,
+) -> bool {
+    render_pose(env, state, elapsed, opponents, opponent_count, true, image)
+}
+
+unsafe fn render_pose(
+    env: *mut RenderScene,
+    state: *const [f32; 13],
+    elapsed: f64,
+    opponents: *const [f32; 3],
+    opponent_count: usize,
+    chase: bool,
     image: *mut u8,
 ) -> bool {
     let env = &mut *env;
@@ -325,10 +222,11 @@ pub unsafe extern "C" fn sim_render_heat_pose(
             }
         }
     }
-    env.race.ticks = (elapsed * crate::PHYSICS_HZ as f64).round() as usize;
+    env.race.ticks = (elapsed * crate::VIDEO_CLOCK_HZ as f64).round() as usize;
     env.camera.render_with_peers(
         &env.race,
         &peers[..opponent_count],
+        chase,
         std::slice::from_raw_parts_mut(image, env.camera.byte_len()),
     );
     true
@@ -336,7 +234,7 @@ pub unsafe extern "C" fn sim_render_heat_pose(
 
 #[no_mangle]
 pub unsafe extern "C" fn sim_external_expert_action(
-    env: *mut Environment,
+    env: *mut RenderScene,
     state: *const [f32; 13],
     passed: usize,
     output: *mut [f32; 4],
@@ -348,31 +246,4 @@ pub unsafe extern "C" fn sim_external_expert_action(
     env.race.passed = passed;
     *output = env.teacher.external_action(&env.race);
     true
-}
-
-unsafe fn write_step(env: &mut Environment, image: *mut u8, reward: *mut f32, value: f32) -> i32 {
-    *reward = value;
-    env.camera.render(
-        &env.race,
-        std::slice::from_raw_parts_mut(image, env.camera.byte_len()),
-    );
-    match env.race.status {
-        Status::Racing => 0,
-        Status::Timeout => 2,
-        Status::Stalled => 3,
-        Status::Finished => 4,
-        _ => 1,
-    }
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn sim_official_seconds(env: *const Environment) -> f32 {
-    (&*env).race.official_seconds().unwrap_or(f32::NAN)
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn sim_lap_stats(env: *const Environment, gates: *mut u32, best: *mut f32) {
-    let env = &*env;
-    *gates = env.race.passed as u32;
-    *best = env.race.best_lap.unwrap_or(f32::NAN);
 }

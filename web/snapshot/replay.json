@@ -7,8 +7,9 @@
   "kind": "teacher-evaluation",
   "gates": 24,
   "status": 4,
-  "version": "1795392550409785383",
-  "url": "replay-1795392550409785383.mp4",
-  "controls_url": "controls-1795392550409785383.json",
-  "official_seconds": 29.131999999999998
+  "version": "1795398547918168486",
+  "url": "replay-1795398547918168486.mp4",
+  "controls_url": "controls-1795398547918168486.json",
+  "official_seconds": 29.017,
+  "chase_url": "chase-1795398547918168486.mp4"
 }

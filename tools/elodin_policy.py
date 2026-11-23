@@ -53,15 +53,18 @@ def rigid_state(update):
 
 
 class CameraFeed:
-    """Render the Rust camera from Elodin state, without stepping the Rust plant."""
-    def __init__(self, lib, path, fps, breakup, exposure, seed, dataset=None):
-        from training.sim import Environment
+    """Render FPV camera frames from Elodin state."""
+    def __init__(self, lib, path, fps, breakup, exposure, seed, dataset=None, *, mount_pitch=None, chase=False):
+        from training.sim import CameraRenderer
 
         self.width, self.height = 480, 360
-        self.env = Environment(lib, self.width, self.height)
-        self.env.reset(-3, exposure=exposure, breakup=breakup, video_seed=seed)
+        self.env = CameraRenderer(lib, self.width, self.height,
+                                  exposure=exposure, breakup=breakup, video_seed=seed, mount_pitch=mount_pitch)
         self.path, self.fps = path, fps
         self.encoder = None
+        self.chase = CameraRenderer(lib, self.width, self.height) if path and chase else None
+        self.chase_path = path.with_name(path.stem + "-chase.mp4") if self.chase else None
+        self.chase_encoder = None
         self.frame_number = -1
         self.actions = []
         self.dataset = dataset
@@ -83,13 +86,21 @@ class CameraFeed:
         if self.path:
             if self.encoder is None:
                 self.path.parent.mkdir(parents=True, exist_ok=True)
-                self.encoder = subprocess.Popen([
-                    "ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-f", "rawvideo",
-                    "-pix_fmt", "rgb24", "-s", f"{self.width}x{self.height}", "-r", str(self.fps), "-i", "pipe:0",
-                    "-c:v", "libx264", "-threads", "2", "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(self.path),
-                ], stdin=subprocess.PIPE)
+                self.encoder = self.open_encoder(self.path)
+                if self.chase is not None:
+                    self.chase_encoder = self.open_encoder(self.chase_path)
             self.encoder.stdin.write(image.tobytes())
+            if self.chase_encoder is not None:
+                frame = self.chase.render_pose(state, sensors.t, peer_positions, chase=True)
+                self.chase_encoder.stdin.write(frame.tobytes())
         return image
+
+    def open_encoder(self, path):
+        return subprocess.Popen([
+            "ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-f", "rawvideo",
+            "-pix_fmt", "rgb24", "-s", f"{self.width}x{self.height}", "-r", str(self.fps), "-i", "pipe:0",
+            "-c:v", "libx264", "-threads", "2", "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(path),
+        ], stdin=subprocess.PIPE)
 
     def record_command(self, command):
         if self.path:
@@ -117,16 +128,22 @@ class CameraFeed:
         if self.closed:
             return
         self.closed = True
-        if self.encoder is not None:
-            encoder, self.encoder = self.encoder, None
-            encoder.stdin.close()
-            if encoder.wait():
-                raise RuntimeError("FFmpeg could not write the Elodin FPV replay.")
-            self.path.with_suffix(".controls.json").write_text(json.dumps({
-                "sample_rate": self.fps, "actions": self.actions,
-            }, separators=(",", ":")) + "\n")
-            print(f"[A2RL] FPV replay: {len(self.actions)} frames written to {self.path}", flush=True)
-        self.env.close()
+        try:
+            encoders = [encoder for encoder in (self.encoder, self.chase_encoder) if encoder is not None]
+            for encoder in encoders:
+                encoder.stdin.close()
+            results = [encoder.wait() for encoder in encoders]
+            if any(results):
+                raise RuntimeError("FFmpeg could not write an Elodin replay.")
+            if self.encoder is not None:
+                self.path.with_suffix(".controls.json").write_text(json.dumps({
+                    "sample_rate": self.fps, "actions": self.actions,
+                }, separators=(",", ":")) + "\n")
+                print(f"[A2RL] FPV replay: {len(self.actions)} frames written to {self.path}", flush=True)
+        finally:
+            self.env.close()
+            if self.chase is not None:
+                self.chase.close()
 
 
 def configure_expert(lib, season2):
@@ -134,8 +151,8 @@ def configure_expert(lib, season2):
     handle = lib.sim_create(1, 1)
     lib.sim_set_season2_course(handle, season2)
     lib.sim_set_flow_teacher(handle, True)
-    pixel = (ct.c_ubyte * 3)()
-    lib.sim_reset(handle, -3, 0., 0., 1., 0., 1, ct.addressof(pixel))
+    lib.sim_configure_scene(handle, lib.sim_course_camera_tilt(season2), 1., 0., 1)
+    atexit.register(lib.sim_destroy, handle)
     lib.sim_external_expert_action.argtypes = [
         ct.c_void_p, ct.POINTER(ct.c_float), ct.c_size_t, ct.POINTER(ct.c_float)]
     lib.sim_external_expert_action.restype = ct.c_bool
@@ -223,11 +240,10 @@ def choose_command(update, image, ended):
         return held
     if pilot is None:
         import torch
-        from training.sim import load_sim
-        from training.watch import replay_agent
+        from training.agent import load_policy
 
         torch.set_num_threads(2)
-        pilot, _ = replay_agent(Path(path).read_bytes(), load_sim())
+        pilot = load_policy(Path(path).read_bytes())
         if pilot.imu_encoder is None:
             raise ValueError("Elodin requires an RGB+IMU policy checkpoint.")
         print(f"[A2RL] RGB+IMU policy loaded ({pilot.stack} observations per action)", flush=True)

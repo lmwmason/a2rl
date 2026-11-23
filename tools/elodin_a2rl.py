@@ -172,6 +172,7 @@ def configure_course(course, lib, season2, asset, camera_feed, report_path):
                 "official_seconds": official,
                 "mean_throttle_fraction": mean_throttle,
                 "gate_times": times[:last + 1],
+                "camera_mount_pitch_deg": camera_feed.env.mount_pitch if camera_feed else None,
             }
             if elodin_policy.heat is not None:
                 details.update(took_off=bool(elodin_policy.heat_airborne),
@@ -297,12 +298,15 @@ def main():
     if path or dataset or os.environ.get("A2RL_ELODIN_POLICY"):
         if not hasattr(lib, "sim_render_pose"):
             raise RuntimeError("Rebuild the simulator library for the shared FPV camera.")
+        pitch_override = os.environ.get("A2RL_FPV_MOUNT_PITCH")
         elodin_policy.camera = elodin_policy.CameraFeed(
             lib, Path(path).expanduser().resolve() if path else None, int(cfg.fpv_rate),
             float(os.environ.get("A2RL_FPV_BREAKUP", "0")),
             float(os.environ.get("A2RL_FPV_EXPOSURE", "1")),
             int(os.environ.get("A2RL_FPV_SEED", "1")),
             Path(dataset).expanduser().resolve() if dataset else None,
+            mount_pitch=float(pitch_override) if pitch_override is not None else None,
+            chase=os.environ.get("A2RL_ELODIN_CHASE") == "1",
         )
     report = Path(path).expanduser().resolve().with_suffix(".result.json") if path else None
     elodin_policy.contact, start, heading, set_elapsed, finish_on_contact = configure_course(

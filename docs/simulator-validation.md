@@ -5,7 +5,7 @@ This report checks the 2025 Grand Challenge layout, the Mode 2 RC interface, fir
 | Check | Result | Scope |
 | --- | --- | --- |
 | MSP RC interface | Four 1000–2000 µs AETR channels round-trip to Mode 2 commands with 1 µs resolution | MSP v1 command framing, channel mapping, and checksum |
-| Native 2026 flow teacher | Nine clean two-lap runs with 24 passes each, 40.42–40.45 s, mean crossing speed 4.68 m/s | Both Ladder passes traveled southwest. The runs spent no time below 2 m/s after the first gate. |
+| Historical 2026 flow teacher screening | Nine clean two-lap runs with 24 passes each, 40.42–40.45 s, mean crossing speed 4.68 m/s | Both Ladder passes traveled southwest. The runs spent no time below 2 m/s after the first gate. |
 | Elodin with Betaflight SITL, 2026 race reconstruction | Clean 24-gate run in 31.657 s, mean gate crossing speed 6.92 m/s | 1 kHz lockstep with 30 Hz synchronized RGB, IMU and Mode 2 commands. The dashboard shows this run. |
 | MonoRace Log 8, late segment | Axial specific-force RMSE of 3.41 m/s², bias of +0.45 m/s², and peak error of 14.54 m/s² over 367 windows | Calibrated plant prediction using measured rotor speeds and estimated motion |
 | MonoRace Log 5, held-out flight | 1.57 m/s² forward and 1.99 m/s² lateral specific-force RMSE over 897 windows | Horizontal drag prediction using independent flight data |
@@ -49,14 +49,13 @@ Using TII Racing v3 flights 13p, 14p and 15p on trackRATM, the time-weighted mea
 
 In a deterministic Rust screening sweep, 169 of 1,201 variants completed the course. The highest time-sampled mean throttle among those finishers was 25.38%. Two coupled attitude-and-throttle candidates then completed all 24 crossings in Elodin + Betaflight SITL. Their measured means were 23.62% in 31.700 s and 23.63% in 31.483 s. Holding the receiver at 80% after the first crossing caused contact before the second gate. The 80% target remains unmet. The Elodin result sidecar calculates the time-weighted receiver throttle from the first crossing through the finish, including the portions of the first and last recorded control samples that lie inside that interval.
 
-The simulator runs an MSP-compatible receiver boundary, then the project's Acro rate controller and mixer. The published measurements cover propulsion and drag under the recorded inputs. To establish controller fidelity on the intended airframe, compare firmware-in-the-loop command timing and body-rate response, then compare RPM, full trajectories, and gate clearances on held-out runs from that airframe. Report the learned pilot's completion rate separately from the state-driven teacher.
+Betaflight SITL runs its Acro rate controller and mixer and supplies motor outputs to Elodin. The published measurements cover propulsion and drag under the recorded inputs. To establish controller fidelity on the intended airframe, compare firmware-in-the-loop command timing and body-rate response, then compare RPM, full trajectories, and gate clearances on held-out runs from that airframe. Report the learned pilot's completion rate separately from the state-driven teacher.
 
 ## Reproduce the measurements
 
 ```bash
 cargo build --release --lib --no-default-features
 python -m pip install Pillow
-A2RL_COURSE=2026-practice A2RL_TEACHER_PROFILE=flow python -m training.racing_school --device cpu --teacher-only --out runs/validation/native-flow
 python -m tools.prepare_monorace_demos runs/validation/monorace --validation-logs
 python -m tools.check_flight_log runs/validation/monorace/log8/imu.csv runs/validation/monorace/log8/ekf.csv
 python -m tools.check_lateral_drag \

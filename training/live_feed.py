@@ -11,13 +11,13 @@ from shutil import copyfileobj
 import time
 from urllib.parse import urlsplit
 
-from .curriculum import FINISH_MARKER, PACE_TARGET, SPEED_TARGET
+from .curriculum import FINISH_MARKER, PACE_MARKER, PACE_TARGET, SPEED_MARKER, SPEED_RUN, SPEED_TARGET
 
 from .telemetry import finish_time_history, read_metrics
 
 
 ORIGIN = "https://a2rl-fpv-dashboard.front.cbgpu.com"
-MEDIA = re.compile(r"/(?:replay-[0-9]{1,24}\.mp4|controls-[0-9]{1,24}\.json|replay\.json)")
+MEDIA = re.compile(r"/(?:(?:replay|chase)-[0-9]{1,24}\.mp4|controls-[0-9]{1,24}\.json|replay\.json)")
 
 
 def training_active(run):
@@ -32,17 +32,14 @@ def training_active(run):
     return False
 
 
-def phase_folder(run):
-    speed = (run / "imitation-qualified.pt").is_file()
-    return speed, run / ("speed" if speed else "recovery")
-
-
 def status(run, media):
-    speed, folder = phase_folder(run)
+    speed = (run / PACE_MARKER).is_file()
+    waiting_for_speed = speed and not ((run / SPEED_RUN / "latest.pt").is_file())
+    folder = run / (SPEED_RUN if speed and not waiting_for_speed else "recovery")
     metrics = read_metrics(folder)
     latest = metrics[-1] if metrics else {}
     stage = "speed" if speed else "pace" if (run / FINISH_MARKER).is_file() else "finish"
-    completed = finish_time_history(metrics, speed)
+    completed = finish_time_history(metrics, speed and not waiting_for_speed)
     results = [row["comparison_s"] for row in completed if row["comparison_s"] is not None]
     gates = [row["gates_mean"] if "gates_mean" in row else sum(row["gates"])/len(row["gates"])
              for row in metrics[-60:] if "gates_mean" in row or row.get("gates")]
@@ -51,7 +48,8 @@ def status(run, media):
         "live_feed_version": 1,
         "course": "2026-practice", "phase": "SPEED RL" if speed else "IMITATION",
         "curriculum_stage": stage,
-        "physics_engine": "rust" if speed or not latest.get("offline") else None,
+        "physics_engine": "elodin",
+        "awaiting_speed_trainer": waiting_for_speed,
         "gates_per_race": 24, "full_course": True,
         "round": latest.get("round"), "steps": latest.get("steps", latest.get("transitions")),
         "finish_rate": latest.get("two_lap_rate"), "collision_rate": latest.get("crash_rate"),
@@ -60,7 +58,7 @@ def status(run, media):
         "mean_gate_crossing_speed_m_s": latest.get("mean_gate_crossing_speed_m_s"),
         "mean_gate_approach_delay_seconds": latest.get("mean_gate_approach_delay_seconds"),
         "target_two_lap_seconds": {"finish": None, "pace": PACE_TARGET, "speed": SPEED_TARGET}[stage],
-        "target_beaten": (run / "speed-qualified.pt").is_file(),
+        "target_beaten": (run / SPEED_RUN / "latest.pt").is_file() and (run / SPEED_MARKER).is_file(),
     }
     try:
         evaluation = json.loads((media / "replay.json").read_text())

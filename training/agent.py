@@ -1,12 +1,12 @@
 """DrQ-v2-style continuous actor critic for stacks of RGB frames."""
 from copy import deepcopy
+from io import BytesIO
 from math import atanh
 
 import torch
 from torch import nn
 from torch.nn import functional as F
 
-from .betaflight_link import decode_rc, encode_rc
 
 
 def pixel_tensor(frames, device):
@@ -137,12 +137,6 @@ class Agent:
             action = (action + torch.randn_like(action) * noise).clamp(-1., 1.)
         return action.cpu().numpy()
 
-    def command(self, frames, env):
-        if self.imu_encoder is None:
-            return self.action(frames[None])[0]
-        sticks = self.action(frames[None], imu=env.imu_window(self.stack)[None])[0]
-        return decode_rc(encode_rc(sticks))
-
     def update(self, batch, noise, *, update_actor=True, demonstration=None, imitation_weight=0.):
         obs, action, reward, discount, next_obs, *inertial = batch
         imu, next_imu = inertial if inertial else (None, None)
@@ -258,3 +252,12 @@ class Agent:
         params = torch.load(path, map_location=self.device, weights_only=True)
         self.actor.load_state_dict(params["actor"])
         self.actor_opt.state.clear()
+
+
+def load_policy(weights):
+    params = torch.load(BytesIO(weights), map_location="cpu", weights_only=True)
+    stack = params["frame_stack"] if "frame_stack" in params else params["encoder"]["0.weight"].shape[1] // 3
+    agent = Agent(stack, "cpu", 0., with_imu="imu_encoder" in params,
+                  backbone=params.get("vision_backbone", "cnn"))
+    agent.set_weights(params)
+    return agent

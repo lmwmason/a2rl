@@ -11,6 +11,8 @@ from shutil import copyfileobj
 import time
 from urllib.parse import urlsplit
 
+from .curriculum import FINISH_MARKER, PACE_TARGET, SPEED_TARGET
+
 from .telemetry import finish_time_history, read_metrics
 
 
@@ -39,6 +41,7 @@ def status(run, media):
     speed, folder = phase_folder(run)
     metrics = read_metrics(folder)
     latest = metrics[-1] if metrics else {}
+    stage = "speed" if speed else "pace" if (run / FINISH_MARKER).is_file() else "finish"
     completed = finish_time_history(metrics, speed)
     results = [row["comparison_s"] for row in completed if row["comparison_s"] is not None]
     gates = [row["gates_mean"] if "gates_mean" in row else sum(row["gates"])/len(row["gates"])
@@ -47,6 +50,7 @@ def status(run, media):
         "active": training_active(run), "connection": "connected", "snapshot_at": time.time(),
         "live_feed_version": 1,
         "course": "2026-practice", "phase": "SPEED RL" if speed else "IMITATION",
+        "curriculum_stage": stage,
         "physics_engine": "rust" if speed or not latest.get("offline") else None,
         "gates_per_race": 24, "full_course": True,
         "round": latest.get("round"), "steps": latest.get("steps", latest.get("transitions")),
@@ -55,7 +59,7 @@ def status(run, media):
         "best_two_lap_seconds": min(results, default=None),
         "mean_gate_crossing_speed_m_s": latest.get("mean_gate_crossing_speed_m_s"),
         "mean_gate_approach_delay_seconds": latest.get("mean_gate_approach_delay_seconds"),
-        "target_two_lap_seconds": 12 if speed else 30,
+        "target_two_lap_seconds": {"finish": None, "pace": PACE_TARGET, "speed": SPEED_TARGET}[stage],
         "target_beaten": (run / "speed-qualified.pt").is_file(),
     }
     try:

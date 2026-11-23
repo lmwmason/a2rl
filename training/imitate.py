@@ -32,6 +32,8 @@ def main():
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--initialize", type=Path, help="Start from an existing policy checkpoint.")
     parser.add_argument("--until", type=Path, help="Keep training offline until the evaluator writes this file.")
+    parser.add_argument("--completion-marker", type=Path,
+                        help="Use the validated finisher to start 30-second pace imitation.")
     parser.add_argument("--correction-directory", type=Path,
                         help="Train one round for each newly recorded student flight.")
     parser.add_argument("--device", choices=("cuda", "cpu"), default="cuda")
@@ -60,6 +62,8 @@ def main():
         parser.error("The primary dataset fraction must be greater than zero and at most one.")
     if args.correction_directory and not (args.offline and args.imu and args.until):
         parser.error("The student correction feed requires evaluator-controlled offline RGB+IMU training.")
+    if args.completion_marker and not (args.offline and args.until):
+        parser.error("Pace imitation requires evaluator-controlled offline training.")
     if args.offline and args.official_eval:
         parser.error("Official Rust evaluation is unavailable in offline mode.")
     if args.device == "cuda" and not torch.cuda.is_available():
@@ -101,6 +105,9 @@ def main():
     best_rank = None
     correction_clips = {}
     last_correction = progress.get("last_correction")
+    stage = (progress.get("curriculum_stage") or "finish") if args.completion_marker else None
+    if stage == "pace":
+        demos.primary_fraction = .80
     try:
         with (args.out / "metrics.jsonl").open("a" if resumed else "w", encoding="utf-8", buffering=1) as log:
             for step in range(1, args.updates + 1) if args.updates else count(1):
@@ -122,6 +129,14 @@ def main():
                     }
                     demos.sim = list(correction_clips.values())
                     last_correction = recent[-1].name
+                if (step - 1) % args.eval_every == 0 and stage == "finish" and args.completion_marker.is_file():
+                    agent.load(args.completion_marker)
+                    optimizer.state.clear()
+                    best_rank = None
+                    demos.primary_fraction = .80
+                    stage = "pace"
+                    print(json.dumps({"curriculum_stage": stage, "primary_fraction": demos.primary_fraction}),
+                          flush=True)
                 frames, labels, weight, *imu = demos.sample(args.batch)
                 obs = random_shift(pixel_tensor(frames, args.device).float() / 255. - 0.5, pad=3)
                 scale = torch.empty((len(frames), 1, 1, 1), device=args.device).uniform_(.85, 1.15)
@@ -155,9 +170,12 @@ def main():
                 if args.correction_directory:
                     metrics.update(rollout_corrections=len(correction_clips), latest_correction=last_correction,
                                    correction_frames=sum(map(len, correction_clips.values())))
+                if stage:
+                    metrics.update(curriculum_stage=stage, primary_fraction=demos.primary_fraction)
                 print(json.dumps(metrics), flush=True)
                 log.write(json.dumps(metrics) + "\n")
-                agent.save(latest, round=round_no, steps=steps, updates=updates, last_correction=last_correction)
+                agent.save(latest, round=round_no, steps=steps, updates=updates,
+                           last_correction=last_correction, curriculum_stage=stage)
                 if best_rank is None or rank > best_rank:
                     agent.save(args.out / "best.pt")
                     best_rank = rank

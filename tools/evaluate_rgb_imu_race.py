@@ -13,6 +13,8 @@ import subprocess
 from tempfile import mkdtemp
 import time
 
+from training.curriculum import FINISH_MARKER, FINISH_WINDOW, PACE_MARKER, PACE_TARGET, SPEED_MARKER, SPEED_TARGET
+
 
 ROOT = Path(__file__).resolve().parents[1]
 STARTS = (0., -.03, .03)
@@ -119,7 +121,7 @@ def promote(args, file, weights):
                    input=weights, check=True, timeout=45)
 
 
-def publish_replay(directory, session, phase, result, progress):
+def publish_replay(directory, session, phase, result, progress, stage=None):
     if directory is None:
         return
     report = session / "replay.result.json"
@@ -141,6 +143,8 @@ def publish_replay(directory, session, phase, result, progress):
         "status": 4 if result["finished"] else 1 if result["contact"] else 2,
         "official_seconds": result["official_seconds"],
     }
+    if stage:
+        evaluation["curriculum_stage"] = stage
     history = previous.get("history", [])
     if not history and previous.get("kind") == "student-evaluation":
         history = [{key: previous[key] for key in evaluation if key in previous}]
@@ -159,53 +163,57 @@ def publish_replay(directory, session, phase, result, progress):
 
 
 def watch(args):
-    if args.public:
-        import torch
+    import torch
 
-    for phase, source, marker, target in (("IMITATION", "recovery/latest.pt", "imitation-qualified.pt", 30.),
-                                          ("SPEED RL", "speed/latest.pt", "speed-qualified.pt", 12.)):
+    stages = (
+        ("IMITATION", "finish", "recovery/latest.pt", FINISH_MARKER, FINISH_WINDOW),
+        ("IMITATION", "pace", "recovery/latest.pt", PACE_MARKER, PACE_TARGET),
+        ("SPEED RL", "speed", "speed/latest.pt", SPEED_MARKER, SPEED_TARGET),
+    )
+    for phase, stage, source, marker, target in stages:
         examined = set()
         while True:
             try:
-                if fetch(args, marker):
+                if fetch(args, marker) or (stage == "finish" and fetch(args, PACE_MARKER)):
                     break
                 raw = fetch(args, source)
                 digest = hashlib.sha256(raw).hexdigest()
                 if not raw or digest in examined:
                     time.sleep(3)
                     continue
-                progress = (torch.load(BytesIO(raw), map_location="cpu", weights_only=True)
-                            .get("training_progress", {}) if args.public else {})
+                progress = torch.load(BytesIO(raw), map_location="cpu", weights_only=True).get("training_progress", {})
                 weights = args.out / (digest + ".pt")
                 weights.write_bytes(raw)
+                trial = args.out / stage / digest
+                clip_prefix = digest if stage == "finish" else f"{digest}-{stage}"
                 profile = None
                 if args.adaptive_completion and phase == "IMITATION":
                     replay = args.public / "replay.json"
                     history = json.loads(replay.read_text()).get("history", []) if replay.is_file() else []
                     profile = completion_profile([row for row in history if row["phase"] == phase])
                 if phase == "IMITATION" and args.completion_rollouts:
-                    session = args.out / digest / "assisted"
-                    clip = args.rollout_corrections / f"{digest}-assisted.npz"
+                    session = trial / "assisted"
+                    clip = args.rollout_corrections / f"{clip_prefix}-assisted.npz"
                     result = evaluate(args, weights, session, 0., clip, assisted=True, profile=profile)
                     for name in ("replay.mp4", "replay.controls.json"):
                         (session / name).unlink(missing_ok=True)
-                    print(json.dumps({"phase": phase, "checkpoint": digest, **result}), flush=True)
-                qualified = True
+                    print(json.dumps({"phase": phase, "curriculum_stage": stage, "checkpoint": digest, **result}), flush=True)
+                qualified = stage != "pace" or progress.get("curriculum_stage") == "pace"
                 for index, side in enumerate(STARTS):
-                    session = args.out / digest / str(index)
+                    session = trial / str(index)
                     correction_folder = args.rollout_corrections or args.launch_corrections
-                    correction = (correction_folder / f"{digest}.npz"
+                    correction = (correction_folder / f"{clip_prefix}.npz"
                                   if correction_folder and phase == "IMITATION" and index == 0 else None)
-                    seconds = 50 if phase == "IMITATION" else 35
+                    seconds = FINISH_WINDOW if phase == "IMITATION" else 35
                     result = evaluate(args, weights, session, side, correction, seconds=seconds, profile=profile)
                     if result.get("assisted"):
                         raise ValueError("Assisted rollouts cannot count toward qualification.")
                     if index == 0:
-                        publish_replay(args.public, session, phase, result, progress)
+                        publish_replay(args.public, session, phase, result, progress, stage)
                     if args.public is not None:
                         for name in ("replay.mp4", "replay.controls.json"):
                             (session / name).unlink(missing_ok=True)
-                    print(json.dumps({"phase": phase, "checkpoint": digest, "start_side": side,
+                    print(json.dumps({"phase": phase, "curriculum_stage": stage, "checkpoint": digest, "start_side": side,
                                       "target_seconds": target, **result}), flush=True)
                     if not succeeds(result, target):
                         qualified = False
@@ -213,7 +221,8 @@ def watch(args):
                 weights.unlink(missing_ok=True)
                 if qualified:
                     promote(args, marker, raw)
-                    print(json.dumps({"qualified": phase, "checkpoint": digest, "target_seconds": target}),
+                    print(json.dumps({"qualified": phase, "curriculum_stage": stage,
+                                      "checkpoint": digest, "target_seconds": target}),
                           flush=True)
                     break
                 examined.add(digest)

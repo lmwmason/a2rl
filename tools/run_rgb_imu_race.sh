@@ -23,6 +23,7 @@ if [[ ! -s "$qualified" ]]; then
     "$python" -u -m training.imitate --device "$device" --imu --stack 8 --offline \
         --initialize "$seed" --real "$@" --out "$imitation" \
         --correction-directory "$run/firmware-recovery" --until "$qualified" \
+        --completion-marker "$run/completion-qualified.pt" \
         --updates 0 --eval-every 150 --batch 128 --learning-rate 5e-5 --primary-fraction .60
 fi
 

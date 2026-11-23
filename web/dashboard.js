@@ -10,6 +10,11 @@ const dateTime = new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeSty
 const count = (value) => Number.isFinite(value) ? number.format(value) : "—";
 const percent = (value) => Number.isFinite(value) ? count(Math.round(value * 100)) + "%" : "—";
 const quantity = (value, unit) => Number.isFinite(value) ? value.toFixed(2) + " " + unit : "—";
+const curriculumLabels = {
+  finish: "Stage 1 · Clean two-lap finish",
+  pace: "Stage 2 · Imitation ≤30 s",
+  speed: "Stage 3 · Reinforcement learning ≤12 s",
+};
 const camera = byId("fpv");
 const chart = byId("history");
 const chartContext = chart.getContext("2d");
@@ -269,8 +274,9 @@ function renderStatus(info) {
     pill("connection", info.connection === "connecting" ? "Connecting to GPU" : "GPU feed offline", "stale");
   }
   setText("phase", teacher ? "Teacher validation"
-    : info.phase === "VALIDATION" ? "Firmware validation" : info.target_beaten ? "Target reached" : speedTraining ? "Reinforcement learning"
-    : info.full_course ? "Full-course imitation" : info.phase ? "Imitation learning" : "—");
+    : info.phase === "VALIDATION" ? "Firmware validation" : info.target_beaten ? "Target reached"
+    : curriculumLabels[info.curriculum_stage] ?? (speedTraining ? "Reinforcement learning"
+      : info.full_course ? "Full-course imitation" : info.phase ? "Imitation learning" : "—"));
   setText("progress-label", speedTraining ? "Current training steps" : "Current training round");
   setText("progress", count(speedTraining ? info.steps : info.round));
   setText("steps", count(info.steps));

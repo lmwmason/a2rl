@@ -426,7 +426,8 @@ def main():
                             create_frustum=True, fps=cfg.fpv_rate)
         return camera.DB_NAME
 
-    if elodin_policy.camera is not None and os.environ.get("A2RL_ELODIN_PREVIEW") != "1":
+    in_process_camera_disabled = os.environ.get("A2RL_ELODIN_IN_PROCESS") == "1"
+    if (elodin_policy.camera is not None or in_process_camera_disabled) and os.environ.get("A2RL_ELODIN_PREVIEW") != "1":
         camera.register = lambda world, drone: camera.DB_NAME
         camera.collect_frame = lambda ctx, name: None
     else:

@@ -226,6 +226,14 @@ def configure_expert(lib, season2):
         lib.sim_set_teacher_pace.restype = ct.c_bool
         if not lib.sim_set_teacher_pace(handle, float(pace)):
             raise ValueError("Teacher pace must be between 0.60 and 1.00.")
+    if profile := os.environ.get("A2RL_ELODIN_TEACHER_SPEED_PROFILE"):
+        values = json.loads(profile)
+        if not isinstance(values, list) or len(values) != 4:
+            raise ValueError("Expected open, technical, Ladder pace and Ladder scale")
+        lib.sim_set_teacher_speed_profile.argtypes = [ct.c_void_p, *([ct.c_float] * 4)]
+        lib.sim_set_teacher_speed_profile.restype = ct.c_bool
+        if not lib.sim_set_teacher_speed_profile(handle, *(float(value) for value in values)):
+            raise ValueError("Teacher speed profile or Ladder frame clearance rejected")
 
     lib.sim_external_expert_action.argtypes = [
         ct.c_void_p, ct.POINTER(ct.c_float), ct.c_size_t, ct.POINTER(ct.c_float)]

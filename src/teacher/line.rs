@@ -146,7 +146,7 @@ struct Point {
     speed: f32,
 }
 
-struct Line {
+pub(super) struct Line {
     points: Vec<Point>,
 }
 
@@ -250,6 +250,10 @@ impl Line {
     }
 
     fn firmware() -> Self {
+        Self::firmware_with_ladder_scale(1.).expect("nominal firmware line")
+    }
+
+    pub(super) fn firmware_with_ladder_scale(ladder_scale: f32) -> Option<Self> {
         // The measured reference flight passes close to the sides of the
         // opening at gates 2, 6 and 10. Keep their targets fixed.
         const MOVABLE_GATES: [(usize, f32); 4] = [(2, 1.), (3, -1.), (4, -1.), (8, 1.)];
@@ -294,12 +298,18 @@ impl Line {
             Vec3::new(0.307844, -0.222176, 0.194575),
             Vec3::new(-0.280147, -0.359855, 0.180000),
         ];
+        let gates: Vec<_> = Gate::on_course(Course::Season2Practice2026).collect();
+        let midpoint = (gates[10].center + gates[11].center) * 0.5;
         let ladder = std::array::from_fn(|index| {
             let (position, tangent) = LADDER_ARC[index];
             let yaw = [-0.7, 0.4, 0.8][index] * -0.216000;
             let mut direction = Quat::from_rotation_z(yaw) * tangent;
             direction.z += 0.064829;
-            (position + offsets[index], direction)
+            let point = position + offsets[index];
+            (
+                point + (point - midpoint).with_z(0.) * (ladder_scale - 1.),
+                direction,
+            )
         });
         let mut adjusted = Self::with_ladder(pace, &crossings, ladder);
         // Keep the independently planned approach speed up to the upper gate.
@@ -311,9 +321,11 @@ impl Line {
             }
         }
         if adjusted.clears_frames() {
-            adjusted
+            Some(adjusted)
+        } else if ladder_scale == 1. {
+            Some(best)
         } else {
-            best
+            None
         }
     }
 
@@ -464,10 +476,18 @@ pub(super) fn gate_height_guard(race: &Race, accel: Vec3, command: &mut [f32; 4]
     command[1] = command[1].min(2. * collective - 1.);
 }
 
-pub(super) fn track(race: &Race, firmware: bool, pace: f32) -> Option<(Vec3, Vec3)> {
+pub(super) fn track(
+    race: &Race,
+    firmware: bool,
+    pace: f32,
+    motion_scale: f32,
+    experimental_line: Option<&Line>,
+) -> Option<(Vec3, Vec3)> {
     let target = race.gates[race.next_gate()];
     let position = race.drone.position;
-    let line = if firmware {
+    let line = if let Some(line) = experimental_line {
+        line
+    } else if firmware {
         SEASON2_FIRMWARE_LINE.get_or_init(Line::firmware)
     } else {
         SEASON2_LINE.get_or_init(|| {
@@ -493,8 +513,11 @@ pub(super) fn track(race: &Race, firmware: bool, pace: f32) -> Option<(Vec3, Vec
     } else {
         (1., REFERENCE_TRACKING)
     };
-    let speed_scale = speed_scale * pace;
-    let preview = line.look_ahead(index, (0.32 + 0.18 * here.speed * pace) * gains.preview);
+    let speed_scale = speed_scale * pace * motion_scale;
+    let preview = line.look_ahead(
+        index,
+        (0.32 + 0.18 * here.speed * pace * motion_scale) * gains.preview,
+    );
     let velocity_error = here.tangent * preview.speed * speed_scale - race.drone.velocity;
     let correction = here.position - position;
     let curvature_accel =
@@ -532,8 +555,9 @@ pub(super) fn track(race: &Race, firmware: bool, pace: f32) -> Option<(Vec3, Vec
         let room = ((depth - 2.) / 2.).clamp(0., 1.);
         let alignment = (1. - correction.length() / 0.9).clamp(0., 1.);
         let straightness = (1. - here.curvature.length() / 0.22).clamp(0., 1.);
-        let speed_deficit =
-            (preview.speed * pace - race.drone.velocity.dot(here.tangent)).clamp(0., 5.);
+        let speed_deficit = (preview.speed * pace * motion_scale
+            - race.drone.velocity.dot(here.tangent))
+        .clamp(0., 5.);
         accel += here.tangent * (7. * speed_deficit * alignment * room * straightness);
     }
     let toward_gate = (target.center - position).truncate().normalize_or_zero();

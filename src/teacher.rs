@@ -39,6 +39,8 @@ pub struct Teacher {
     recovery_side: f32,
     flow: bool,
     pace: f32,
+    speed_profile: [f32; 3],
+    experimental_line: Option<line::Line>,
     sprint_ticks: u8,
 }
 
@@ -57,6 +59,8 @@ impl Teacher {
             recovery_side: 1.,
             flow: false,
             pace: 1.,
+            speed_profile: [1.; 3],
+            experimental_line: None,
             sprint_ticks: 0,
         }
     }
@@ -74,6 +78,25 @@ impl Teacher {
         true
     }
 
+    pub(crate) fn set_speed_profile(&mut self, profile: [f32; 3], ladder_scale: f32) -> bool {
+        if !profile.iter().all(|speed| (0.8..=1.8).contains(speed))
+            || !(0.65..=1.15).contains(&ladder_scale)
+        {
+            return false;
+        }
+        let replacement = if ladder_scale == 1. {
+            None
+        } else {
+            let Some(path) = line::Line::firmware_with_ladder_scale(ladder_scale) else {
+                return false;
+            };
+            Some(path)
+        };
+        self.experimental_line = replacement;
+        self.speed_profile = profile;
+        true
+    }
+
     pub fn external_action(&mut self, race: &Race) -> [f32; 4] {
         self.control(race, true)
     }
@@ -84,7 +107,19 @@ impl Teacher {
 
     fn control(&mut self, race: &Race, firmware: bool) -> [f32; 4] {
         if self.flow && race.grand_challenge && race.course == Course::Season2Practice2026 {
-            if let Some((accel, heading)) = line::track(race, firmware, self.pace) {
+            let scale = match race.next_gate() {
+                0 if race.passed == 0 => 1., // Preserve the qualified launch.
+                1 | 2 | 3 | 8 | 9 => self.speed_profile[0],
+                10 | 11 => self.speed_profile[2],
+                _ => self.speed_profile[1],
+            };
+            if let Some((accel, heading)) = line::track(
+                race,
+                firmware,
+                self.pace,
+                scale,
+                self.experimental_line.as_ref(),
+            ) {
                 let horizontal_limit = if !firmware {
                     17.
                 } else if line::is_ladder_leg(race.next_gate()) {

@@ -211,6 +211,19 @@ pub unsafe extern "C" fn sim_set_teacher_pace(env: *mut RenderScene, pace: f32) 
 }
 
 #[no_mangle]
+pub unsafe extern "C" fn sim_set_teacher_speed_profile(
+    env: *mut RenderScene,
+    open: f32,
+    technical: f32,
+    ladder: f32,
+    ladder_scale: f32,
+) -> bool {
+    (*env)
+        .teacher
+        .set_speed_profile([open, technical, ladder], ladder_scale)
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn sim_render_pose(
     env: *mut RenderScene,
     state: *const [f32; 13],

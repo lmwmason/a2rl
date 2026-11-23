@@ -107,17 +107,20 @@ def main():
                 while not args.until.is_file():
                     complete = (path for path in args.correction_directory.glob("*.npz")
                                 if not path.name.endswith(".tmp.npz"))
-                    recent = sorted(complete, key=lambda path: path.stat().st_mtime_ns)[-12:]
+                    recent = sorted(complete, key=lambda path: path.stat().st_mtime_ns)
                     if recent and recent[-1].name != last_correction:
                         break
                     sleep(1)
                 if args.until.is_file():
                     break
+                independent = [path for path in recent if not path.stem.endswith("-assisted")][-8:]
+                assisted = [path for path in recent if path.stem.endswith("-assisted")][-8:]
                 correction_clips = {
                     path: correction_clips.get(path) or Clip(path, stack, height, width, with_imu=True)
-                    for path in recent
+                    for path in (*independent, *assisted)
                 }
-                demos.sim = list(correction_clips.values())
+                demos.independent = [correction_clips[path] for path in independent]
+                demos.assisted = [correction_clips[path] for path in assisted]
                 last_correction = recent[-1].name
             if (step - 1) % args.eval_every == 0 and stage == "finish" and args.completion_marker.is_file():
                 agent.load(args.completion_marker)
@@ -128,9 +131,13 @@ def main():
                 print(json.dumps({"curriculum_stage": stage, "primary_fraction": demos.primary_fraction}),
                       flush=True)
             frames, labels, weight, *imu = demos.sample(args.batch)
-            obs = random_shift(pixel_tensor(frames, args.device).float() / 255. - 0.5, pad=3)
-            scale = torch.empty((len(frames), 1, 1, 1), device=args.device).uniform_(.85, 1.15)
-            offset = torch.empty_like(scale).uniform_(-.07, .07)
+            nominal_completion = stage == "finish"
+            obs = random_shift(pixel_tensor(frames, args.device).float() / 255. - 0.5,
+                               pad=1 if nominal_completion else 3)
+            contrast = .06 if nominal_completion else .15
+            brightness = .025 if nominal_completion else .07
+            scale = torch.empty((len(frames), 1, 1, 1), device=args.device).uniform_(1 - contrast, 1 + contrast)
+            offset = torch.empty_like(scale).uniform_(-brightness, brightness)
             features = agent.policy_features((obs * scale + offset).clamp(-.5, .5), imu[0] if imu else None)
             action = agent.actor(features).tanh()
             loss = stick_loss(action, labels, weight)
@@ -150,7 +157,9 @@ def main():
                            bc_loss=float(loss.detach()), real_holdout_mae=real_error, offline=True)
             if args.correction_directory:
                 metrics.update(rollout_corrections=len(correction_clips), latest_correction=last_correction,
-                               correction_frames=sum(map(len, correction_clips.values())))
+                               correction_frames=sum(map(len, correction_clips.values())),
+                               independent_correction_clips=len(demos.independent),
+                               assisted_correction_clips=len(demos.assisted))
             if stage:
                 metrics.update(curriculum_stage=stage, primary_fraction=demos.primary_fraction)
             print(json.dumps(metrics), flush=True)

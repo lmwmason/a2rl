@@ -8,7 +8,7 @@ import torch
 
 from training.agent import Agent
 from training.betaflight_link import timed_mean_throttle
-from training.demonstrations import Clip
+from training.demonstrations import Clip, Demonstrations
 from training.replay import Replay
 from training.sim import CameraRenderer, gate_count, load_sim
 from training.telemetry import finish_time_history
@@ -68,6 +68,26 @@ class DemonstrationTest(unittest.TestCase):
         image, label, _ = clip.batch(np.array([1, 2, 3]))
         np.testing.assert_array_equal(image[:, :, 0, 0, 0], [[0, 1], [2, 2], [2, 3]])
         np.testing.assert_array_equal(label, actions[1:])
+
+
+    def test_completion_batch_emphasizes_independent_approaches(self):
+        with TemporaryDirectory() as directory:
+            paths = [Path(directory) / f"{i}.npz" for i in range(3)]
+            for i, path in enumerate(paths):
+                frames = np.zeros((120, 1, 1, 3), dtype=np.uint8)
+                actions = np.full((120, 4), i / 3, dtype=np.float32)
+                np.savez(path, frames=frames, actions=actions, timestamps=np.arange(120) / 30,
+                         weights=np.ones(120, dtype=np.float32),
+                         next_gate=np.repeat(np.arange(4), 30))
+            demos = Demonstrations(paths[:1], [], 2, 1, 1, 2, primary_fraction=.25)
+            demos.independent = [Clip(paths[1], 2, 1, 1)]
+            demos.assisted = [Clip(paths[2], 2, 1, 1)]
+            _, actions, _ = demos.sample(128)
+        np.testing.assert_array_equal(np.unique(actions[:, 0], return_counts=True)[1], [32, 64, 32])
+        clip = demos.independent[0]
+        rows = clip.sample_rows(np.random.default_rng(5), 64, prioritize_approach=True)
+        self.assertTrue(np.all(np.isin(rows[:32], clip.approach_rows)))
+        self.assertTrue(np.all((rows[:32] >= 60) & (rows[:32] < 117)))
 
 
 class TelemetryTest(unittest.TestCase):

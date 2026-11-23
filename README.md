@@ -130,8 +130,8 @@ python3 -m training.live_feed --run runs/target-12 --media runs/target-12/public
 
 The GPU trains with synchronized teacher demonstrations and correction labels from student rollouts. The student observes only RGB and IMU. Teacher inputs are supervision targets. Assisted rollouts expand training coverage. Published replays and qualification use independent student flights.
 
-1. **Completion imitation.** Clear all 24 apertures on the two-lap course, with three clean starts.
-2. **Pace imitation.** Increase the reference demonstration fraction from 60% to 80%. Qualify at or below 30 seconds in three clean starts.
+1. **Completion imitation.** Clear all 24 apertures on the two-lap course, with three clean starts. Each mixed batch draws approximately 25% of examples from the reference demonstration, 50% from independent rollout corrections, and 25% from teacher-assisted rollouts. Half of the independent samples target the approach before the rollout ended.
+2. **Pace imitation.** Increase the reference demonstration fraction from 25% to 80%. Qualify at or below 30 seconds in three clean starts.
 3. **Speed optimization.** The target is 12 seconds after pace qualification. This stage is awaiting an Elodin reinforcement learner.
 
 The application benchmark uses the reference airframe profile, 70° camera mount, clean RGB, and a nominal launch for the replay and lap time. Two 3 cm launch offsets check repeatability within the same setup. For separate transfer experiments, run the checkpoint with `A2RL_AIRFRAME` pointing to a measured variant and `A2RL_FPV_MOUNT_PITCH` set to the desired camera pitch in degrees. Keep evaluation outputs in a fresh directory and record completion and timing for each configuration. Simulated variation measures sensitivity within the model. Physical transfer still needs flight data from the intended aircraft.

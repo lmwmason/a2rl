@@ -6,7 +6,7 @@ use <power-module.scad>
 use <jetson-b01.scad>
 
 /* [Assembly] */
-view = "assembled"; // [assembled,exploded,clearance,stack-adapter]
+view = "assembled"; // [assembled,exploded,clearance,canopy,nano-guard,carbon-plate,stack-adapter]
 stack_pitch = 30.5; // [20,30.5]
 wheelbase = 220;
 motor_x = wheelbase / sqrt(8);
@@ -14,7 +14,7 @@ motor_y = wheelbase / sqrt(8);
 motor_centres = [[motor_x, motor_y], [motor_x, -motor_y],
                  [-motor_x, motor_y], [-motor_x, -motor_y]];
 camera_tilt = 55;
-show_top_plate = true;
+show_canopy = true;
 show_propellers = true;
 
 /* [Hidden] */
@@ -23,12 +23,11 @@ arm_thickness = 5;
 prop_radius = 63.5;
 prop_z = 32;
 sweep_half_height = 4;
-top_z = 25;
-tray_z = 42;
-nano_z = 49;
-battery_z = -33;
-regulator_origin = [-52, 0, 8];
-camera_origin = [65, 0, 20];
+nano_z = -8;
+landing_z = -46;
+battery_z = 28;
+regulator_origin = [-53, 0, 8];
+camera_origin = [70, 0, 26];
 board_mounts = [[-32, -17], [-32, 17], [32, -17], [32, 17]];
 adapter_mounts = [[0, -17.5], [0, 17.5]];
 spread = view == "exploded" ? 1 : 0;
@@ -68,7 +67,10 @@ module arm_root(p) {
 module carbon_frame() {
     color("#22252d") difference() {
         union() {
-            translate([-2, 0, 0]) plate(158, 46, 3, 8);
+            hull() {
+                translate([-47, 0, 0]) plate(91, 46, arm_thickness, 8);
+                translate([53, 0, 0]) plate(80, 34, arm_thickness, 8);
+            }
             for (p = motor_centres) hull() {
                 arm_root(p);
                 translate([p.x, p.y, 0]) cylinder(d = 31, h = arm_thickness);
@@ -81,20 +83,9 @@ module carbon_frame() {
         }
         for (p = board_mounts) hole_at(p, 3.2, -0.1, 6);
         for (p = adapter_mounts) hole_at(p, 3.2, -0.1, 6);
-        for (x = [-20, 17], y = [-20.6, 20.6])
-            translate([x - 5.5, y - 0.95, -0.1]) cube([11, 1.9, 5.2]);
+        for (x = [62, 76], y = [-13, 13]) hole_at([x, y], 3.2, -0.1, 6);
+        for (x = [-17, 32], y = [-20, 20]) hole_at([x, y], 3.2, -0.1, 6);
     }
-    color("#8b9199") for (p = board_mounts)
-        standoff(p, 3, top_z - 3, 6.4, 3.1);
-    if (show_top_plate)
-        translate([-2, 0, top_z + 30 * spread]) color("#272932") difference() {
-            plate(156, 46, 2.4, 8);
-            for (p = board_mounts) hole_at([p.x + 2, p.y], 3.3, -0.1, 3);
-            for (x = [-57, -45, -13, 0, 13, 51, 64])
-                translate([x - 2, -9, -0.1]) plate(4, 9, 3, 1.5);
-            translate([52, -16, -0.1]) cube([30, 32, 2.6]);
-            translate([-79, -19, -0.1]) cube([42, 38, 2.6]);
-        }
 }
 
 module quad_motor(p) {
@@ -187,7 +178,7 @@ module aikon_f43030(z) {
 }
 
 module flight_stack() {
-    z = 3 + 12 * spread;
+    z = arm_thickness + 12 * spread;
     size = stack_pitch == 20 ? 28 : 40;
     color("#c5ad76") translate([0, 0, z]) stack_adapter();
     for (p = adapter_mounts) screw(p, z - 3, 5.5);
@@ -202,30 +193,118 @@ module flight_stack() {
         electronics_board(size, z + 13 + 10 * spread, true);
 }
 
-module nano_tray() {
-    color("#242933") translate([0, 0, tray_z + 52 * spread]) difference() {
+function underbody_hole(p) = [p.x, -p.y];
+function underbody_port() = let(p = nano_j25_centre()) [p.x, -p.y, nano_z - p.z];
+
+module nano_mount() {
+    color("#343944") translate([0, 0, -3 - 12 * spread]) difference() {
         union() {
-            for (y = [-22.5, 36]) translate([-3, y, 0]) plate(101, 11, 3.2, 3);
-            for (x = [-32, 32]) translate([x, 7, 0]) plate(11, 66, 3.2, 3);
+            for (x = [-32, 32]) translate([x, -6, 0]) plate(12, 71, 3, 3);
+            for (y = [-36, 22.5]) translate([-3, y, 0]) plate(101, 12, 3, 3);
         }
         for (p = nano_hole_centres()) hull()
-            for (dx = [-1.2, 1.2]) hole_at([p.x + dx, p.y], 3.3, -0.1, 3.5);
-        for (p = board_mounts) hole_at(p, 3.2, -0.1, 3.5);
+            for (dx = [-1.2, 1.2]) hole_at([p.x + dx, -p.y], 3.3, -0.1, 3.2);
+        for (p = board_mounts) hole_at(p, 3.2, -0.1, 3.2);
     }
-    color("#888f99") {
-        for (p = board_mounts) standoff(p, top_z + 2.4, tray_z - top_z - 2.4 + 30 * spread, 6.4, 3.1);
-        for (p = nano_hole_centres()) standoff(p, tray_z + 3.2 + 52 * spread,
-                                              nano_z - tray_z - 3.2 + 16 * spread, 6, 3);
+    color("#343944") for (p = nano_hole_centres())
+        standoff(underbody_hole(p), nano_z - 19 * spread, 5 + 7 * spread, 6.5, 3.2);
+    translate([0, 0, nano_z - 19 * spread]) rotate([180, 0, 0]) jetson_b01();
+    for (p = nano_hole_centres()) translate([p.x, -p.y, nano_z - 19 * spread - 3])
+        rotate([180, 0, 0]) screw([0, 0], -5, 5);
+}
+
+module nano_guard_shape() {
+    // The two open runners carry landing loads outside the PCB and connector.
+    for (y = [-57, 57]) {
+        hull() for (x = [-56, 56]) translate([x, y, landing_z]) cylinder(r = 4, h = 4);
+        for (x = [-54, 54]) hull() {
+            translate([x, y, landing_z]) cylinder(r = 4, h = 4);
+            translate([x, y, -5]) cylinder(r = 3.2, h = 5);
+        }
     }
-    translate([0, 0, nano_z + 68 * spread]) jetson_b01();
-    for (p = nano_hole_centres()) screw(p, nano_z + 68 * spread - 2, 3.8);
+    for (x = [-54, 0, 54]) hull()
+        for (y = [-57, 57]) translate([x, y, landing_z]) cylinder(r = 3, h = 4);
+    for (x = [-54, 54]) hull()
+        for (y = [-57, 57]) translate([x, y, -5]) cylinder(r = 3, h = 5);
+    for (x = [-54, 54], y = [-17, 17]) hull() {
+        translate([x, y, -5]) cylinder(r = 4, h = 5);
+        translate([x > 0 ? 32 : -32, y, -5]) cylinder(r = 5, h = 5);
+    }
+}
+
+module nano_guard() {
+    difference() {
+        nano_guard_shape();
+        for (p = board_mounts) hole_at(p, 3.3, -5.1, 5.2);
+    }
+}
+
+module canopy_station(section, inset, bottom_offset) {
+    half_width = section[1] / 2 - inset;
+    bottom = section[2] + bottom_offset;
+    top = section[3] - inset;
+    translate([section[0], 0, 0]) rotate([90, 0, 90])
+        linear_extrude(0.4, center = true)
+            offset(r = 1.25) offset(delta = -1.25)
+                polygon([[-half_width, bottom], [half_width, bottom],
+                         [half_width, top - 3], [half_width - 5, top],
+                         [-half_width + 5, top], [-half_width, top - 3]]);
+}
+
+module canopy_loft(stations, inset, bottom_offset) {
+    for (i = [0 : len(stations) - 2]) hull() {
+        canopy_station(stations[i], inset, bottom_offset);
+        canopy_station(stations[i + 1], inset, bottom_offset);
+    }
+}
+
+module blade_clearance_cuts() {
+    for (p = motor_centres) translate([p.x, p.y, prop_z - sweep_half_height - 1])
+        cylinder(r = prop_radius + 3, h = 2 * sweep_half_height + 2, $fn = 100);
+}
+
+module canopy() {
+    // Spine runs nose to tail. Side scallops keep the shell outside the prop volume.
+    sections = [[-90, 40, 5, 27], [-77, 46, 5, 36], [-49, 49, 5, 53],
+                [-37, 48, 5, 63], [42, 48, 5, 63], [53, 42, 5, 55],
+                [66, 36, 5, 46], [86, 19, 5, 24]];
+    inner = [for (i = [0 : len(sections) - 1])
+        let(s = sections[i], end_shift = i == 0 ? 2.4 : i == len(sections) - 1 ? -2.4 : 0)
+        [s[0] + end_shift, s[1], s[2], s[3]]];
+    difference() {
+        union() {
+            canopy_loft(sections, 0, 0);
+            for (p = board_mounts) translate([p.x, p.y, 5]) cylinder(d = 11, h = 5);
+        }
+        canopy_loft(inner, 2.4, -2);
+        blade_clearance_cuts();
+        // Lens aperture along the tilted optical axis. Actual view requires calibration.
+        translate(camera_origin) rotate([0, 90 - camera_tilt, 0])
+            translate([0, 0, 3]) cylinder(d1 = 17, d2 = 38, h = 36, $fn = 48);
+        translate(camera_origin) rotate([0, -camera_tilt, 0])
+            translate([-4.5, -13.2, -12.8]) cube([5.4, 26.4, 25.6]);
+        for (y = [-13, 13])
+            translate([66.5, y - 2.9, 4.8]) cube([14.2, 5.8, 23.2]);
+        for (x = [-25 : 8 : 23]) translate([x, 0, 60.4]) plate(3.5, 17, 3, 1.5);
+        for (x = [-78, -69, -60], y = [-1, 1])
+            translate([x, y * 18, 20]) cube([4, 17, 5], center = true);
+        translate([-94, -9, 6]) cube([10, 18, 11]);
+    }
+    // Through tabs connect the canopy to the carbon plate near the centre.
+    for (p = board_mounts) translate([p.x, p.y, 5]) difference() {
+        hull() {
+            cylinder(d = 10.5, h = 2.6);
+            translate([0, p.y < 0 ? -6 : 6, 0]) cylinder(d = 5.2, h = 2.6);
+        }
+        translate([0, 0, -0.1]) cylinder(d = 3.3, h = 2.8);
+    }
 }
 
 module camera_and_mount() {
     translate(camera_origin + [0, 0, 18 * spread]) {
         color("#333945") for (y = [-13, 13])
             translate([0, y, -12]) hull() {
-                translate([-8, -2, -5.05]) cube([18, 4, 3]);
+                translate([-8, -2, -9.05]) cube([18, 4, 3]);
                 translate([0, 0, 12]) rotate([90, 0, 0]) cylinder(d = 9, h = 4, center = true);
             }
         rotate([0, -camera_tilt, 0]) {
@@ -248,17 +327,20 @@ module camera_and_mount() {
 }
 
 module battery_installation() {
-    translate([-5, 0, battery_z - 32 * spread]) rotate([0, 0, 180]) battery_model();
-    color("#24272d") translate([-5, 0, -5]) plate(78, 34, 1.8, 3);
-    color("#333844") for (x = [-20, 17])
-        translate([x, 0, -15.2 - 20 * spread]) difference() {
-            cube([10, 42.6, 38.2], center = true);
-            cube([11, 39.8, 35.7], center = true);
+    translate([0, 0, battery_z + 25 * spread]) rotate([0, 0, 180]) battery_model(23);
+    color("#383e49") {
+        translate([0, 0, battery_z - 2 + 18 * spread]) difference() {
+            plate(84, 43.4, 2, 5);
+            for (x = [-15, 20], y = [-20, 20])
+                translate([x, y, -0.1]) plate(11, 1.8, 2.25, 0.8);
         }
-    color("#242933") for (x = [-37, 36], y = [-22, 22])
-        hull() {
-            translate([x, y, -1]) cube([10, 5, 3], center = true);
-            translate([x, y * 1.12, -37]) cube([18, 5, 3], center = true);
+        for (x = [-17, 32], y = [-20, 20])
+            standoff([x, y], 5, battery_z - 7 + 18 * spread, 5.5, 3.25);
+    }
+    color("#333844") for (x = [-15, 20])
+        translate([x, 0, battery_z + 13.5 + 25 * spread]) difference() {
+            cube([10, 42.2, 31], center = true);
+            cube([11, 39.8, 28.7], center = true);
         }
 }
 
@@ -266,12 +348,12 @@ module power_installation() {
     translate(regulator_origin + [0, 0, 15 * spread]) {
         power_module_model();
         color("#a4a9af") for (x = [-26.5, 26.5], y = [-15, 15])
-            standoff([x, y], -2.2, 2.2, 5.8, 3);
+            standoff([x, y], -1.4, 1.4, 5.8, 3);
     }
-    color("#414856") translate([regulator_origin.x, 0, 3]) difference() {
-        plate(61.5, 39.5, 2.8, 4);
-        for (x = [-26.5, 26.5], y = [-15, 15]) hole_at([x, y], 3.2, -0.1, 3.1);
-        for (x = [-13, 0, 13]) translate([x, 0, -0.1]) plate(6, 20, 3, 2);
+    color("#414856") translate([regulator_origin.x, 0, 5]) difference() {
+        plate(61.5, 39.5, 1.6, 4);
+        for (x = [-26.5, 26.5], y = [-15, 15]) hole_at([x, y], 3.2, -0.1, 1.8);
+        for (x = [-13, 0, 13]) translate([x, 0, -0.1]) plate(6, 20, 1.8, 2);
     }
 }
 
@@ -281,8 +363,8 @@ module harness_wire(points, diameter) {
 }
 
 module csi_ribbon() {
-    route = [[63, 0, 19], [56, 5, 26], [48, 7, 35], [39, 8, 41],
-             [-45, 8, 41], [-49, 6, 51]];
+    route = [[66, 0, 22], [55, 3, 15], [51, 0, 6], [51, 0, -4],
+             [43, -6, -5], [-45, -6, -5], [-49, -6, -12]];
     color("#e0d5ab") for (i = [0 : len(route) - 2]) hull()
         for (p = [route[i], route[i + 1]])
             translate(p) cube([0.8, 15.5, 0.32], center = true);
@@ -300,16 +382,16 @@ module power_and_signal_harness() {
         ], 1.8);
     }
     for (i = [-1, 1]) color(i < 0 ? "#25262b" : "#b52b2b") {
-        harness_wire([[-96, i * 3.55, -19], [-104, i * 3, -19],
-                      [-106, i * 3, -1], [-98, i * 2.54, 8],
-                      [-81, i * 2.54, 13]], 2.5);
-        harness_wire([[-98, i * 3, 1], [-87, -15 + i * 2.5, 2],
-                      [-35, -20 + i * 2, 4], [-19, -13 + i * 2, 10]], 2.5);
-        harness_wire([[-22, i * 2.54, 13], [-17, i * 3, 15],
-                      [-21, -20 + i * 2, 25], [-28, -31 + i * 2, 37],
-                      [-43, -53 + i * 1.5, nano_z + 7.6]], 2.1);
+        harness_wire([[-84, i * 3.55, 22], [-90, i * 3, 19],
+                      [-92, i * 2.54, 13], [-88, i * 2.54, 11],
+                      [-82, i * 2.54, 11]], 2.5);
+        harness_wire([[-92, i * 2.54, 13], [-86, -10 + i * 2.5, 8],
+                      [-35, -20 + i * 2, 8], [-19, -13 + i * 2, 12]], 2.5);
+        harness_wire([[-23, i * 2.54, 11], [-19, 10 + i * 2, 10],
+                      [-25, 26 + i * 2, 7], [-34, 36 + i * 2, 1],
+                      [-43, 55 + i * 1.5, nano_z - 7.6]], 2.1);
     }
-    translate(nano_j25_centre() + [0, -0.5, nano_z]) rotate([90, 0, 0]) {
+    translate(underbody_port() + [0, 0.5, 0]) rotate([-90, 0, 0]) {
         color("silver") translate([0, 0, -8]) difference() {
             cylinder(d = 5.5, h = 9.5);
             translate([0, 0, -0.1]) cylinder(d = 2.1, h = 9.7);
@@ -318,8 +400,8 @@ module power_and_signal_harness() {
     }
     csi_ribbon();
     color("#e0b64d")
-        harness_wire([[11, -15, 18], [18, -11, 25], [20, 20, 40],
-                      [37, 29, 47], [40, 27, 52]], 1.2);
+        harness_wire([[11, -15, 20], [21, -18, 12], [36, -23, 5],
+                      [47, -22, -5], [45, -27, -11], [40, -27, -13]], 1.2);
 }
 
 module sweep_disks() {
@@ -329,16 +411,21 @@ module sweep_disks() {
 }
 
 assert(stack_pitch == 20 || stack_pitch == 30.5);
-assert(view == "assembled" || view == "exploded" || view == "clearance" || view == "stack-adapter");
+assert(view == "assembled" || view == "exploded" || view == "clearance"
+       || view == "stack-adapter" || view == "canopy" || view == "nano-guard" || view == "carbon-plate");
 assert(len(motor_centres) == 4);
 for (i = [0 : 2], j = [i + 1 : 3])
     assert(norm(motor_centres[i] - motor_centres[j]) > 2 * prop_radius,
            "Motor centres produce overlapping propeller disks.");
-assert(tray_z > prop_z + sweep_half_height);
-assert(top_z + 2.4 < prop_z - sweep_half_height);
 assert(regulator_origin.z + 18 < prop_z - sweep_half_height);
+assert(nano_z - 28.28 > landing_z + 4);
+assert(battery_z - 2 > 5 + 13 + 5);
 
 if (view == "stack-adapter") stack_adapter();
+else if (view == "canopy") canopy();
+else if (view == "nano-guard") nano_guard();
+else if (view == "carbon-plate") projection(cut = true)
+    translate([0, 0, -arm_thickness / 2]) carbon_frame();
 else {
     carbon_frame();
     for (i = [0 : 3]) {
@@ -346,10 +433,13 @@ else {
         if (show_propellers) propeller(i);
     }
     flight_stack();
-    nano_tray();
+    nano_mount();
+    color("#2b2e36") translate([0, 0, -31 * spread]) nano_guard();
     camera_and_mount();
     battery_installation();
     power_installation();
     if (view != "exploded") power_and_signal_harness();
+    if (show_canopy && view != "clearance")
+        color("#e58128") translate([0, 0, 66 * spread]) canopy();
     if (view == "clearance") sweep_disks();
 }

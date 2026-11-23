@@ -62,8 +62,7 @@ module battery_body() {
         linear_extrude(0.1) text("4S  1550 mAh  150C", size = 3.7);
 }
 
-module battery_model() {
-    battery_body();
+module battery_leads() {
     for (side = [-1, 1])
         color(side < 0 ? "#212127" : "#c5252c")
             battery_wire([[38, 10 + side * 2.4, 22],
@@ -79,6 +78,13 @@ module battery_model() {
                           [51, -6 + i * 2.54, 15],
                           [57, -11 + i * 2.54, 14]], 1.25);
     translate([56.7, -5.92, 14]) battery_balance_plug();
+}
+
+module battery_model(lead_drop = 0) {
+    battery_body();
+    exit_point = [38, 0, 22];
+    translate(exit_point) rotate([0, lead_drop, 0])
+        translate(-exit_point) battery_leads();
 }
 
 module battery_keepout() {

@@ -4,6 +4,7 @@ use crate::{
     RewardProfile, Status, HOVER_STICK, LAYOUT, MASS_KG, PACE_REWARD_VERSION,
     PHYSICS_MODEL_VERSION, REWARD_MODEL_VERSION,
 };
+use glam::Vec3;
 
 pub struct Environment {
     camera: Camera,
@@ -292,13 +293,42 @@ pub unsafe extern "C" fn sim_render_pose(
     elapsed: f64,
     image: *mut u8,
 ) -> bool {
+    sim_render_heat_pose(env, state, elapsed, std::ptr::null(), 0, image)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn sim_render_heat_pose(
+    env: *mut Environment,
+    state: *const [f32; 13],
+    elapsed: f64,
+    opponents: *const [f32; 3],
+    opponent_count: usize,
+    image: *mut u8,
+) -> bool {
     let env = &mut *env;
-    if !elapsed.is_finite() || elapsed < 0. || !env.race.drone.set_rigid_state(*state) {
+    if !elapsed.is_finite()
+        || elapsed < 0.
+        || opponent_count > 2
+        || !env.race.drone.set_rigid_state(*state)
+    {
         return false;
     }
+    let mut peers = [Vec3::ZERO; 2];
+    if opponent_count > 0 {
+        for (peer, position) in peers
+            .iter_mut()
+            .zip(std::slice::from_raw_parts(opponents, opponent_count))
+        {
+            *peer = Vec3::from_array(*position);
+            if !peer.is_finite() {
+                return false;
+            }
+        }
+    }
     env.race.ticks = (elapsed * crate::PHYSICS_HZ as f64).round() as usize;
-    env.camera.render(
+    env.camera.render_with_peers(
         &env.race,
+        &peers[..opponent_count],
         std::slice::from_raw_parts_mut(image, env.camera.byte_len()),
     );
     true

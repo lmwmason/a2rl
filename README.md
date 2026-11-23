@@ -114,6 +114,18 @@ A2RL_COURSE=2026-practice A2RL_ELODIN_POLICY="$a2rl_root/runs/mck-imu-racing-v1/
 
 Use a fresh `A2RL_ELODIN_DB` for each rollout. The runner loads the checked-in [Betaflight SITL preset](assets/a2rl-betaflight-sitl.cli) into a fresh firmware working directory. FFmpeg records the shared camera when `A2RL_ELODIN_FPV` is set. The replay has synchronized RC and race-result JSON sidecars. The demonstration and its IMU sidecar are saved only after two clean laps. `A2RL_ELODIN_START_SIDE` sets the lateral start offset in meters. `A2RL_FPV_EXPOSURE`, `A2RL_FPV_BREAKUP`, and `A2RL_FPV_SEED` set the camera effect parameters. Full flight-log agreement for the target airframe remains unverified. [Elodin release](https://github.com/elodin-sys/elodin/releases/tag/v0.17.3) · [Upstream lockstep bridge](https://github.com/elodin-sys/ai-grand-prix/blob/13f9f9e3d5a3130f0ce0b65500d9f309cc1e11b2/ARCHITECTURE.md)
 
+### Experimental three-aircraft heat
+
+The heat runner starts three Elodin plants and Betaflight SITL instances on the same practice course. At each FPV sample it exchanges positions, renders nearby aircraft as simplified silhouettes, and checks swept separation between pairs. A collision ends the involved aircraft's scored flight. Each learned pilot receives its own RGB and IMU stream. The current contact model uses a 38 cm center-to-center threshold.
+
+Apply [the SITL instance-port patch](assets/betaflight-sitl-instance-ports.patch) to a separate checkout of the pinned Betaflight source and build the lockstep SITL target. Point `A2RL_SITL_EXECUTABLE` to that binary and rebuild the Rust renderer before running a heat.
+
+```bash
+python -m tools.elodin_heat --harness "$A2RL_ELODIN_ROOT" --out runs/three-aircraft --seconds 35
+```
+
+Use `--policy` to evaluate a shared RGB/IMU checkpoint or `--collect-demonstrations` to record clean teacher flights. Set `--launch-interval` to stagger takeoff for following practice. The runner releases demonstration files only after a clean two-lap flight and a maximum timing difference of two FPV frames. Each aircraft advances against a common wall-time pace, and the coordinator checks contact against matching simulation samples. The camera uses the most recent pose available when a peer is behind. The GPU training service continues to use its existing single-aircraft data.
+
 To train from the recorded Elodin teacher and real pilot data without using a Rust rollout for model selection:
 
 ```bash

@@ -1,6 +1,7 @@
 """Run the A2RL reference course and airframe in the pinned Elodin/Betaflight harness."""
 from dataclasses import replace
 import ctypes as ct
+from functools import partial
 import json
 from math import cos, radians, sin
 import os
@@ -8,6 +9,7 @@ from pathlib import Path
 import runpy
 import subprocess
 import sys
+from time import monotonic, sleep
 import tomllib
 
 
@@ -126,7 +128,7 @@ def configure_course(course, lib, season2, asset, camera_feed, report_path):
     def detect(path, last, start, end):
         nonlocal contact
         target = last + 1
-        if contact or target >= len(path):
+        if contact or elodin_policy.peer_contact or target >= len(path):
             return None
         previous[:], current[:] = start, end
         if not np.isfinite(end).all() or not np.isfinite(start).all():
@@ -141,30 +143,35 @@ def configure_course(course, lib, season2, asset, camera_feed, report_path):
         return target if hit == 1 and not contact else None
 
     def summary(path, last, times, end):
+        crashed = contact or elodin_policy.peer_contact
         finished = last + 1 == len(path)
         official = times[last] - times[0] if finished else None
-        print(f"[A2RL] gates={last + 1}/{len(path)} contact={contact} official_seconds={official}", flush=True)
+        print(f"[A2RL] gates={last + 1}/{len(path)} contact={crashed} official_seconds={official}", flush=True)
         if camera_feed:
             camera_feed.close()
-            if (finished and not contact) or (elodin_policy.shadow_expert and len(camera_feed.samples) >= 8):
+            if (finished and not crashed) or (elodin_policy.shadow_expert and len(camera_feed.samples) >= 8):
                 camera_feed.save_demonstration()
         if report_path:
             from training.betaflight_link import timed_mean_throttle
 
             mean_throttle = timed_mean_throttle(camera_feed.actions, camera_feed.fps, times[0], times[last]) \
                 if finished and camera_feed else None
-            report_path.write_text(json.dumps({
+            details = {
                 "physics_engine": "elodin",
                 "execution": "jax-in-process" if os.environ.get("A2RL_ELODIN_IN_PROCESS") == "1" else "jax-server",
                 "course": "2026-practice" if season2 else "2025",
                 "gates": last + 1,
                 "gates_per_race": len(path),
-                "contact": contact,
+                "contact": crashed,
                 "finished": finished,
                 "official_seconds": official,
                 "mean_throttle_fraction": mean_throttle,
                 "gate_times": times[:last + 1],
-            }, indent=2) + "\n")
+            }
+            if elodin_policy.heat is not None:
+                details.update(took_off=bool(elodin_policy.heat_airborne),
+                               aircraft_contact=elodin_policy.peer_contact)
+            report_path.write_text(json.dumps(details, indent=2) + "\n")
 
     course.detect_gate_pass = detect
     course.print_summary = summary
@@ -230,6 +237,19 @@ def main():
     from sim import camera, config, course, physics
     from training.sim import course_profile, load_sim
     from tools import elodin_policy
+
+    offset = int(os.environ.get("A2RL_SITL_PORT_OFFSET", "0"))
+    if not 0 <= offset <= 50000:
+        raise ValueError("A2RL_SITL_PORT_OFFSET must be between 0 and 50000.")
+    if offset:
+        from sim import betaflight_bridge as bridge
+
+        bridge.BetaflightSyncBridge = partial(bridge.BetaflightSyncBridge,
+                                             state_port=bridge.PORT_STATE + offset,
+                                             rc_port=bridge.PORT_RC + offset,
+                                             pwm_port=bridge.PORT_PWM + offset)
+    if socket_path := os.environ.get("A2RL_HEAT_SOCKET"):
+        elodin_policy.connect_heat(socket_path, int(os.environ["A2RL_HEAT_PILOT"]))
 
     cfg = config.DEFAULT_CONFIG
     course_name = course_profile()
@@ -326,7 +346,8 @@ def main():
     world_schematic = el.World.schematic
     world_recipe = el.World.recipe
 
-    firmware = root / "betaflight/obj/main/betaflight_SITL.elf"
+    firmware = Path(os.environ.get("A2RL_SITL_EXECUTABLE", root / "betaflight/obj/main/betaflight_SITL.elf"))
+    firmware = firmware.expanduser().resolve(strict=True)
     cli = ROOT / "assets/a2rl-betaflight-sitl.cli"
     work = Path(os.environ.get("A2RL_ELODIN_DB", ROOT / "runs/elodin/flight")).expanduser().resolve().parent
     work.mkdir(parents=True, exist_ok=True)
@@ -350,13 +371,23 @@ exec "$1"
     def in_process(world, system, *, simulation_rate, max_ticks, post_step, **_kwargs):
         simulation = world.to_jax(system, simulation_rate=simulation_rate, max_ticks=max_ticks)
         context = InProcessContext(simulation)
+        pace = float(os.environ["A2RL_HEAT_PACE"]) if elodin_policy.heat else None
+        epoch = None
         with subprocess.Popen(["sh", *firmware_args], cwd=work) as flight_controller:
             try:
                 for tick in range(max_ticks):
+                    if epoch is not None:
+                        remaining = epoch + tick / (simulation_rate * pace) - monotonic()
+                        if remaining > 0:
+                            sleep(remaining)
                     if flight_controller.poll() is not None:
                         raise RuntimeError("Betaflight SITL exited during the rollout.")
                     simulation.step(1)
                     post_step(tick, context)
+                    if tick == 0 and pace is not None:
+                        epoch = monotonic()
+                    if elodin_policy.heat_failure is not None:
+                        raise RuntimeError("The shared heat disconnected.") from elodin_policy.heat_failure
             finally:
                 if flight_controller.poll() is None:
                     flight_controller.terminate()

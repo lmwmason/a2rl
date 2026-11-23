@@ -104,6 +104,10 @@ def load_sim():
     if hasattr(lib, "sim_render_pose"):
         lib.sim_render_pose.argtypes = [ct.c_void_p, FLOAT_POINTER, ct.c_double, ct.c_void_p]
         lib.sim_render_pose.restype = ct.c_bool
+    if hasattr(lib, "sim_render_heat_pose"):
+        lib.sim_render_heat_pose.argtypes = [ct.c_void_p, FLOAT_POINTER, ct.c_double, FLOAT_POINTER,
+                                             ct.c_size_t, ct.c_void_p]
+        lib.sim_render_heat_pose.restype = ct.c_bool
     lib.sim_lap_stats.argtypes = [ct.c_void_p, ct.POINTER(ct.c_uint32), ct.POINTER(ct.c_float)]
     lib.sim_lap_stats.restype = None
     lib.sim_official_seconds.argtypes = [ct.c_void_p]
@@ -212,11 +216,20 @@ class Environment:
         self.lib.sim_rigid_state(self.handle, state)
         return np.asarray(state).copy()
 
-    def render_pose(self, state, elapsed):
+    def render_pose(self, state, elapsed, peers=()):
         pose = np.ascontiguousarray(state, dtype=np.float32)
-        if pose.shape != (13,) or not self.lib.sim_render_pose(
-                self.handle, pose.ctypes.data_as(FLOAT_POINTER), elapsed, self.image.ctypes.data):
+        if pose.shape != (13,):
             raise ValueError("Expected a finite position, velocity, quaternion and body rates.")
+        pointer = pose.ctypes.data_as(FLOAT_POINTER)
+        if len(peers):
+            opponents = np.ascontiguousarray(peers, dtype=np.float32).reshape(-1, 3)
+            valid = self.lib.sim_render_heat_pose(self.handle, pointer, elapsed,
+                                                 opponents.ctypes.data_as(FLOAT_POINTER),
+                                                 len(opponents), self.image.ctypes.data)
+        else:
+            valid = self.lib.sim_render_pose(self.handle, pointer, elapsed, self.image.ctypes.data)
+        if not valid:
+            raise ValueError("Expected finite pose and opponent positions.")
         return self.image
 
     def lap_stats(self):

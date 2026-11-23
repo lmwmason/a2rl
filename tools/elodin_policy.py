@@ -24,6 +24,21 @@ last_command = held
 expert = None
 shadow_expert = False
 camera = None
+heat = None
+heat_sample = -1
+peer_positions = []
+peer_contact = False
+heat_failure = None
+heat_airborne = False
+heat_arm_time = .5
+
+
+def connect_heat(path, index):
+    from tools.elodin_heat import HeatClient
+
+    global heat, heat_arm_time
+    heat = HeatClient(path, index)
+    heat_arm_time = 3. + float(os.environ.get("A2RL_HEAT_LAUNCH_DELAY", "0"))
 
 
 def rigid_state(update):
@@ -57,7 +72,7 @@ class CameraFeed:
         state = rigid_state(sensors)
         if not np.isfinite(state).all():
             return None
-        image = self.env.render_pose(state, sensors.t)
+        image = self.env.render_pose(state, sensors.t, peer_positions)
         if self.path:
             if self.encoder is None:
                 self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -147,8 +162,18 @@ def policy_observation(image, update):
 
 
 def autopilot(update):
-    global last_command
-    ended = contact() or update.next_gate_index < 0
+    global last_command, heat_sample, peer_positions, peer_contact, heat_failure, heat_airborne
+    if heat is not None:
+        sample = int(update.t * control_rate + 1e-6)
+        if sample != heat_sample:
+            try:
+                peer_positions, peer_contact = heat.update(sample, update.world_pos[4:].tolist())
+                heat_sample = sample
+                heat_airborne |= update.world_pos[6] > .45
+            except (OSError, ValueError) as error:
+                heat_failure = error
+                raise
+    ended = contact() or peer_contact or update.next_gate_index < 0
     image = camera.update(update) if camera is not None else None
     if image is not None:
         # The harness sends the previous command before sampling this tick.
@@ -166,9 +191,9 @@ def autopilot(update):
 
 def choose_command(update, image, ended):
     global pilot, frames, imu, held, last_expert_sample
-    if ended or update.t < .5:
+    if ended or update.t < heat_arm_time:
         return RCCommand()
-    if update.t < .75:
+    if update.t < heat_arm_time + .25:
         held = RCCommand(arm=1800)
         return held
     if expert is not None and not shadow_expert:

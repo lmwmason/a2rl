@@ -1,0 +1,54 @@
+diff --git a/src/main/drivers/serial_tcp.c b/src/main/drivers/serial_tcp.c
+index a922cc7..4194e6a 100644
+--- a/src/main/drivers/serial_tcp.c
++++ b/src/main/drivers/serial_tcp.c
+@@ -116,10 +116,12 @@ static tcpPort_t* tcpReconfigure(tcpPort_t *s, int id)
+     dyad_setNoDelay(s->serv, 1);
+     dyad_addListener(s->serv, DYAD_EVENT_ACCEPT, onAccept, s);
+
+-    if (dyad_listenEx(s->serv, NULL, BASE_PORT + id + 1, 10) == 0) {
+-        fprintf(stderr, "bind port %u for UART%u\n", (unsigned)BASE_PORT + id + 1, (unsigned)id + 1);
++    const char *offset = getenv("A2RL_SITL_PORT_OFFSET");
++    const unsigned port = BASE_PORT + id + 1 + (offset ? atoi(offset) : 0);
++    if (dyad_listenEx(s->serv, NULL, port, 10) == 0) {
++        fprintf(stderr, "bind port %u for UART%u\n", port, (unsigned)id + 1);
+     } else {
+-        fprintf(stderr, "bind port %u for UART%u failed!!\n", (unsigned)BASE_PORT + id + 1, (unsigned)id + 1);
++        fprintf(stderr, "bind port %u for UART%u failed!!\n", port, (unsigned)id + 1);
+     }
+     return s;
+ }
+diff --git a/src/platform/SIMULATOR/sitl.c b/src/platform/SIMULATOR/sitl.c
+index 5996adb..7cc82db 100644
+--- a/src/platform/SIMULATOR/sitl.c
++++ b/src/platform/SIMULATOR/sitl.c
+@@ -189,13 +189,25 @@ static void gpxTrackClose(void)
+     }
+ }
+
+-#define PORT_PWM_RAW    9001    // Out
+-#define PORT_PWM        9002    // Out
+-#define PORT_STATE      9003    // In
+-#define PORT_RC         9004    // In
++static int sitlPortOffset;
++
++#define PORT_PWM_RAW    (9001 + sitlPortOffset)    // Out
++#define PORT_PWM        (9002 + sitlPortOffset)    // Out
++#define PORT_STATE      (9003 + sitlPortOffset)    // In
++#define PORT_RC         (9004 + sitlPortOffset)    // In
+
+ int targetParseArgs(int argc, char * argv[])
+ {
++    const char *offset = getenv("A2RL_SITL_PORT_OFFSET");
++    if (offset) {
++        char *end;
++        const long value = strtol(offset, &end, 10);
++        if (end == offset || *end || value < 0 || value > 50000) {
++            fprintf(stderr, "Invalid A2RL_SITL_PORT_OFFSET\n");
++            exit(1);
++        }
++        sitlPortOffset = (int)value;
++    }
+     for (int i = 1; i < argc; i++) {
+         if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
+             printf("Betaflight SITL\n");

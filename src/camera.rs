@@ -171,6 +171,10 @@ impl Camera {
     }
 
     pub fn render(&self, race: &Race, image: &mut [u8]) {
+        self.render_with_peers(race, &[], image);
+    }
+
+    pub fn render_with_peers(&self, race: &Race, peers: &[Vec3], image: &mut [u8]) {
         let bars = race.course.gate_bars();
         let face_depth = race.course.gate_half_depth() - 0.005;
         let [sensor, right, up, forward] = camera_pose(race);
@@ -187,6 +191,16 @@ impl Camera {
                     delta,
                     gate.basis(-delta),
                     (delta.length_squared() - 4.).max(0.).sqrt(),
+                )
+            })
+            .collect();
+        let peers: Vec<_> = peers
+            .iter()
+            .map(|peer| {
+                let delta = *peer - sensor;
+                (
+                    delta,
+                    (delta.length_squared() - 0.25_f32.powi(2)).max(0.).sqrt(),
                 )
             })
             .collect();
@@ -251,6 +265,34 @@ impl Camera {
                         [53, 30, 93]
                     };
                     distance = hit;
+                }
+            }
+            for &(delta, threshold) in &peers {
+                if delta.dot(direction) < threshold {
+                    continue;
+                }
+                let origin = -delta;
+                let body = Vec3::new(0.12, 0.10, 0.052);
+                if let Some(hit) = ray_box(origin, direction, -body, body, 0.015, distance) {
+                    distance = hit;
+                    color = [49, 52, 56];
+                }
+                for x in [-0.11, 0.11] {
+                    for y in [-0.11, 0.11] {
+                        let rotor = Vec3::new(x, y, 0.025);
+                        let extent = Vec3::new(0.063, 0.063, 0.012);
+                        if let Some(hit) = ray_box(
+                            origin,
+                            direction,
+                            rotor - extent,
+                            rotor + extent,
+                            0.015,
+                            distance,
+                        ) {
+                            distance = hit;
+                            color = [100, 104, 109];
+                        }
+                    }
                 }
             }
             let fog = 1. / (1. + 0.005 * distance.max(0.));

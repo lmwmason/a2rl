@@ -18,7 +18,7 @@ from .telemetry import finish_time_history, read_metrics
 
 ORIGIN = "https://a2rl-fpv-dashboard.front.cbgpu.com"
 MEDIA = re.compile(r"/(?:(?:replay|chase|export-fpv|export-chase)-[0-9]{1,24}\.mp4|controls-[0-9]{1,24}\.json|replay\.json)")
-EXPERIMENT_MEDIA = re.compile(r"/experiments/(teacher|segment-5-6|segment-11-12)(/[^/]+)")
+EXPERIMENT_MEDIA = re.compile(r"/experiments/(teacher|segment-5-6|segment-11-12|joint-merge)(/[^/]+)")
 
 
 def training_active(run, lock_name="training.lock"):
@@ -61,7 +61,7 @@ def experiment_status(run, teacher_screen):
             "verified_mean_seconds": best.get("mean_seconds"),
             "verified_worst_seconds": best.get("worst_seconds"),
         }
-    for name in ("segment-5-6", "segment-11-12"):
+    for name in ("segment-5-6", "segment-11-12", "joint-merge"):
         segment = run.parent / name
         if not segment.is_dir():
             continue

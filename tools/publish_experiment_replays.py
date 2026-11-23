@@ -2,6 +2,7 @@
 
 import argparse
 from concurrent.futures import ThreadPoolExecutor
+from hashlib import sha256
 import json
 import os
 from pathlib import Path
@@ -15,6 +16,9 @@ import torch
 
 from tools.evaluate_rgb_imu_race import evaluate, publish_replay
 from training.curriculum import FINISH_WINDOW, SPEED_RUN
+
+
+SOURCES = ("teacher", "segment-5-6", "segment-11-12", "joint-merge")
 
 
 def record_teacher(args, session, inputs):
@@ -57,16 +61,22 @@ def publish_current(args, name, slot, previous):
         else:
             run = args.runs / name
             checkpoint = run / SPEED_RUN / "latest.pt"
+            initial = name == "joint-merge" and not checkpoint.is_file()
+            if initial:
+                checkpoint = run / "initial.pt"
             if not checkpoint.is_file():
                 return previous
             state = torch.load(checkpoint, map_location="cpu", weights_only=True)
-            promoted = state["training_progress"]["promoted_round"]
-            revision = (state["training_progress"]["source_sha256"], promoted)
+            training = state["training_progress"]
+            promoted = 0 if initial else training["promoted_round"]
+            seed = sha256(checkpoint.read_bytes()).hexdigest() if initial else training["source_sha256"]
+            revision = (seed, promoted)
             if revision == previous:
                 return previous
             weights = session / "policy.pt"
             torch.save(state, weights)
-            label = f"Gates {name.removeprefix('segment-')} · " + (
+            gate_label = "Joint student" if name == "joint-merge" else f"Gates {name.removeprefix('segment-')}"
+            label = gate_label + " · " + (
                 f"Promoted round {promoted}" if promoted else "Seed policy")
             if promoted:
                 progress["round"] = promoted
@@ -86,10 +96,11 @@ def main():
     for name in ("harness", "firmware", "teacher-root", "runs", "public", "scratch"):
         parser.add_argument(f"--{name}", type=lambda value: Path(value).resolve(), required=True)
     parser.add_argument("--port-offset", type=int, default=47600)
+    parser.add_argument("--only", choices=SOURCES)
     args = parser.parse_args()
     args.scratch.mkdir(parents=True, exist_ok=True)
     os.environ["A2RL_HANDOFF_SITL_EXECUTABLE"] = str(args.firmware)
-    names = ("teacher", "segment-5-6", "segment-11-12")
+    names = (args.only,) if args.only else SOURCES
     seen = dict.fromkeys(names)
     with ThreadPoolExecutor(max_workers=len(names)) as pool:
         while True:

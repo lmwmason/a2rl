@@ -44,6 +44,7 @@ const experimentSources = {
   "teacher-search": "teacher",
   "segment-5-6": "segment-5-6",
   "segment-11-12": "segment-11-12",
+  "joint-merge": "joint-merge",
 };
 let experimentStatus = null;
 
@@ -717,7 +718,8 @@ function renderExperiments(experiments) {
   }
   setText("experiment-teacher-detail", teacherDetails.join(" · "));
 
-  for (const name of ["segment-5-6", "segment-11-12"]) {
+  byId("experiment-joint-merge-row").hidden = !experiments["joint-merge"];
+  for (const name of ["segment-5-6", "segment-11-12", "joint-merge"]) {
     const run = experiments[name];
     setText(`experiment-${name}-state`, run ? (run.active ? "Running" : "Stopped") : "Unavailable");
     const details = run ? [`Round ${count(run.round)}`, `${count(run.rollouts)} rollouts`] : [];
@@ -749,7 +751,7 @@ async function fetchExperiments() {
     experimentStatus = null;
     renderSelectedExperiment();
     if (!byId("experiment-runs").hidden) {
-      for (const name of ["teacher", "segment-5-6", "segment-11-12"]) {
+      for (const name of Object.values(experimentSources)) {
         setText(`experiment-${name}-state`, "Last status unavailable");
       }
     }

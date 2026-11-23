@@ -6,7 +6,7 @@
   <meta name="description" content="FPV policy evaluation, training metrics, and checkpoint replays">
   <title>A2RL Flight Evaluation</title>
   <link rel="stylesheet" href="style.css?v=experiment-replays">
-  <script src="dashboard.js?v=experiment-replays" defer></script>
+  <script src="dashboard.js?v=joint-student" defer></script>
 </head>
 <body>
   <main>
@@ -22,6 +22,7 @@
               <option value="teacher-search">15 s teacher search</option>
               <option value="segment-5-6">Student · Gates 5–6</option>
               <option value="segment-11-12">Student · Gates 11–12</option>
+              <option value="joint-merge">Joint student · Gates 5–6 and 11–12</option>
             </select>
             <div class="pilot-switch" role="group" aria-label="Camera view">
               <button type="button" id="show-fpv" aria-pressed="true">FPV</button>
@@ -115,6 +116,10 @@
           <div>
             <dt>Student · Gates 11–12</dt>
             <dd><strong id="experiment-segment-11-12-state">—</strong><span id="experiment-segment-11-12-detail"></span></dd>
+          </div>
+          <div id="experiment-joint-merge-row" hidden>
+            <dt>Joint student</dt>
+            <dd><strong id="experiment-joint-merge-state">—</strong><span id="experiment-joint-merge-detail"></span></dd>
           </div>
         </dl>
       </section>

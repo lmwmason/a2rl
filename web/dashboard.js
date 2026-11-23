@@ -209,7 +209,6 @@ function startReplay() {
       : playing.phase === "SPEED RL" ? `a2rl-${season}-rl-${playing.steps}.mp4`
       : `a2rl-${season}-imitation-round-${playing.round}.mp4`;
     download.hidden = false;
-    byId("restart-replay").hidden = false;
     byId("waiting").hidden = true;
     const stage = teacher ? "Flow teacher evaluation"
       : firmwareCheck ? "Firmware takeoff check"
@@ -232,20 +231,13 @@ function startReplay() {
     }
     if (pilot === "student") renderStudentEvaluation();
   } else if (playing) {
-    restartReplay();
-    return;
+    camera.currentTime = 0;
   } else {
     return;
   }
   if (playing) camera.play().catch(() => {});
 }
 camera.addEventListener("ended", startReplay);
-function restartReplay() {
-  if (!playing) return;
-  camera.currentTime = 0;
-  camera.play().catch(() => {});
-}
-byId("restart-replay").addEventListener("click", restartReplay);
 camera.addEventListener("seeked", () => showSticks());
 if ("requestVideoFrameCallback" in camera) {
   const updateSticks = (_, frame) => {
@@ -413,7 +405,6 @@ function selectPilot(view, refresh = true) {
   if (pending) URL.revokeObjectURL(pending.blob);
   playing = pending = null;
   byId("download-replay").hidden = true;
-  byId("restart-replay").hidden = true;
   byId("mode2-sticks").hidden = true;
   byId("replay-recorded").closest("div").hidden = true;
   byId("waiting").hidden = false;

@@ -72,15 +72,14 @@ async function readFeed(name, view) {
     const first = responses.find(Boolean);
     if (first) return first;
     throw new Error("Training feed unavailable");
-  } catch (error) {
-    if (!hosted) throw error;
+  } catch {
     return requestData("/student/" + name);
   }
 }
 
-function pill(id, label, state = "") {
-  setText(id, label);
-  byId(id).className = state ? "pill " + state : "pill";
+function setConnection(label, state = "") {
+  setText("connection", label);
+  byId("connection").className = state ? "connection " + state : "connection";
 }
 
 function showSticks(time = camera.currentTime) {
@@ -271,7 +270,7 @@ function drawHistory() {
   const width = chart.width / scale;
   const height = chart.height / scale;
   chartContext.scale(scale, scale);
-  chartContext.strokeStyle = "#37454e";
+  chartContext.strokeStyle = "#dedfd8";
   for (const y of [2, height / 2, height - 2]) {
     chartContext.beginPath();
     chartContext.moveTo(0, y);
@@ -283,7 +282,7 @@ function drawHistory() {
     const window = values.slice(Math.max(0, index - 7), index + 1);
     return window.reduce((sum, value) => sum + value, 0) / window.length;
   });
-  for (const [series, color, weight] of [[values, "#4c8871", 1.5], [averages, "#74e8ac", 2.5]]) {
+  for (const [series, color, weight] of [[values, "#696b66", 1.5], [averages, "#262724", 2.5]]) {
     chartContext.strokeStyle = chartContext.fillStyle = color;
     chartContext.lineWidth = weight;
     chartContext.beginPath();
@@ -318,7 +317,7 @@ function drawFinishHistory() {
   const context = finishChart.getContext("2d");
   context.scale(scale, scale);
   context.font = "12px ui-monospace, monospace";
-  context.fillStyle = "#a6b2b9";
+  context.fillStyle = "#565952";
   const left = 68, right = width - 5, top = 12, bottom = height - 28;
   const min = Math.min(...times);
   const max = Math.max(...times);
@@ -331,7 +330,7 @@ function drawFinishHistory() {
   const x = (index) => first === last ? (left + right) / 2
     : left + (right - left) * (index - first) / (last - first);
 
-  context.strokeStyle = "#37454e";
+  context.strokeStyle = "#dedfd8";
   context.textAlign = "right";
   for (const seconds of [high, (high + low) / 2, low]) {
     context.beginPath();
@@ -348,10 +347,11 @@ function drawFinishHistory() {
     context.fillText(axisLabel(last), right, height - 5);
   }
 
-  for (const [field, color] of [["comparison_s", "#92a7ed"], ["standard_s", "#74e8ac"]]) {
+  for (const [field, color] of [["comparison_s", "#696b66"], ["standard_s", "#262724"]]) {
     let previous = false;
     context.strokeStyle = context.fillStyle = color;
     context.lineWidth = 2;
+    context.setLineDash(field === "comparison_s" ? [4, 3] : []);
     context.beginPath();
     for (const point of values) {
       const seconds = point[field];
@@ -546,15 +546,15 @@ function renderStatus(info) {
   }
   setText("course", season2 ? "2026 race reconstruction" : info.course === "2025" ? "2025 baseline" : "—");
   if (info.pending) {
-    pill("connection", teacher ? "Loading teacher evaluation" : "Awaiting student evaluation", "stale");
+    setConnection(teacher ? "Loading teacher evaluation" : "Awaiting student evaluation", "stale");
   } else if (info.archived) {
-    pill("connection", "Recorded evaluation", "stale");
+    setConnection("Recorded evaluation", "stale");
   } else if (connected) {
     const activity = info.starting_speed_trainer ? "RL rollouts starting"
       : speedTraining ? "RL training" : "Training";
-    pill("connection", info.active ? "GPU online · " + activity : "GPU online · Training idle", info.active ? "live" : "");
+    setConnection(info.active ? "GPU online · " + activity : "GPU online · Training idle", info.active ? "live" : "");
   } else {
-    pill("connection", info.connection === "connecting" ? "Connecting to GPU" : "GPU feed offline", "stale");
+    setConnection(info.connection === "connecting" ? "Connecting to GPU" : "GPU feed offline", "stale");
   }
   setText("phase", teacher ? "Teacher validation"
     : info.phase === "VALIDATION" ? "Firmware validation" : info.target_beaten ? "Target reached"
@@ -646,7 +646,7 @@ function renderEvaluation(info, speedTraining) {
     finishTrend.values = finishTimes;
     finishTrend.speed = speedTraining;
     byId("finish-history-standard").hidden = !speedTraining;
-    setText("finish-history-comparison", speedTraining ? "Mean of completed rollouts"
+    setText("finish-history-comparison", speedTraining ? "Mean of clean finishes"
       : pilot === "student" ? "Recorded run" : "Fastest completed run");
     const latest = finishTimes[finishTimes.length - 1];
     const seconds = latest?.standard_s ?? latest?.comparison_s;
@@ -663,7 +663,7 @@ async function fetchStatus(poll = true) {
     if (selected === selection) renderStatus(value);
   } catch {
     if (selected === selection) {
-      pill("connection", pilot === "student" ? "Awaiting student evaluation" : "Teacher unavailable", "stale");
+      setConnection(pilot === "student" ? "Awaiting student evaluation" : "Teacher unavailable", "stale");
     }
   } finally {
     if (poll) window.setTimeout(fetchStatus, 2000);
@@ -744,7 +744,7 @@ byId("download-replay").addEventListener("click", async event => {
     save.download = filename;
     save.click();
     window.setTimeout(() => URL.revokeObjectURL(localUrl), 60_000);
-    setText("download-replay", "Download this video");
+    setText("download-replay", "Download MP4");
   } catch {
     setText("download-replay", "Retry download");
   } finally {

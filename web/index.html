@@ -4,12 +4,13 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="FPV policy evaluation, training metrics, and checkpoint replays">
-  <title>Flight Policy Research</title>
-  <link rel="stylesheet" href="style.css?v=race-hud">
-  <script src="dashboard.js?v=all-race-results" defer></script>
+  <title>A2RL Flight Evaluation</title>
+  <link rel="stylesheet" href="style.css?v=flight-evaluation">
+  <script src="dashboard.js?v=flight-evaluation" defer></script>
 </head>
 <body>
   <main>
+    <header class="page-header"><h1>A2RL Flight Evaluation</h1></header>
     <div class="layout">
       <section class="panel flight" aria-labelledby="camera-title">
         <div class="bar">
@@ -65,14 +66,14 @@
           <span id="replay-stage">—</span>
           <span>Gates <strong id="flight-gates">—</strong></span>
           <span id="replay-result">—</span>
-          <a id="download-replay" class="download" hidden>Download this video</a>
+          <a id="download-replay" class="download" hidden>Download MP4</a>
         </footer>
       </section>
 
       <section class="panel status" aria-labelledby="status-title">
         <div class="bar">
           <h2 id="status-title">Status</h2>
-          <span id="connection" class="pill" role="status">Connecting</span>
+          <span id="connection" class="connection" role="status">Connecting</span>
         </div>
         <dl>
           <div><dt>Course</dt><dd id="course">—</dd></div>
@@ -101,7 +102,7 @@
         </div>
         <p class="chart-key" id="finish-history-key">
           <span id="finish-history-standard">Standard start</span>
-          <span id="finish-history-comparison">Mean of completed runs</span>
+          <span id="finish-history-comparison">Mean of clean finishes</span>
         </p>
         <p id="finish-history-empty" class="chart-empty">No completed runs in these evaluations.</p>
         <div id="finish-history-plot" class="finish-plot" hidden>

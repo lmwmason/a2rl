@@ -229,7 +229,7 @@ function startReplay() {
       recorded.closest("div").hidden = true;
     }
     if (pilot === "student") renderStudentEvaluation();
-  } else if (playing && !playing.archived) {
+  } else if (playing) {
     camera.currentTime = 0;
   } else {
     return;

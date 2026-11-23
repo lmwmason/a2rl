@@ -23,7 +23,8 @@ const finishChart = byId("finish-history");
 const finishTrend = { values: [], key: "", speed: false };
 let playing = null;
 let displayedControl = -1;
-let pilot = "teacher";
+let pilot = null;
+let studentStatus = null;
 let preferredCamera = new URLSearchParams(window.location.search).get("camera") === "chase" ? "chase" : "fpv";
 let cameraSelection = 0;
 let selection = 0;
@@ -308,7 +309,9 @@ function renderStatus(info) {
   } else if (info.archived) {
     pill("connection", "Recorded evaluation", "stale");
   } else if (connected) {
-    pill("connection", info.active ? "GPU online · Training" : "GPU online · Training idle", info.active ? "live" : "");
+    const activity = info.starting_speed_trainer ? "RL rollouts starting"
+      : speedTraining ? "RL training" : "Training";
+    pill("connection", info.active ? "GPU online · " + activity : "GPU online · Training idle", info.active ? "live" : "");
   } else {
     pill("connection", info.connection === "connecting" ? "Connecting to GPU" : "GPU feed offline", "stale");
   }
@@ -317,14 +320,26 @@ function renderStatus(info) {
     : info.awaiting_speed_trainer ? "Stage 3 · Awaiting Elodin reinforcement learning"
     : curriculumLabels[info.curriculum_stage] ?? (speedTraining ? "Reinforcement learning"
       : info.full_course ? "Full-course imitation" : info.phase ? "Imitation learning" : "—"));
-  setText("progress-label", speedTraining ? "Current training steps" : "Current training round");
-  setText("progress", count(speedTraining ? info.steps : info.round));
+  setText("progress-label", speedTraining ? "RL iteration" : "Current training round");
+  setText("progress", count(info.round));
+  setText("steps-label", speedTraining ? "Environment steps" : "Training samples");
   setText("steps", count(info.steps));
-  if (pilot === "student") renderStudentEvaluation();
+  byId("rl-rollouts").closest("div").hidden = !speedTraining || !Number.isFinite(info.rollouts);
+  setText("rl-rollouts", count(info.rollouts));
+  byId("rl-return").closest("div").hidden = !speedTraining || !Number.isFinite(info.mean_return);
+  setText("rl-return", quantity(info.mean_return, "").trim());
+  if (pilot === "student") {
+    studentStatus = info;
+    renderStudentEvaluation();
+  }
   else renderEvaluation(info, speedTraining);
 }
 
 function renderStudentEvaluation() {
+  if (studentStatus?.phase === "SPEED RL") {
+    renderEvaluation(studentStatus, true);
+    return;
+  }
   const replay = playing?.physics_engine === "elodin" ? playing : null;
   const evaluations = replay?.history ?? (replay ? [replay] : []);
   const finishes = evaluations.map((evaluation) => evaluation.official_seconds);
@@ -340,8 +355,11 @@ function renderStudentEvaluation() {
 }
 
 function renderEvaluation(info, speedTraining) {
+  setText("history-title", speedTraining ? "Gates per RL rollout batch" : "Gates per evaluation");
+  setText("gates-series", speedTraining ? "Batch average" : "Individual evaluations");
   setText("finish-rate", percent(info.finish_rate));
   setText("collision-rate", percent(info.collision_rate));
+  setText("best-time-label", speedTraining ? "Best rollout time" : "Best two-lap time");
   setText("best-time", quantity(info.best_two_lap_seconds, "s"));
   const meanSpeed = info.mean_flight_speed_m_s;
   byId("mean-speed").closest("div").hidden = !Number.isFinite(meanSpeed);
@@ -375,7 +393,8 @@ function renderEvaluation(info, speedTraining) {
     drawHistory();
   }
   const latestGates = values.at(-1);
-  setText("history-count", values.length ? (pilot === "student"
+  setText("history-count", values.length ? (speedTraining
+    ? `Latest average · ${latestGates.toFixed(1)} / ${count(limit)}` : pilot === "student"
     ? `Latest · ${count(latestGates)} / ${count(limit)}`
     : "Last " + count(values.length) + " evaluations") : "Awaiting evaluation");
 
@@ -386,8 +405,8 @@ function renderEvaluation(info, speedTraining) {
     finishTrend.values = finishTimes;
     finishTrend.speed = speedTraining;
     byId("finish-history-standard").hidden = !speedTraining;
-    setText("finish-history-comparison", pilot === "student" ? "Recorded run"
-      : speedTraining ? "Mean of completed runs" : "Fastest completed run");
+    setText("finish-history-comparison", speedTraining ? "Mean of completed rollouts"
+      : pilot === "student" ? "Recorded run" : "Fastest completed run");
     const latest = finishTimes[finishTimes.length - 1];
     const seconds = latest?.standard_s ?? latest?.comparison_s;
     setText("finish-history-latest", Number.isFinite(seconds) ? "Latest · " + seconds.toFixed(2) + " s"
@@ -495,9 +514,7 @@ async function loadReplay({ url, value: info }, selected) {
 
 new ResizeObserver(drawHistory).observe(chart);
 new ResizeObserver(drawFinishHistory).observe(finishChart);
-if (new URLSearchParams(window.location.search).get("pilot") === "student") {
-  selectPilot("student", false);
-}
+selectPilot(new URLSearchParams(window.location.search).get("pilot") === "teacher" ? "teacher" : "student", false);
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) return;
   if (!camera.paused) startStickAnimation();

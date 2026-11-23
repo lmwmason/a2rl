@@ -30,4 +30,10 @@ if [[ ! -s "$qualified" ]]; then
         --updates 0 --eval-every 150 --batch 128 --learning-rate 5e-5 --primary-fraction .25
 fi
 
-echo "Stage 3 is awaiting an Elodin + Betaflight reinforcement learner."
+if [[ -n "${A2RL_ELODIN_ROOT:-}" && -n "${A2RL_HANDOFF_SITL_EXECUTABLE:-}" ]]; then
+    flock -u 9
+    exec "$python" -u -m training.speed_elodin --run "$run" \
+        --harness "$A2RL_ELODIN_ROOT" --firmware "$A2RL_HANDOFF_SITL_EXECUTABLE"
+fi
+
+echo "Set A2RL_ELODIN_ROOT and A2RL_HANDOFF_SITL_EXECUTABLE to start stage 3."

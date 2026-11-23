@@ -34,27 +34,34 @@ def training_active(run):
 
 def status(run, media):
     speed = (run / PACE_MARKER).is_file()
-    waiting_for_speed = speed and not ((run / SPEED_RUN / "latest.pt").is_file())
-    folder = run / (SPEED_RUN if speed and not waiting_for_speed else "recovery")
+    active = training_active(run)
+    speed_checkpoint = (run / SPEED_RUN / "latest.pt").is_file()
+    starting_speed = speed and active and not speed_checkpoint
+    waiting_for_speed = speed and not active and not speed_checkpoint
+    folder = run / (SPEED_RUN if speed else "recovery")
     metrics = read_metrics(folder)
     latest = metrics[-1] if metrics else {}
     stage = "speed" if speed else "pace" if (run / FINISH_MARKER).is_file() else "finish"
-    completed = finish_time_history(metrics, speed and not waiting_for_speed)
+    completed = finish_time_history(metrics, speed)
     results = [row["comparison_s"] for row in completed if row["comparison_s"] is not None]
+    individual_best = [row["best_two_lap_s"] for row in metrics[-60:] if row.get("best_two_lap_s") is not None]
     gates = [row["gates_mean"] if "gates_mean" in row else sum(row["gates"])/len(row["gates"])
              for row in metrics[-60:] if "gates_mean" in row or row.get("gates")]
     snapshot = {
-        "active": training_active(run), "connection": "connected", "snapshot_at": time.time(),
+        "active": active, "connection": "connected", "snapshot_at": time.time(),
         "live_feed_version": 1,
         "course": "2026-practice", "phase": "SPEED RL" if speed else "IMITATION",
         "curriculum_stage": stage,
         "physics_engine": "elodin",
         "awaiting_speed_trainer": waiting_for_speed,
+        "starting_speed_trainer": starting_speed,
+        "rollouts": latest.get("rollouts", 0 if starting_speed else None),
+        "mean_return": latest.get("mean_return"),
         "gates_per_race": 24, "full_course": True,
         "round": latest.get("round"), "steps": latest.get("steps", latest.get("transitions")),
         "finish_rate": latest.get("two_lap_rate"), "collision_rate": latest.get("crash_rate"),
         "recent_gates": gates, "recent_finish_times": completed,
-        "best_two_lap_seconds": min(results, default=None),
+        "best_two_lap_seconds": min(results + individual_best, default=None),
         "mean_gate_crossing_speed_m_s": latest.get("mean_gate_crossing_speed_m_s"),
         "mean_gate_approach_delay_seconds": latest.get("mean_gate_approach_delay_seconds"),
         "target_two_lap_seconds": {"finish": None, "pace": PACE_TARGET, "speed": SPEED_TARGET}[stage],

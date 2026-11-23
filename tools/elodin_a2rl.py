@@ -181,6 +181,7 @@ def configure_course(course, lib, season2, asset, camera_feed, report_path):
                 "official_seconds": official,
                 "mean_throttle_fraction": mean_throttle,
                 "gate_times": times[:last + 1],
+                "policy_steps": elodin_policy.policy_steps,
                 "camera_mount_pitch_deg": camera_feed.env.mount_pitch if camera_feed else None,
             }
             if elodin_policy.heat is not None:

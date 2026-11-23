@@ -6,6 +6,8 @@ import torch
 from tools import evaluate_rgb_imu_race as evaluator
 from tools.evaluate_rgb_imu_race import completion_profile, handoff_schedule, succeeds
 from training.curriculum import FINISH_MARKER, PACE_MARKER, SPEED_MARKER, SPEED_RUN
+from training.live_feed import status
+from training.speed_elodin import perturb, race_return
 
 
 def test_focus_uses_recent_failures_and_releases_reliably_cleared_gates():
@@ -41,6 +43,46 @@ def test_assisted_finish_never_qualifies():
               "gates_per_race": 24, "official_seconds": 29.1}
     assert succeeds(finish, 30.)
     assert not succeeds(finish | {"assisted": True}, 30.)
+
+
+def test_speed_score_prefers_clean_progress_and_a_faster_finish():
+    finish = {"gates": 24, "finished": True, "contact": False, "gate_times": list(range(24)),
+              "official_seconds": 24.}
+    crash = finish | {"gates": 23, "finished": False, "contact": True, "gate_times": list(range(23))}
+    assert race_return(finish | {"official_seconds": 23.}) > race_return(finish) > race_return(crash)
+    assert race_return(crash) > race_return(crash | {"gate_times": [1, 2]})
+
+
+def test_speed_policy_perturbations_are_paired_and_keep_the_encoders():
+    tensor = torch.ones((2, 2))
+    policy = {"encoder": {"weight": tensor},
+              "actor": {"0.weight": tensor, "2.weight": tensor},
+              "future_actor": {"weight": tensor}}
+    variants = [perturb(policy, torch.Generator().manual_seed(9), .01, sign) for sign in (-1, 1)]
+    for trial in variants:
+        assert trial["encoder"] is policy["encoder"]
+        assert trial["actor"]["0.weight"] is tensor
+        assert not torch.equal(trial["actor"]["2.weight"], tensor)
+    for name, key in (("actor", "2.weight"), ("future_actor", "weight")):
+        torch.testing.assert_close((variants[0][name][key] + variants[1][name][key]) / 2, tensor)
+
+
+def test_speed_status_does_not_reuse_imitation_statistics(tmp_path, monkeypatch):
+    (tmp_path / PACE_MARKER).touch()
+    recovery = tmp_path / "recovery"
+    recovery.mkdir()
+    (recovery / "metrics.jsonl").write_text('{"round": 99, "steps": 99}')
+    monkeypatch.setattr("training.live_feed.training_active", lambda _: True)
+    live = status(tmp_path, tmp_path)
+    assert live["starting_speed_trainer"] and live["active"]
+    assert live["phase"] == "SPEED RL" and live["steps"] is None and live["rollouts"] == 0
+    speed = tmp_path / SPEED_RUN
+    speed.mkdir()
+    (speed / "latest.pt").touch()
+    (speed / "metrics.jsonl").write_text('{"round": 1, "steps": 500, "rollouts": 3, "mean_return": 4.5}')
+    live = status(tmp_path, tmp_path)
+    assert not live["starting_speed_trainer"]
+    assert (live["round"], live["steps"], live["rollouts"], live["mean_return"]) == (1, 500, 3, 4.5)
 
 
 def test_curriculum_requires_a_pace_trained_checkpoint_before_rl(tmp_path, monkeypatch):

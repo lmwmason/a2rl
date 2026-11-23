@@ -22,6 +22,7 @@ hover = .17
 control_rate = 30
 last_expert_sample = -1
 pilot = None
+policy_steps = 0
 relative_attitude = RelativeAttitude()
 forecasts = deque()
 use_late_controller = False
@@ -266,7 +267,7 @@ def autopilot(update):
 
 
 def choose_command(update, image, ended):
-    global pilot, frames, imu, held, last_expert_sample, reference_command
+    global pilot, policy_steps, frames, imu, held, last_expert_sample, reference_command
     global student_influence_frames, reduced_assistance_frames, handoff_frames, intervention_ticks
     global handoff_ready_since, use_late_controller, boundary_ticks
     if ended or update.t < heat_arm_time:
@@ -313,6 +314,7 @@ def choose_command(update, image, ended):
             held = reference_command
             return held
         handoff_frames += 1
+    policy_steps += 1
     if pilot.action_horizon > 1:
         if pilot.protected_prefix:
             prediction, progress = pilot.forecast_with_boundary(frames[None], imu[None], use_late_controller)

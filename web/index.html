@@ -6,7 +6,7 @@
   <meta name="description" content="FPV policy evaluation, training metrics, and checkpoint replays">
   <title>Flight Policy Research</title>
   <link rel="stylesheet" href="style.css?v=chase-camera">
-  <script src="dashboard.js?v=chase-camera" defer></script>
+  <script src="dashboard.js?v=rl-training" defer></script>
 </head>
 <body>
   <main>
@@ -16,8 +16,8 @@
           <h2 id="camera-title">Flight replay</h2>
           <div class="replay-options">
             <div class="pilot-switch" role="group" aria-label="Replay pilot">
-              <button type="button" id="show-teacher" aria-pressed="true">Teacher</button>
-              <button type="button" id="show-student" aria-pressed="false">Student</button>
+              <button type="button" id="show-teacher" aria-pressed="false">Teacher</button>
+              <button type="button" id="show-student" aria-pressed="true">Student</button>
             </div>
             <div class="pilot-switch" role="group" aria-label="Camera view">
               <button type="button" id="show-fpv" aria-pressed="true">FPV</button>
@@ -59,7 +59,9 @@
           <div hidden><dt>Replay recorded</dt><dd><time id="replay-recorded"></time></dd></div>
           <div><dt>Phase</dt><dd id="phase">—</dd></div>
           <div class="evaluation training-counter"><dt id="progress-label">Imitation round</dt><dd id="progress">—</dd></div>
-          <div class="evaluation training-counter"><dt>Training samples</dt><dd id="steps">—</dd></div>
+          <div class="evaluation training-counter"><dt id="steps-label">Training samples</dt><dd id="steps">—</dd></div>
+          <div hidden><dt>Training rollouts</dt><dd id="rl-rollouts">—</dd></div>
+          <div hidden><dt>Mean rollout reward</dt><dd id="rl-return">—</dd></div>
           <div class="evaluation"><dt>Two-lap finish rate</dt><dd id="finish-rate">—</dd></div>
           <div class="evaluation"><dt>Crash rate</dt><dd id="collision-rate">—</dd></div>
           <div hidden><dt>Mean flight speed</dt><dd id="mean-speed">—</dd></div>
@@ -67,7 +69,7 @@
           <div hidden><dt>Time at ≥90% throttle</dt><dd id="high-throttle">—</dd></div>
           <div class="evaluation"><dt>Gate crossing speed</dt><dd id="crossing-speed">—</dd></div>
           <div class="evaluation"><dt>Slow approach time per run</dt><dd id="approach-delay">—</dd></div>
-          <div class="evaluation"><dt>Best two-lap time</dt><dd id="best-time">—</dd></div>
+          <div class="evaluation"><dt id="best-time-label">Best two-lap time</dt><dd id="best-time">—</dd></div>
         </dl>
       </section>
 
@@ -91,7 +93,7 @@
           <h2 id="history-title">Gates per evaluation</h2>
           <span id="history-count">—</span>
         </div>
-        <p class="chart-key"><span>Individual evaluations</span><span>8-evaluation moving average</span></p>
+        <p class="chart-key"><span id="gates-series">Individual evaluations</span><span>8-batch moving average</span></p>
         <div class="plot">
           <div class="axis" aria-hidden="true"><span id="gates-axis-max">22</span><span id="gates-axis-mid">11</span><span>0</span></div>
           <canvas id="history" aria-label="Gates passed in recent evaluations"></canvas>

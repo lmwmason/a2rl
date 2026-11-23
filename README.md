@@ -132,7 +132,16 @@ The GPU trains with synchronized teacher demonstrations and correction labels fr
 
 1. **Completion imitation.** Clear all 24 apertures on the two-lap course, with three clean starts. Each mixed batch draws approximately 25% of examples from the reference demonstration, 50% from independent rollout corrections, and 25% from teacher-assisted rollouts. Half of the independent samples target the approach before the rollout ended. With the gate-handoff curriculum enabled, targeted student-control segments also enter the batch.
 2. **Pace imitation.** Start from the qualified completion checkpoint and use its Mode 2 predictions as a reference across the course. Fine-tune at one quarter of the completion learning rate using independent rollout corrections and retained successful approaches. Qualify at or below 30 seconds in three clean starts.
-3. **Speed optimization.** The target is 12 seconds after pace qualification. This stage is awaiting an Elodin reinforcement learner.
+3. **Speed optimization.** Start from the pace-qualified student. Antithetic evolutionary policy search perturbs its Mode 2 output layers and scores independent Elodin + Betaflight races by gate progress, contact and finish time. A faster candidate must also complete the other two launch placements before becoming the incumbent. The independent evaluator verifies the 12-second target.
+
+Start the speed worker on the same server as the evaluator after pace qualification:
+
+```bash
+python3 -m training.speed_elodin --run runs/target-12 \
+  --harness "$A2RL_ELODIN_ROOT" --firmware "$A2RL_HANDOFF_SITL_EXECUTABLE"
+```
+
+The worker reports actual environment decisions and training rollouts to the Student view. Its parallel rollouts use an offset-capable Betaflight binary. The evaluator publishes the latest incumbent replay and keeps its FPV, chase camera and Mode 2 inputs synchronized.
 
 The application benchmark uses the reference airframe profile, 70° camera mount, clean RGB, and a nominal launch for the replay and lap time. Two 3 cm launch offsets check repeatability within the same setup. For separate transfer experiments, run the checkpoint with `A2RL_AIRFRAME` pointing to a measured variant and `A2RL_FPV_MOUNT_PITCH` set to the desired camera pitch in degrees. Keep evaluation outputs in a fresh directory and record completion and timing for each configuration. Simulated variation measures sensitivity within the model. Physical transfer still needs flight data from the intended aircraft.
 

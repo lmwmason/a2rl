@@ -22,6 +22,12 @@ h2 { margin: 0; font-size: 1rem; font-weight: 650; }
 .connection { margin: 0; color: var(--muted); font-size: .825rem; text-align: right; }
 .connection.live { color: var(--ink); font-weight: 600; }
 .connection.stale { color: var(--muted); }
+.experiments { grid-column: 1 / -1; }
+.experiments dl { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(210px, 100%), 1fr)); gap: 14px 24px; margin: 3px 0 0; }
+.experiments dl[hidden] { display: none; }
+.experiments dt { font-weight: 600; }
+.experiments dd { margin: 4px 0 0; color: var(--muted); font-size: .825rem; }
+.experiments dd span { display: block; margin-top: 4px; }
 
 .screen { position: relative; aspect-ratio: 4 / 3; display: grid; place-items: center; background: #070b0d; }
 .screen p { color: #f0f0ed; text-align: center; padding: 0 16px; }

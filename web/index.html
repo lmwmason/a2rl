@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="FPV policy evaluation, training metrics, and checkpoint replays">
   <title>A2RL Flight Evaluation</title>
-  <link rel="stylesheet" href="style.css?v=flight-evaluation">
-  <script src="dashboard.js?v=flight-evaluation-2" defer></script>
+  <link rel="stylesheet" href="style.css?v=live-experiments">
+  <script src="dashboard.js?v=live-experiments" defer></script>
 </head>
 <body>
   <main>
@@ -92,6 +92,27 @@
           <div class="evaluation"><dt>Gate crossing speed</dt><dd id="crossing-speed">—</dd></div>
           <div class="evaluation"><dt>Slow approach time per run</dt><dd id="approach-delay">—</dd></div>
           <div class="evaluation"><dt id="best-time-label">Best two-lap time</dt><dd id="best-time">—</dd></div>
+        </dl>
+      </section>
+
+      <section class="panel experiments" aria-labelledby="experiments-title">
+        <div class="bar">
+          <h2 id="experiments-title">Live experiments</h2>
+          <span id="experiments-connection" class="connection" role="status">Connecting</span>
+        </div>
+        <dl id="experiment-runs" hidden>
+          <div>
+            <dt>15 s teacher search</dt>
+            <dd><strong id="experiment-teacher-state">—</strong><span id="experiment-teacher-detail"></span></dd>
+          </div>
+          <div>
+            <dt>Student · Gates 5–6</dt>
+            <dd><strong id="experiment-segment-5-6-state">—</strong><span id="experiment-segment-5-6-detail"></span></dd>
+          </div>
+          <div>
+            <dt>Student · Gates 11–12</dt>
+            <dd><strong id="experiment-segment-11-12-state">—</strong><span id="experiment-segment-11-12-detail"></span></dd>
+          </div>
         </dl>
       </section>
 

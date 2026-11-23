@@ -670,6 +670,57 @@ async function fetchStatus(poll = true) {
   }
 }
 
+function renderExperiments(experiments) {
+  const teacher = experiments.teacher;
+  const targetMet = Number.isFinite(teacher?.verified_worst_seconds)
+    && teacher.verified_worst_seconds <= teacher.target_seconds;
+  setText("experiment-teacher-state", teacher
+    ? targetMet ? "Target met" : teacher.active ? "Running" : "Stopped"
+    : "Unavailable");
+  const teacherDetails = teacher ? [`${count(teacher.evaluations)} evaluations`] : [];
+  if (Number.isFinite(teacher?.verified_worst_seconds)) {
+    teacherDetails.push(`Worst of 3 verified starts ${teacher.verified_worst_seconds.toFixed(2)} s`);
+  }
+  setText("experiment-teacher-detail", teacherDetails.join(" · "));
+
+  for (const name of ["segment-5-6", "segment-11-12"]) {
+    const run = experiments[name];
+    setText(`experiment-${name}-state`, run ? (run.active ? "Running" : "Stopped") : "Unavailable");
+    const details = run ? [`Round ${count(run.round)}`, `${count(run.rollouts)} rollouts`] : [];
+    if (Number.isFinite(run?.latest_best_finish_seconds)) {
+      details.push(`Latest round best ${run.latest_best_finish_seconds.toFixed(2)} s`);
+    }
+    if (run?.promoted_round != null) {
+      details.push(run.promoted_round ? `Promoted in round ${count(run.promoted_round)}` : "No promotion");
+    }
+    setText(`experiment-${name}-detail`, details.join(" · "));
+  }
+}
+
+async function fetchExperiments() {
+  try {
+    const { value } = await Promise.any(feeds.map(async (feed) => {
+      const response = await requestData(feed + "experiments.json");
+      if (!response.value?.teacher && !response.value?.["segment-5-6"] && !response.value?.["segment-11-12"]) {
+        throw new Error("Experiment feed unavailable");
+      }
+      return response;
+    }));
+    renderExperiments(value);
+    byId("experiment-runs").hidden = false;
+    setText("experiments-connection", "Connected");
+  } catch {
+    if (!byId("experiment-runs").hidden) {
+      for (const name of ["teacher", "segment-5-6", "segment-11-12"]) {
+        setText(`experiment-${name}-state`, "Last status unavailable");
+      }
+    }
+    setText("experiments-connection", "Feed unavailable");
+  } finally {
+    window.setTimeout(fetchExperiments, 2000);
+  }
+}
+
 async function fetchReplay(poll = true) {
   const selected = selection;
   const view = pilot;
@@ -798,4 +849,5 @@ window.addEventListener("pageshow", (event) => {
   if (event.persisted && pilot === "student") fetchReplay(false);
 });
 fetchStatus();
+fetchExperiments();
 fetchReplay();

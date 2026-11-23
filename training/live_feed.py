@@ -20,9 +20,9 @@ ORIGIN = "https://a2rl-fpv-dashboard.front.cbgpu.com"
 MEDIA = re.compile(r"/(?:(?:replay|chase|export-fpv|export-chase)-[0-9]{1,24}\.mp4|controls-[0-9]{1,24}\.json|replay\.json)")
 
 
-def training_active(run):
+def training_active(run, lock_name="training.lock"):
     try:
-        with (run / "training.lock").open("rb") as lock:
+        with (run / lock_name).open("rb") as lock:
             try:
                 fcntl.flock(lock, fcntl.LOCK_SH | fcntl.LOCK_NB)
             except BlockingIOError:
@@ -30,6 +30,50 @@ def training_active(run):
     except FileNotFoundError:
         pass
     return False
+
+
+def teacher_screen_active(screen):
+    try:
+        pid = int((screen / "sweep.pid").read_text())
+        proc = Path("/proc") / str(pid)
+        args = (proc / "cmdline").read_bytes().decode().rstrip("\0").split("\0")
+        if not any(Path(arg).name == "sweep_teacher_pace.py" for arg in args):
+            return False
+        output = Path(args[args.index("--out") + 1])
+        return (proc.joinpath("cwd").resolve(strict=True) / output).resolve() == screen.resolve()
+    except (OSError, ValueError, IndexError):
+        return False
+
+
+def experiment_status(run, teacher_screen):
+    experiments = {}
+    if teacher_screen is not None:
+        try:
+            results = json.loads((teacher_screen / "results.json").read_text())
+        except (OSError, ValueError):
+            results = {}
+        best = next(iter(results.get("qualified", [])), {})
+        experiments["teacher"] = {
+            "active": teacher_screen_active(teacher_screen),
+            "evaluations": len(results.get("standard", [])) + len(results.get("paired", [])),
+            "target_seconds": results.get("target_seconds", 15),
+            "verified_mean_seconds": best.get("mean_seconds"),
+            "verified_worst_seconds": best.get("worst_seconds"),
+        }
+    for name in ("segment-5-6", "segment-11-12"):
+        segment = run.parent / name
+        if not segment.is_dir():
+            continue
+        metrics = read_metrics(segment / SPEED_RUN)
+        latest = metrics[-1] if metrics else {}
+        experiments[name] = {
+            "active": training_active(segment, "segment.lock"),
+            "round": latest.get("round", 0),
+            "rollouts": latest.get("rollouts", 0),
+            "latest_best_finish_seconds": latest.get("best_two_lap_s"),
+            "promoted_round": latest.get("promoted_round"),
+        }
+    return experiments
 
 
 def status(run, media):
@@ -78,8 +122,9 @@ def status(run, media):
 
 
 class Feed(BaseHTTPRequestHandler):
-    def __init__(self, *args, run, media, **kwargs):
+    def __init__(self, *args, run, media, teacher_screen=None, **kwargs):
         self.run, self.media = run, media
+        self.teacher_screen = teacher_screen
         super().__init__(*args, **kwargs)
 
     def do_GET(self):
@@ -87,6 +132,9 @@ class Feed(BaseHTTPRequestHandler):
         try:
             if path_info == "/status.json":
                 body = json.dumps(status(self.run, self.media)).encode()
+                self.send("application/json", BytesIO(body), len(body))
+            elif path_info == "/experiments.json":
+                body = json.dumps(experiment_status(self.run, self.teacher_screen)).encode()
                 self.send("application/json", BytesIO(body), len(body))
             elif MEDIA.fullmatch(path_info):
                 path = self.media / path_info[1:]
@@ -117,9 +165,11 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run", type=Path, required=True)
     parser.add_argument("--media", type=Path, required=True)
+    parser.add_argument("--teacher-screen", type=Path)
     parser.add_argument("--port", type=int, default=8766)
     args = parser.parse_args()
-    with ThreadingHTTPServer(("127.0.0.1", args.port), partial(Feed, run=args.run, media=args.media)) as server:
+    handler = partial(Feed, run=args.run, media=args.media, teacher_screen=args.teacher_screen)
+    with ThreadingHTTPServer(("127.0.0.1", args.port), handler) as server:
         server.serve_forever()
 
 

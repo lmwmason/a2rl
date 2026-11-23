@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="FPV policy evaluation, training metrics, and checkpoint replays">
   <title>A2RL Flight Evaluation</title>
-  <link rel="stylesheet" href="style.css?v=live-experiments">
-  <script src="dashboard.js?v=live-experiments" defer></script>
+  <link rel="stylesheet" href="style.css?v=experiment-replays">
+  <script src="dashboard.js?v=experiment-replays" defer></script>
 </head>
 <body>
   <main>
@@ -16,10 +16,13 @@
         <div class="bar">
           <h2 id="camera-title">Flight replay</h2>
           <div class="replay-options">
-            <div class="pilot-switch" role="group" aria-label="Replay pilot">
-              <button type="button" id="show-teacher" aria-pressed="false">Teacher</button>
-              <button type="button" id="show-student" aria-pressed="true">Student</button>
-            </div>
+            <select id="replay-source" aria-label="Replay source">
+              <option value="student">Main student</option>
+              <option value="teacher">Reference teacher</option>
+              <option value="teacher-search">15 s teacher search</option>
+              <option value="segment-5-6">Student · Gates 5–6</option>
+              <option value="segment-11-12">Student · Gates 11–12</option>
+            </select>
             <div class="pilot-switch" role="group" aria-label="Camera view">
               <button type="button" id="show-fpv" aria-pressed="true">FPV</button>
               <button type="button" id="show-chase" aria-pressed="false" disabled>Third person</button>

@@ -18,6 +18,7 @@ from .telemetry import finish_time_history, read_metrics
 
 ORIGIN = "https://a2rl-fpv-dashboard.front.cbgpu.com"
 MEDIA = re.compile(r"/(?:(?:replay|chase|export-fpv|export-chase)-[0-9]{1,24}\.mp4|controls-[0-9]{1,24}\.json|replay\.json)")
+EXPERIMENT_MEDIA = re.compile(r"/experiments/(teacher|segment-5-6|segment-11-12)(/[^/]+)")
 
 
 def training_active(run, lock_name="training.lock"):
@@ -136,13 +137,18 @@ class Feed(BaseHTTPRequestHandler):
             elif path_info == "/experiments.json":
                 body = json.dumps(experiment_status(self.run, self.teacher_screen)).encode()
                 self.send("application/json", BytesIO(body), len(body))
-            elif MEDIA.fullmatch(path_info):
-                path = self.media / path_info[1:]
+            else:
+                experiment = EXPERIMENT_MEDIA.fullmatch(path_info)
+                if experiment and MEDIA.fullmatch(experiment[2]):
+                    path = self.media / "experiments" / experiment[1] / experiment[2][1:]
+                elif MEDIA.fullmatch(path_info):
+                    path = self.media / path_info[1:]
+                else:
+                    self.send_error(404)
+                    return
                 kind = "video/mp4" if path.suffix == ".mp4" else "application/json"
                 with path.open("rb") as stream:
                     self.send(kind, stream, path.stat().st_size)
-            else:
-                self.send_error(404)
         except (FileNotFoundError, ValueError):
             self.send_error(404)
         except (BrokenPipeError, ConnectionResetError):

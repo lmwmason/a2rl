@@ -40,6 +40,12 @@ const feeds = hosted ? [
   "https://beam-snapshot-down-museums.trycloudflare.com/",
   "https://a2rl-fpv-feed.server.cbgpu.com/",
 ] : ["/"];
+const experimentSources = {
+  "teacher-search": "teacher",
+  "segment-5-6": "segment-5-6",
+  "segment-11-12": "segment-11-12",
+};
+let experimentStatus = null;
 
 async function requestData(url, video = false) {
   const controller = new AbortController();
@@ -54,6 +60,9 @@ async function requestData(url, video = false) {
 }
 
 async function readFeed(name, view) {
+  if (Object.hasOwn(experimentSources, view)) {
+    return Promise.any(feeds.map((feed) => requestData(feed + "experiments/" + experimentSources[view] + "/" + name)));
+  }
   if (view === "teacher") return requestData("/snapshot/" + name);
   const requests = feeds.map(async (feed) => {
     const response = await requestData(feed + name);
@@ -437,7 +446,8 @@ function startReplay(replay, resumeTime = 0, autoplay = true) {
   download.download = download.download.replace(/\.mp4$/, `-${playing.perspective}.mp4`);
   download.hidden = !hasExport;
   byId("waiting").hidden = true;
-  const stage = teacher ? "Flow teacher evaluation"
+  const stage = Object.hasOwn(experimentSources, pilot) ? playing.phase + " · Re-evaluation"
+    : teacher ? "Flow teacher evaluation"
     : firmwareCheck ? "Firmware takeoff check"
     : playing.phase === "SPEED RL" ? (Number.isFinite(playing.steps)
       ? "Reinforcement learning · " + count(playing.steps) + " steps" : "Reinforcement learning checkpoint")
@@ -457,6 +467,7 @@ function startReplay(replay, resumeTime = 0, autoplay = true) {
     recorded.closest("div").hidden = true;
   }
   if (pilot === "student") renderStudentEvaluation();
+  if (Object.hasOwn(experimentSources, pilot)) renderSelectedExperiment();
   if (previous) URL.revokeObjectURL(previous.blob);
   if (autoplay) {
     if (resumeTime > 0) camera.play().catch(() => {});
@@ -659,6 +670,7 @@ function renderEvaluation(info, speedTraining) {
 async function fetchStatus(poll = true) {
   const selected = selection;
   try {
+    if (Object.hasOwn(experimentSources, pilot)) return;
     const { value } = await readFeed("status.json", pilot);
     if (selected === selection) renderStatus(value);
   } catch {
@@ -668,6 +680,28 @@ async function fetchStatus(poll = true) {
   } finally {
     if (poll) window.setTimeout(fetchStatus, 2000);
   }
+}
+
+function renderSelectedExperiment() {
+  const name = experimentSources[pilot];
+  if (!name) return;
+  const run = experimentStatus?.[name];
+  const teacher = name === "teacher";
+  const history = playing?.history ?? [];
+  renderStatus({
+    phase: "EXPERIMENT", course: "2026-practice", gates_per_race: 24,
+    best_two_lap_seconds: teacher ? run?.verified_mean_seconds : run?.latest_best_finish_seconds,
+    round: run?.round,
+    recent_gates: history.map((flight) => flight.gates),
+    recent_finish_times: history.map((flight, index) => ({ at: index + 1, comparison_s: flight.official_seconds })),
+  });
+  setConnection(run ? (run.active ? "Experiment running" : "Experiment stopped") : "Experiment feed unavailable",
+    run?.active ? "live" : "stale");
+  setText("phase", byId("replay-source").selectedOptions[0].textContent);
+  setText("progress-label", teacher ? "Completed evaluations" : "Current search round");
+  setText("progress", count(teacher ? run?.evaluations : run?.round));
+  byId("steps").closest("div").hidden = true;
+  setText("best-time-label", teacher ? "Best verified mean" : "Latest round best");
 }
 
 function renderExperiments(experiments) {
@@ -707,9 +741,13 @@ async function fetchExperiments() {
       return response;
     }));
     renderExperiments(value);
+    experimentStatus = value;
+    renderSelectedExperiment();
     byId("experiment-runs").hidden = false;
     setText("experiments-connection", "Connected");
   } catch {
+    experimentStatus = null;
+    renderSelectedExperiment();
     if (!byId("experiment-runs").hidden) {
       for (const name of ["teacher", "segment-5-6", "segment-11-12"]) {
         setText(`experiment-${name}-state`, "Last status unavailable");
@@ -735,7 +773,9 @@ async function fetchReplay(poll = true) {
     }
   } catch {
     if (selected === selection && !playing) {
-      setText("waiting", view === "student" ? "Waiting for a student replay" : "Teacher replay unavailable");
+      const waiting = Object.hasOwn(experimentSources, view) ? "Waiting for an experiment replay"
+        : view === "student" ? "Waiting for a student replay" : "Teacher replay unavailable";
+      setText("waiting", waiting);
     }
   } finally {
     if (poll) window.setTimeout(fetchReplay, 3000);
@@ -752,8 +792,7 @@ function selectPilot(view, refresh = true) {
   const page = new URL(window.location.href);
   page.searchParams.set("pilot", view);
   window.history.replaceState(null, "", page.href);
-  byId("show-teacher").setAttribute("aria-pressed", String(view === "teacher"));
-  byId("show-student").setAttribute("aria-pressed", String(view === "student"));
+  byId("replay-source").value = view;
   camera.pause();
   camera.hidden = true;
   camera.removeAttribute("src");
@@ -769,14 +808,14 @@ function selectPilot(view, refresh = true) {
   setText("waiting", "Loading replay");
   for (const id of ["replay-stage", "flight-gates", "replay-result", "replay-physics"]) setText(id, "—");
   renderStatus({ course: "2026-practice", pending: true, phase: view === "teacher" ? "TEACHER" : "IMITATION", gates_per_race: 24 });
+  renderSelectedExperiment();
   if (refresh) {
     fetchStatus(false);
     fetchReplay(false);
   }
 }
 
-byId("show-teacher").addEventListener("click", () => selectPilot("teacher"));
-byId("show-student").addEventListener("click", () => selectPilot("student"));
+byId("replay-source").addEventListener("change", (event) => selectPilot(event.target.value));
 byId("show-fpv").addEventListener("click", () => selectCamera("fpv"));
 byId("show-chase").addEventListener("click", () => selectCamera("chase"));
 byId("download-replay").addEventListener("click", async event => {
@@ -839,14 +878,15 @@ async function loadReplay({ url, value: info }, selected) {
 
 new ResizeObserver(drawHistory).observe(chart);
 new ResizeObserver(drawFinishHistory).observe(finishChart);
-selectPilot(new URLSearchParams(window.location.search).get("pilot") === "teacher" ? "teacher" : "student", false);
+const initialSource = new URLSearchParams(window.location.search).get("pilot");
+selectPilot(initialSource === "teacher" || Object.hasOwn(experimentSources, initialSource) ? initialSource : "student", false);
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) return;
   if (!camera.paused) startOverlayAnimation();
-  if (pilot === "student") fetchReplay(false);
+  if (pilot !== "teacher") fetchReplay(false);
 });
 window.addEventListener("pageshow", (event) => {
-  if (event.persisted && pilot === "student") fetchReplay(false);
+  if (event.persisted && pilot !== "teacher") fetchReplay(false);
 });
 fetchStatus();
 fetchExperiments();

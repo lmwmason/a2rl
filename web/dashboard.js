@@ -421,7 +421,10 @@ function startReplay(replay, resumeTime = 0, autoplay = true) {
   displayedControl = -1;
   updateReplayOverlays(resumeTime);
   const download = byId("download-replay");
-  download.href = playing.blob;
+  const exportName = playing.perspective === "chase" ? playing.chase_download_url : playing.download_url;
+  const hasExport = /^export-(?:fpv|chase)-[0-9]+\.mp4$/.test(exportName);
+  if (hasExport) download.href = new URL(exportName, playing.manifestUrl);
+  else download.removeAttribute("href");
   const firmwareCheck = playing.kind === "takeoff-check";
   const teacher = playing.kind === "teacher-evaluation";
   const season = playing.course === "2026-practice" ? "2026-practice" : "2025";
@@ -432,7 +435,7 @@ function startReplay(replay, resumeTime = 0, autoplay = true) {
     : playing.phase === "SPEED RL" ? `a2rl-${season}-rl-${playing.steps}.mp4`
     : `a2rl-${season}-imitation-round-${playing.round}.mp4`;
   download.download = download.download.replace(/\.mp4$/, `-${playing.perspective}.mp4`);
-  download.hidden = false;
+  download.hidden = !hasExport;
   byId("waiting").hidden = true;
   const stage = teacher ? "Flow teacher evaluation"
     : firmwareCheck ? "Firmware takeoff check"
@@ -721,6 +724,29 @@ byId("show-teacher").addEventListener("click", () => selectPilot("teacher"));
 byId("show-student").addEventListener("click", () => selectPilot("student"));
 byId("show-fpv").addEventListener("click", () => selectCamera("fpv"));
 byId("show-chase").addEventListener("click", () => selectCamera("chase"));
+byId("download-replay").addEventListener("click", async event => {
+  const link = event.currentTarget;
+  if (!link.href) return;
+  event.preventDefault();
+  if (link.dataset.busy) return;
+  const filename = link.download;
+  link.dataset.busy = "1";
+  setText("download-replay", "Downloading…");
+  try {
+    const { value } = await requestData(link.href, true);
+    const localUrl = URL.createObjectURL(value);
+    const save = document.createElement("a");
+    save.href = localUrl;
+    save.download = filename;
+    save.click();
+    window.setTimeout(() => URL.revokeObjectURL(localUrl), 60_000);
+    setText("download-replay", "Download this video");
+  } catch {
+    setText("download-replay", "Retry download");
+  } finally {
+    delete link.dataset.busy;
+  }
+});
 
 function isNewReplay(info, selected) {
   if (selected !== selection) return false;

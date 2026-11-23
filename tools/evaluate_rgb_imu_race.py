@@ -189,6 +189,8 @@ def replay_timing(result):
 def publish_replay(directory, session, phase, result, progress, stage=None):
     if directory is None:
         return
+    from tools.replay_export import attach_exports
+
     report = session / "replay.result.json"
     version = str(report.stat().st_mtime_ns)
     directory.mkdir(parents=True, exist_ok=True)
@@ -219,16 +221,19 @@ def publish_replay(directory, session, phase, result, progress, stage=None):
     history = previous.get("history", [])
     if not history and previous.get("kind") == "student-evaluation":
         history = [{key: previous[key] for key in evaluation if key in previous}]
-    temporary = manifest.with_suffix(".tmp")
-    temporary.write_text(json.dumps({
+    document = {
         **evaluation, "kind": "student-evaluation",
         "url": video, **chase_urls, "controls_url": controls, "course": result["course"],
         "physics_engine": result["physics_engine"], "gates_per_race": result["gates_per_race"],
         "timing": replay_timing(result),
         "history": [*history[-59:], evaluation],
-    }) + "\n")
+    }
+    document.update(attach_exports(directory, document))
+    temporary = manifest.with_suffix(".tmp")
+    temporary.write_text(json.dumps(document) + "\n")
     temporary.replace(manifest)
-    for prefix, suffix in (("replay", ".mp4"), ("chase", ".mp4"), ("controls", ".json")):
+    for prefix, suffix in (("replay", ".mp4"), ("chase", ".mp4"), ("controls", ".json"),
+                           ("export-fpv", ".mp4"), ("export-chase", ".mp4")):
         old = sorted(directory.glob(f"{prefix}-[0-9]*{suffix}"), reverse=True)
         for path in old[3:]:
             path.unlink(missing_ok=True)

@@ -17,7 +17,7 @@ from .telemetry import finish_time_history, read_metrics
 
 
 ORIGIN = "https://a2rl-fpv-dashboard.front.cbgpu.com"
-MEDIA = re.compile(r"/(?:(?:replay|chase)-[0-9]{1,24}\.mp4|controls-[0-9]{1,24}\.json|replay\.json)")
+MEDIA = re.compile(r"/(?:(?:replay|chase|export-fpv|export-chase)-[0-9]{1,24}\.mp4|controls-[0-9]{1,24}\.json|replay\.json)")
 
 
 def training_active(run):

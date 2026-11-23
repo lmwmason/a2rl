@@ -59,6 +59,7 @@ class HeatTimeline:
         self.aligned = -1
         self.max_skew = 0
         self.contacts = set()
+        self.epoch = None
         self.lock = Lock()
         self.start = Barrier(AIRCRAFT, timeout=45)
 
@@ -71,6 +72,8 @@ class HeatTimeline:
         if sample == 0:
             self.start.wait()
         with self.lock:
+            if self.epoch is None:
+                self.epoch = monotonic() + .25
             earliest = min(self.sample)
             self.max_skew = max(self.max_skew, max(self.sample) - earliest)
             while self.aligned < earliest:
@@ -88,7 +91,7 @@ class HeatTimeline:
                     del history[previous]
             peers = [history[min(sample, latest)] for i, (history, latest) in
                      enumerate(zip(self.histories, self.sample)) if i != aircraft]
-            return [peers, aircraft in self.contacts]
+            return [peers, aircraft in self.contacts, self.epoch]
 
 
 def synchronize(streams, deadline):
@@ -143,7 +146,7 @@ def main():
         server.listen(AIRCRAFT)
         server.settimeout(45)
         try:
-            for i, (side, order) in enumerate(((-.46, 1), (0., 0), (.46, 2))):
+            for i, (lane, order) in enumerate(((-.46, 1), (0., 0), (.46, 2))):
                 store = out / f"aircraft-{i + 1}"
                 store.mkdir(exist_ok=False)
                 environment = os.environ | {
@@ -152,7 +155,9 @@ def main():
                     "A2RL_ELODIN_POLICY": str(args.policy.resolve(strict=True)) if args.policy else "",
                     "A2RL_ELODIN_DEMONSTRATION": str(store / ".candidate.npz") if args.collect_demonstrations else "",
                     "A2RL_ELODIN_IN_PROCESS": "1", "A2RL_ELODIN_DB": str(store / "db"),
-                    "A2RL_ELODIN_START_SIDE": str(side), "A2RL_ELODIN_FPV": str(store / "replay.mp4"),
+                    "A2RL_ELODIN_START_SIDE": str(0. if args.launch_interval else lane),
+                    "A2RL_HEAT_START_FORWARD": str(lane if args.launch_interval else 0.),
+                    "A2RL_ELODIN_FPV": str(store / "replay.mp4"), "A2RL_FPV_BREAKUP": "0",
                     "A2RL_ELODIN_SECONDS": str(args.seconds), "ELODIN_ASSETS_DIR": str(store / "assets"),
                     "A2RL_SITL_PORT_OFFSET": str(args.port_offset + i * 20),
                     "A2RL_HEAT_SOCKET": path, "A2RL_HEAT_PILOT": str(i),

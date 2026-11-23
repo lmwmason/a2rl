@@ -306,6 +306,9 @@ def main():
     if not np.isfinite(side):
         raise ValueError("A2RL_ELODIN_START_SIDE must be finite.")
     cfg.initial_position += side * np.array([-sin(heading), cos(heading), 0.])
+    if elodin_policy.heat:
+        forward = float(os.environ.get("A2RL_HEAT_START_FORWARD", "0"))
+        cfg.initial_position += forward * np.array([cos(heading), sin(heading), 0.])
     cfg.initial_quaternion = np.array([0., 0., sin(heading / 2), cos(heading / 2)])
     cfg.ground_level = .205
     cfg.simulation_time = float(os.environ.get("A2RL_ELODIN_SECONDS", "120"))
@@ -384,8 +387,8 @@ exec "$1"
                         raise RuntimeError("Betaflight SITL exited during the rollout.")
                     simulation.step(1)
                     post_step(tick, context)
-                    if tick == 0 and pace is not None:
-                        epoch = monotonic()
+                    if pace is not None:
+                        epoch = elodin_policy.heat_epoch
                     if elodin_policy.heat_failure is not None:
                         raise RuntimeError("The shared heat disconnected.") from elodin_policy.heat_failure
             finally:

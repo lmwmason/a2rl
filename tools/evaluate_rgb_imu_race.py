@@ -34,6 +34,7 @@ def evaluate(args, weights, session, side, correction=None):
         "A2RL_ELODIN_POLICY": str(weights),
         "A2RL_ELODIN_START_SIDE": str(side),
         "A2RL_ELODIN_SECONDS": "35",
+        "A2RL_FPV_BREAKUP": "0",
         "OMP_NUM_THREADS": "1",
         "OPENBLAS_NUM_THREADS": "1",
         "UV_NO_SYNC": "1",

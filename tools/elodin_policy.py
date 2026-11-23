@@ -31,6 +31,7 @@ peer_contact = False
 heat_failure = None
 heat_airborne = False
 heat_arm_time = .5
+heat_epoch = None
 
 
 def connect_heat(path, index):
@@ -162,12 +163,12 @@ def policy_observation(image, update):
 
 
 def autopilot(update):
-    global last_command, heat_sample, peer_positions, peer_contact, heat_failure, heat_airborne
+    global last_command, heat_sample, peer_positions, peer_contact, heat_failure, heat_airborne, heat_epoch
     if heat is not None:
         sample = int(update.t * control_rate + 1e-6)
         if sample != heat_sample:
             try:
-                peer_positions, peer_contact = heat.update(sample, update.world_pos[4:].tolist())
+                peer_positions, peer_contact, heat_epoch = heat.update(sample, update.world_pos[4:].tolist())
                 heat_sample = sample
                 heat_airborne |= update.world_pos[6] > .45
             except (OSError, ValueError) as error:

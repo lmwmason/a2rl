@@ -4,7 +4,7 @@ import json
 import torch
 
 from tools import evaluate_rgb_imu_race as evaluator
-from tools.evaluate_rgb_imu_race import completion_profile, handoff_schedule, succeeds
+from tools.evaluate_rgb_imu_race import completion_profile, handoff_schedule, replay_timing, succeeds
 from training.curriculum import FINISH_MARKER, PACE_MARKER, SPEED_MARKER, SPEED_RUN
 from training.live_feed import status
 from training.speed_elodin import perturb
@@ -44,6 +44,18 @@ def test_assisted_finish_never_qualifies():
               "gates_per_race": 24, "official_seconds": 29.1}
     assert succeeds(finish, 30.)
     assert not succeeds(finish | {"assisted": True}, 30.)
+
+
+def test_replay_timing_uses_recorded_crossings_and_ends_at_finish_or_contact():
+    race = {"finished": True, "gates": 24, "gates_per_race": 24,
+            "gate_times": list(range(2, 26)), "video_start_seconds": .2, "end_seconds": 27.}
+    assert replay_timing(race) == {"video_start_seconds": .2, "start_seconds": 2,
+                                   "lap_end_seconds": [13, 25], "stop_seconds": 25, "laps": 2}
+    crash = race | {"finished": False, "gates": 14, "gate_times": race["gate_times"][:14], "end_seconds": 16.2}
+    assert replay_timing(crash)["lap_end_seconds"] == [13]
+    assert replay_timing(crash)["stop_seconds"] == 16.2
+    assert replay_timing(crash | {"gates": 0, "gate_times": []})["start_seconds"] is None
+    assert replay_timing(race | {"gate_times": None}) is None
 
 
 def test_speed_score_prefers_clean_progress_and_a_faster_finish():

@@ -90,6 +90,35 @@ function showSticks(time = camera.currentTime) {
   setText("stick-throttle", Math.round(50 * (throttle + 1)) + "%");
 }
 
+function replayTiming(timing) {
+  if (!timing || timing.laps !== 2 || !Number.isFinite(timing.video_start_seconds)
+      || !(timing.start_seconds === null || Number.isFinite(timing.start_seconds))
+      || !(timing.stop_seconds === null || Number.isFinite(timing.stop_seconds))
+      || !Array.isArray(timing.lap_end_seconds) || timing.lap_end_seconds.length > timing.laps
+      || !timing.lap_end_seconds.every((end, index, ends) => Number.isFinite(end)
+        && end >= (ends[index - 1] ?? timing.start_seconds))) return null;
+  return timing;
+}
+
+function showRaceTimer(time = camera.currentTime) {
+  const timing = playing?.timing;
+  if (!timing || !Number.isFinite(time)) return;
+  const start = timing.start_seconds;
+  const timestamp = Math.min(time + timing.video_start_seconds, timing.stop_seconds ?? Infinity);
+  const lapOneEnd = timing.lap_end_seconds[0];
+  const secondLap = start !== null && Number.isFinite(lapOneEnd) && timestamp >= lapOneEnd;
+  const lapStart = secondLap ? lapOneEnd : start;
+  const elapsed = (from) => from === null ? "0.000" : Math.max(0, timestamp - from).toFixed(3);
+  setText("timer-lap-label", secondLap ? "Lap 2 / 2" : "Lap 1 / 2");
+  setText("timer-lap", elapsed(lapStart));
+  setText("timer-total", elapsed(start));
+}
+
+function updateReplayOverlays(time = camera.currentTime) {
+  showSticks(time);
+  showRaceTimer(time);
+}
+
 function drawHistory() {
   const scale = window.devicePixelRatio || 1;
   chart.width = Math.round(chart.clientWidth * scale);
@@ -236,8 +265,9 @@ function startReplay(replay, resumeTime = 0, autoplay = true) {
   camera.loop = true;
   camera.hidden = false;
   byId("mode2-sticks").hidden = !playing.controls;
+  byId("race-timer").hidden = !playing.timing;
   displayedControl = -1;
-  showSticks(resumeTime);
+  updateReplayOverlays(resumeTime);
   const download = byId("download-replay");
   download.href = playing.blob;
   const firmwareCheck = playing.kind === "takeoff-check";
@@ -275,20 +305,22 @@ function startReplay(replay, resumeTime = 0, autoplay = true) {
   if (previous) URL.revokeObjectURL(previous.blob);
   if (autoplay) camera.play().catch(() => {});
 }
-let stickAnimation = null;
-function animateSticks() {
-  stickAnimation = null;
-  showSticks();
-  if (!camera.paused && !camera.ended) startStickAnimation();
+let overlayAnimation = null;
+function animateOverlays() {
+  overlayAnimation = null;
+  updateReplayOverlays();
+  if (!camera.paused && !camera.ended) startOverlayAnimation();
 }
 
-function startStickAnimation() {
-  if (stickAnimation === null && playing?.controls) stickAnimation = requestAnimationFrame(animateSticks);
+function startOverlayAnimation() {
+  if (overlayAnimation === null && (playing?.controls || playing?.timing)) {
+    overlayAnimation = requestAnimationFrame(animateOverlays);
+  }
 }
 
-camera.addEventListener("playing", startStickAnimation);
-for (const event of ["timeupdate", "seeked", "loadeddata"]) {
-  camera.addEventListener(event, () => showSticks());
+camera.addEventListener("playing", startOverlayAnimation);
+for (const event of ["timeupdate", "seeking", "seeked", "loadeddata", "ended"]) {
+  camera.addEventListener(event, () => updateReplayOverlays());
 }
 
 function physicsLabel(run) {
@@ -468,6 +500,7 @@ function selectPilot(view, refresh = true) {
   updateCameraButtons();
   byId("download-replay").hidden = true;
   byId("mode2-sticks").hidden = true;
+  byId("race-timer").hidden = true;
   byId("replay-recorded").closest("div").hidden = true;
   byId("waiting").hidden = false;
   setText("waiting", "Loading replay");
@@ -509,7 +542,7 @@ async function loadReplay({ url, value: info }, selected) {
   const [video, controls] = await Promise.all([requestData(new URL(filename, url), true), controlsRequest]);
   if (cameraRequest !== cameraSelection || !isNewReplay(info, selected)) return;
   const blob = URL.createObjectURL(video.value.slice(0, video.value.size, "video/mp4"));
-  startReplay({ ...info, blob, controls, perspective, manifestUrl: url });
+  startReplay({ ...info, blob, controls, timing: replayTiming(info.timing), perspective, manifestUrl: url });
 }
 
 new ResizeObserver(drawHistory).observe(chart);
@@ -517,7 +550,7 @@ new ResizeObserver(drawFinishHistory).observe(finishChart);
 selectPilot(new URLSearchParams(window.location.search).get("pilot") === "teacher" ? "teacher" : "student", false);
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) return;
-  if (!camera.paused) startStickAnimation();
+  if (!camera.paused) startOverlayAnimation();
   if (pilot === "student") fetchReplay(false);
 });
 window.addEventListener("pageshow", (event) => {

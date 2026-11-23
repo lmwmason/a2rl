@@ -616,5 +616,15 @@
       "curriculum_stage": "finish"
     }
   ],
-  "archived": true
+  "archived": true,
+  "timing": {
+    "video_start_seconds": 0.0,
+    "start_seconds": 2.475,
+    "lap_end_seconds": [
+      16.215,
+      31.077
+    ],
+    "stop_seconds": 31.077,
+    "laps": 2
+  }
 }

@@ -170,6 +170,21 @@ def promote(args, file, weights):
                    input=weights, check=True, timeout=45)
 
 
+def replay_timing(result):
+    crossings = result.get("gate_times")
+    gate_count = result.get("gates_per_race", 0)
+    if crossings is None or len(crossings) != result.get("gates") or not isinstance(gate_count, int) or gate_count < 2 or gate_count % 2:
+        return None
+    lap_size = gate_count // 2
+    return {
+        "video_start_seconds": result.get("video_start_seconds") or 0.,
+        "start_seconds": crossings[0] if crossings else None,
+        "lap_end_seconds": crossings[lap_size - 1::lap_size],
+        "stop_seconds": crossings[-1] if result["finished"] and crossings else result.get("end_seconds"),
+        "laps": 2,
+    }
+
+
 def publish_replay(directory, session, phase, result, progress, stage=None):
     if directory is None:
         return
@@ -208,6 +223,7 @@ def publish_replay(directory, session, phase, result, progress, stage=None):
         **evaluation, "kind": "student-evaluation",
         "url": video, **chase_urls, "controls_url": controls, "course": result["course"],
         "physics_engine": result["physics_engine"], "gates_per_race": result["gates_per_race"],
+        "timing": replay_timing(result),
         "history": [*history[-59:], evaluation],
     }) + "\n")
     temporary.replace(manifest)

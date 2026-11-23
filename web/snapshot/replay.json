@@ -11,5 +11,15 @@
   "url": "replay-1795399098645803598.mp4",
   "controls_url": "controls-1795399098645803598.json",
   "official_seconds": 29.041000000000004,
-  "chase_url": "chase-1795399098645803598.mp4"
+  "chase_url": "chase-1795399098645803598.mp4",
+  "timing": {
+    "video_start_seconds": 0.0,
+    "start_seconds": 2.449,
+    "lap_end_seconds": [
+      16.388,
+      31.490000000000002
+    ],
+    "stop_seconds": 31.490000000000002,
+    "laps": 2
+  }
 }

@@ -81,6 +81,7 @@ class CameraFeed:
         self.chase_worker = None
         self.chase_failure = None
         self.frame_number = -1
+        self.first_frame_seconds = None
         self.actions = []
         self.dataset = dataset
         self.samples = []
@@ -98,6 +99,8 @@ class CameraFeed:
         if not np.isfinite(state).all():
             return None
         image = self.env.render_pose(state, sensors.t, peer_positions)
+        if self.first_frame_seconds is None:
+            self.first_frame_seconds = float(sensors.t)
         if self.path:
             if self.encoder is None:
                 self.path.parent.mkdir(parents=True, exist_ok=True)

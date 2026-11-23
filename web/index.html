@@ -6,7 +6,7 @@
   <meta name="description" content="FPV policy evaluation, training metrics, and checkpoint replays">
   <title>Flight Policy Research</title>
   <link rel="stylesheet" href="style.css?v=evaluation-only">
-  <script src="dashboard.js?v=checkpoint-round" defer></script>
+  <script src="dashboard.js?v=replay-evaluation-metrics" defer></script>
 </head>
 <body>
   <main>
@@ -82,13 +82,13 @@
 
       <section class="panel history" aria-labelledby="history-title">
         <div class="bar">
-          <h2 id="history-title">Average gates per evaluation</h2>
+          <h2 id="history-title">Gates per evaluation</h2>
           <span id="history-count">—</span>
         </div>
         <p class="chart-key"><span>Individual evaluations</span><span>8-evaluation moving average</span></p>
         <div class="plot">
           <div class="axis" aria-hidden="true"><span id="gates-axis-max">22</span><span id="gates-axis-mid">11</span><span>0</span></div>
-          <canvas id="history" aria-label="Average gates in recent evaluations"></canvas>
+          <canvas id="history" aria-label="Gates passed in recent evaluations"></canvas>
         </div>
       </section>
     </div>

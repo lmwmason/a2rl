@@ -228,6 +228,7 @@ function startReplay() {
     } else {
       recorded.closest("div").hidden = true;
     }
+    if (pilot === "student") renderStudentEvaluation();
   } else if (playing && !playing.archived) {
     camera.currentTime = 0;
   } else {
@@ -272,9 +273,29 @@ function renderStatus(info) {
   setText("phase", teacher ? "Teacher validation"
     : info.phase === "VALIDATION" ? "Firmware validation" : info.target_beaten ? "Target reached" : speedTraining ? "Reinforcement learning"
     : info.full_course ? "Full-course imitation" : info.phase ? "Imitation learning" : "—");
-  setText("progress-label", speedTraining ? "Reinforcement learning steps" : "Imitation round");
+  setText("progress-label", speedTraining ? "Current training steps" : "Current training round");
   setText("progress", count(speedTraining ? info.steps : info.round));
   setText("steps", count(info.steps));
+  if (pilot === "student") renderStudentEvaluation();
+  else renderEvaluation(info, speedTraining);
+}
+
+function renderStudentEvaluation() {
+  const replay = playing?.physics_engine === "elodin" ? playing : null;
+  const evaluations = replay?.history ?? (replay ? [replay] : []);
+  const finishes = evaluations.map((evaluation) => evaluation.official_seconds);
+  const completed = finishes.filter(Number.isFinite);
+  renderEvaluation({
+    gates_per_race: replay?.gates_per_race ?? 24,
+    recent_gates: evaluations.map((evaluation) => evaluation.gates),
+    recent_finish_times: finishes.map((seconds, index) => ({ at: index + 1, comparison_s: seconds ?? null })),
+    finish_rate: evaluations.length ? completed.length / evaluations.length : null,
+    collision_rate: evaluations.length ? evaluations.filter((evaluation) => evaluation.status === 1).length / evaluations.length : null,
+    best_two_lap_seconds: completed.length ? Math.min(...completed) : null,
+  }, false);
+}
+
+function renderEvaluation(info, speedTraining) {
   setText("finish-rate", percent(info.finish_rate));
   setText("collision-rate", percent(info.collision_rate));
   setText("best-time", quantity(info.best_two_lap_seconds, "s"));
@@ -295,6 +316,8 @@ function renderStatus(info) {
   }
   setText("crossing-speed", quantity(info.mean_gate_crossing_speed_m_s, "m/s"));
   setText("approach-delay", quantity(info.mean_gate_approach_delay_seconds, "s"));
+  byId("crossing-speed").closest("div").hidden = !Number.isFinite(info.mean_gate_crossing_speed_m_s);
+  byId("approach-delay").closest("div").hidden = !Number.isFinite(info.mean_gate_approach_delay_seconds);
 
   const values = Array.isArray(info.recent_gates) ? info.recent_gates : [];
   const limit = info.gates_per_race ?? 22;
@@ -307,16 +330,20 @@ function renderStatus(info) {
     setText("gates-axis-mid", count(limit / 2));
     drawHistory();
   }
-  setText("history-count", values.length ? "Last " + count(values.length) + " evaluations" : "Awaiting evaluation");
+  const latestGates = values.at(-1);
+  setText("history-count", values.length ? (pilot === "student"
+    ? `Latest · ${count(latestGates)} / ${count(limit)}`
+    : "Last " + count(values.length) + " evaluations") : "Awaiting evaluation");
 
   const finishTimes = Array.isArray(info.recent_finish_times) ? info.recent_finish_times : [];
-  const finishKey = JSON.stringify([speedTraining, finishTimes]);
+  const finishKey = JSON.stringify([pilot, speedTraining, finishTimes]);
   if (finishKey !== finishTrend.key) {
     finishTrend.key = finishKey;
     finishTrend.values = finishTimes;
     finishTrend.speed = speedTraining;
     byId("finish-history-standard").hidden = !speedTraining;
-    setText("finish-history-comparison", speedTraining ? "Mean of completed runs" : "Fastest completed run");
+    setText("finish-history-comparison", pilot === "student" ? "Recorded run"
+      : speedTraining ? "Mean of completed runs" : "Fastest completed run");
     const latest = finishTimes[finishTimes.length - 1];
     const seconds = latest?.standard_s ?? latest?.comparison_s;
     setText("finish-history-latest", Number.isFinite(seconds) ? "Latest · " + seconds.toFixed(2) + " s"

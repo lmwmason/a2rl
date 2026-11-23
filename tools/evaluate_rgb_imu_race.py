@@ -110,7 +110,8 @@ def publish_replay(directory, session, phase, result, progress):
     version = str(report.stat().st_mtime_ns)
     directory.mkdir(parents=True, exist_ok=True)
     manifest = directory / "replay.json"
-    if manifest.is_file() and int(json.loads(manifest.read_text())["version"]) >= int(version):
+    previous = json.loads(manifest.read_text()) if manifest.is_file() else {}
+    if int(previous.get("version", 0)) >= int(version):
         return
 
     video = f"replay-{version}.mp4"
@@ -118,15 +119,21 @@ def publish_replay(directory, session, phase, result, progress):
     # The result is written after FFmpeg and the RC trace have closed.
     copyfile(session / "replay.mp4", directory / video)
     copyfile(session / "replay.controls.json", directory / controls)
-    temporary = manifest.with_suffix(".tmp")
-    temporary.write_text(json.dumps({
+    evaluation = {
         **{key: progress[key] for key in ("round", "steps") if key in progress},
-        "version": version, "phase": phase, "kind": "student-evaluation",
-        "url": video, "controls_url": controls, "course": result["course"],
-        "physics_engine": result["physics_engine"], "gates": result["gates"],
-        "gates_per_race": result["gates_per_race"],
+        "version": version, "phase": phase, "gates": result["gates"],
         "status": 4 if result["finished"] else 1 if result["contact"] else 2,
         "official_seconds": result["official_seconds"],
+    }
+    history = previous.get("history", [])
+    if not history and previous.get("kind") == "student-evaluation":
+        history = [{key: previous[key] for key in evaluation if key in previous}]
+    temporary = manifest.with_suffix(".tmp")
+    temporary.write_text(json.dumps({
+        **evaluation, "kind": "student-evaluation",
+        "url": video, "controls_url": controls, "course": result["course"],
+        "physics_engine": result["physics_engine"], "gates_per_race": result["gates_per_race"],
+        "history": [*history[-59:], evaluation],
     }) + "\n")
     temporary.replace(manifest)
     for prefix, suffix in (("replay", ".mp4"), ("controls", ".json")):

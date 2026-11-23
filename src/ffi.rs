@@ -160,6 +160,11 @@ pub unsafe extern "C" fn sim_set_flow_teacher(env: *mut RenderScene, enabled: bo
 }
 
 #[no_mangle]
+pub unsafe extern "C" fn sim_set_teacher_pace(env: *mut RenderScene, pace: f32) -> bool {
+    (*env).teacher.set_pace(pace)
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn sim_render_pose(
     env: *mut RenderScene,
     state: *const [f32; 13],

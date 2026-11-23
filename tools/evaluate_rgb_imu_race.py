@@ -199,6 +199,26 @@ def publish_replay(directory, session, phase, result, progress, stage=None):
             path.unlink(missing_ok=True)
 
 
+def retain_independent_candidate(directory, raw, result, progress):
+    """Keep the best measured standalone finisher or furthest gate checkpoint."""
+    summary = directory / "best-independent.json"
+    prior = json.loads(summary.read_text()) if summary.exists() else {}
+    rank = [int(result["gates"]), int(not result["contact"]),
+            -float(result["official_seconds"]) if result["finished"] else 0.]
+    if rank < prior.get("rank", []) or (rank == prior.get("rank") and
+            progress.get("round", 0) <= prior.get("round", 0)):
+        return
+    candidate = directory / "best-independent.pt"
+    temporary = candidate.with_suffix(".tmp")
+    temporary.write_bytes(raw)
+    temporary.replace(candidate)
+    temporary = summary.with_suffix(".tmp")
+    temporary.write_text(json.dumps({"rank": rank, "round": progress.get("round", 0),
+                                     "gates": result["gates"], "official_seconds": result["official_seconds"],
+                                     "contact": result["contact"]}) + "\n")
+    temporary.replace(summary)
+
+
 def watch(args):
     import torch
 
@@ -285,12 +305,15 @@ def watch(args):
                                           seconds=seconds, profile=nominal_profile, **options)
                     if result.get("assisted"):
                         raise ValueError("Assisted rollouts cannot count toward qualification.")
-                    if index == 0 and not handoff_enabled:
-                        publish_replay(args.public, session, phase, result, progress, stage)
+                    if index == 0:
+                        if stage == "finish":
+                            retain_independent_candidate(args.out, raw, result, progress)
+                        if not handoff_enabled:
+                            publish_replay(args.public, session, phase, result, progress, stage)
                     if args.public is not None:
                         for name in ("replay.mp4", "replay-chase.mp4", "replay.controls.json"):
                             (session / name).unlink(missing_ok=True)
-                    print(json.dumps({"phase": phase, "curriculum_stage": stage, "checkpoint": digest, "start_side": side,
+                    print(json.dumps({"phase": phase, "curriculum_stage": stage, "checkpoint": digest, "round": progress.get("round"), "start_side": side,
                                       "target_seconds": target, **result}), flush=True)
                     if not succeeds(result, target):
                         qualified = False

@@ -26,6 +26,14 @@ def test_gate_handoff_moves_earlier_after_two_clear_segments(tmp_path):
     assert handoff_schedule(independent, log) == {"after_gates": 4, "target_gates": 5}
 
 
+def test_preserve_best_measured_checkpoint_when_latest_regresses(tmp_path):
+    four = {"gates": 4, "contact": True, "finished": False, "official_seconds": None}
+    evaluator.retain_independent_candidate(tmp_path, b"four", four, {"round": 30})
+    evaluator.retain_independent_candidate(tmp_path, b"three", four | {"gates": 3}, {"round": 31})
+    assert (tmp_path / "best-independent.pt").read_bytes() == b"four"
+    assert json.loads((tmp_path / "best-independent.json").read_text())["round"] == 30
+
+
 def test_assisted_finish_never_qualifies():
     finish = {"physics_engine": "elodin", "finished": True, "contact": False, "gates": 24,
               "gates_per_race": 24, "official_seconds": 29.1}

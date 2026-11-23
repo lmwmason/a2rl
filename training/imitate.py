@@ -36,6 +36,8 @@ def main():
                         help="Train one round for each newly recorded student flight.")
     parser.add_argument("--device", choices=("cuda", "cpu"), default="cuda")
     parser.add_argument("--updates", type=int, default=1400)
+    parser.add_argument("--gate-progress-loss", type=float, default=0.,
+                        help="Supervise the shared RGB+IMU features on the next gate during training.")
     parser.add_argument("--learning-rate", type=float, default=3e-4)
     parser.add_argument("--primary-fraction", type=float, default=.40,
                         help="Batch fraction drawn from --real when both dataset groups are supplied.")
@@ -55,6 +57,8 @@ def main():
         parser.error("Unlimited training requires an evaluator marker.")
     if not np.isfinite(args.learning_rate) or args.learning_rate <= 0:
         parser.error("Use a positive learning rate.")
+    if not np.isfinite(args.gate_progress_loss) or args.gate_progress_loss < 0:
+        parser.error("Gate progress loss must be finite and nonnegative.")
     if not 0 < args.primary_fraction <= 1:
         parser.error("The primary dataset fraction must be greater than zero and at most one.")
     if args.correction_directory and not (args.imu and args.until):
@@ -81,7 +85,7 @@ def main():
     progress = weights.get("training_progress", {}) if resumed else {}
     first_round, first_step, first_samples = (progress.get(key, 0) for key in ("round", "updates", "steps"))
     demos = Demonstrations(args.real, args.sim, stack, height, width, args.seed, with_imu=args.imu,
-                           primary_fraction=args.primary_fraction)
+                           primary_fraction=args.primary_fraction, gate_labels=args.gate_progress_loss > 0)
     if args.until:
         print(json.dumps({"imitation_datasets": [
             {"path": str(path), "frames": len(clip)}
@@ -94,6 +98,14 @@ def main():
     parameters = [*agent.encoder.parameters(), *agent.actor.parameters()]
     if agent.imu_encoder is not None:
         parameters.extend(agent.imu_encoder.parameters())
+    gate_head = None
+    if args.gate_progress_loss:
+        if not args.imu:
+            parser.error("The gate progress objective requires RGB and IMU.")
+        gate_head = torch.nn.Linear(agent.actor[0].in_features, 12).to(args.device)
+        if state := (weights or {}).get("training_progress", {}).get("gate_head"):
+            gate_head.load_state_dict(state)
+        parameters += list(gate_head.parameters())
     optimizer = torch.optim.AdamW(parameters, lr=args.learning_rate)
     args.out.mkdir(parents=True, exist_ok=True)
     best_rank = None
@@ -140,7 +152,9 @@ def main():
                 stage = "pace"
                 print(json.dumps({"curriculum_stage": stage, "primary_fraction": demos.primary_fraction}),
                       flush=True)
-            frames, labels, weight, *imu = demos.sample(args.batch)
+            frames, labels, weight, *extra = demos.sample(args.batch)
+            imu = extra[0] if args.imu else None
+            gate_loss = None
             nominal_completion = stage == "finish"
             obs = random_shift(pixel_tensor(frames, args.device).float() / 255. - 0.5,
                                pad=1 if nominal_completion else 3)
@@ -148,9 +162,17 @@ def main():
             brightness = .025 if nominal_completion else .07
             scale = torch.empty((len(frames), 1, 1, 1), device=args.device).uniform_(1 - contrast, 1 + contrast)
             offset = torch.empty_like(scale).uniform_(-brightness, brightness)
-            features = agent.policy_features((obs * scale + offset).clamp(-.5, .5), imu[0] if imu else None)
+            features = agent.policy_features((obs * scale + offset).clamp(-.5, .5), imu)
             action = agent.actor(features).tanh()
-            loss = stick_loss(action, labels, weight)
+            bc_loss = stick_loss(action, labels, weight)
+            loss = bc_loss
+            if gate_head is not None:
+                next_gate = torch.as_tensor(extra[-1], dtype=torch.long, device=args.device)
+                valid = next_gate >= 0
+                target = torch.where(valid, next_gate.remainder(12), -100)
+                per_sample = torch.nn.functional.cross_entropy(gate_head(features), target, reduction="none")
+                gate_loss = per_sample.sum() / valid.sum().clamp(min=1)
+                loss = loss + args.gate_progress_loss * gate_loss
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(parameters, 5.)
@@ -159,12 +181,14 @@ def main():
                 continue
             real_error = held_out_mae(agent, held_out, args.batch)
             metrics = {}
-            rank = (-float(np.mean(real_error)) if real_error is not None else -float(loss.detach()),)
+            rank = (-float(np.mean(real_error)) if real_error is not None else -float(bc_loss.detach()),)
             round_no = first_round + (step + args.eval_every - 1) // args.eval_every
             updates = first_step + step
             steps = first_samples + step * args.batch if args.until else step
             metrics.update(update=updates, steps=steps, round=round_no,
-                           bc_loss=float(loss.detach()), real_holdout_mae=real_error, offline=True)
+                           bc_loss=float(bc_loss.detach()), real_holdout_mae=real_error, offline=True)
+            if gate_loss is not None:
+                metrics["gate_progress_loss"] = float(gate_loss.detach())
             if args.correction_directory:
                 metrics.update(rollout_corrections=len(correction_clips), latest_correction=last_correction,
                                correction_frames=sum(map(len, correction_clips.values())),
@@ -176,7 +200,8 @@ def main():
             print(json.dumps(metrics), flush=True)
             log.write(json.dumps(metrics) + "\n")
             agent.save(latest, round=round_no, steps=steps, updates=updates,
-                       last_correction=last_correction, curriculum_stage=stage)
+                       last_correction=last_correction, curriculum_stage=stage,
+                       **({"gate_head": gate_head.state_dict()} if gate_head is not None else {}))
             if best_rank is None or rank > best_rank:
                 agent.save(args.out / "best.pt")
                 best_rank = rank

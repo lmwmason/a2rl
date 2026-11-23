@@ -38,6 +38,7 @@ pub struct Teacher {
     phase: Phase,
     recovery_side: f32,
     flow: bool,
+    pace: f32,
     sprint_ticks: u8,
 }
 
@@ -55,6 +56,7 @@ impl Teacher {
             phase,
             recovery_side: 1.,
             flow: false,
+            pace: 1.,
             sprint_ticks: 0,
         }
     }
@@ -62,6 +64,14 @@ impl Teacher {
     pub fn with_flow(mut self, flow: bool) -> Self {
         self.flow = flow;
         self
+    }
+
+    pub(crate) fn set_pace(&mut self, pace: f32) -> bool {
+        if !(0.60..=1.).contains(&pace) {
+            return false;
+        }
+        self.pace = pace;
+        true
     }
 
     pub fn external_action(&mut self, race: &Race) -> [f32; 4] {
@@ -74,7 +84,7 @@ impl Teacher {
 
     fn control(&mut self, race: &Race, firmware: bool) -> [f32; 4] {
         if self.flow && race.grand_challenge && race.course == Course::Season2Practice2026 {
-            if let Some((accel, heading)) = line::track(race, firmware) {
+            if let Some((accel, heading)) = line::track(race, firmware, self.pace) {
                 let horizontal_limit = if !firmware {
                     17.
                 } else if line::is_ladder_leg(race.next_gate()) {
@@ -90,7 +100,9 @@ impl Teacher {
                 protect_level_pitch(race, &mut command);
                 if firmware {
                     reinforce_braking(race, accel, &mut command);
-                    self.sprint(race, &mut command);
+                    if self.pace >= 0.97 {
+                        self.sprint(race, &mut command);
+                    }
                     line::gate_height_guard(race, accel, &mut command);
                 }
                 // Lift off with a brief, repeatable pulse for the low first gate.

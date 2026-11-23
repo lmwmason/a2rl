@@ -155,6 +155,12 @@ def configure_expert(lib, season2):
     lib.sim_set_flow_teacher(handle, True)
     lib.sim_configure_scene(handle, lib.sim_course_camera_tilt(season2), 1., 0., 1)
     atexit.register(lib.sim_destroy, handle)
+    if pace := os.environ.get("A2RL_ELODIN_TEACHER_PACE"):
+        lib.sim_set_teacher_pace.argtypes = [ct.c_void_p, ct.c_float]
+        lib.sim_set_teacher_pace.restype = ct.c_bool
+        if not lib.sim_set_teacher_pace(handle, float(pace)):
+            raise ValueError("Teacher pace must be between 0.60 and 1.00.")
+
     lib.sim_external_expert_action.argtypes = [
         ct.c_void_p, ct.POINTER(ct.c_float), ct.c_size_t, ct.POINTER(ct.c_float)]
     lib.sim_external_expert_action.restype = ct.c_bool

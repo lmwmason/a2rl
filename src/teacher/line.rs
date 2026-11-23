@@ -464,7 +464,7 @@ pub(super) fn gate_height_guard(race: &Race, accel: Vec3, command: &mut [f32; 4]
     command[1] = command[1].min(2. * collective - 1.);
 }
 
-pub(super) fn track(race: &Race, firmware: bool) -> Option<(Vec3, Vec3)> {
+pub(super) fn track(race: &Race, firmware: bool, pace: f32) -> Option<(Vec3, Vec3)> {
     let target = race.gates[race.next_gate()];
     let position = race.drone.position;
     let line = if firmware {
@@ -493,7 +493,8 @@ pub(super) fn track(race: &Race, firmware: bool) -> Option<(Vec3, Vec3)> {
     } else {
         (1., REFERENCE_TRACKING)
     };
-    let preview = line.look_ahead(index, (0.32 + 0.18 * here.speed) * gains.preview);
+    let speed_scale = speed_scale * pace;
+    let preview = line.look_ahead(index, (0.32 + 0.18 * here.speed * pace) * gains.preview);
     let velocity_error = here.tangent * preview.speed * speed_scale - race.drone.velocity;
     let correction = here.position - position;
     let curvature_accel =
@@ -531,7 +532,8 @@ pub(super) fn track(race: &Race, firmware: bool) -> Option<(Vec3, Vec3)> {
         let room = ((depth - 2.) / 2.).clamp(0., 1.);
         let alignment = (1. - correction.length() / 0.9).clamp(0., 1.);
         let straightness = (1. - here.curvature.length() / 0.22).clamp(0., 1.);
-        let speed_deficit = (preview.speed - race.drone.velocity.dot(here.tangent)).clamp(0., 5.);
+        let speed_deficit =
+            (preview.speed * pace - race.drone.velocity.dot(here.tangent)).clamp(0., 5.);
         accel += here.tangent * (7. * speed_deficit * alignment * room * straightness);
     }
     let toward_gate = (target.center - position).truncate().normalize_or_zero();

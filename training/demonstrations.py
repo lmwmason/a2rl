@@ -9,6 +9,7 @@ class Clip:
         path = Path(path)
         shape = (height, width, 3)
         self.approach_rows = None
+        self.gate_numbers = None
         if path.is_dir():
             actions = np.fromfile(path / "actions.f32", dtype="<f4").reshape(-1, 4)
             self.frames = np.memmap(path / "frames.rgb", mode="r", dtype=np.uint8).reshape(-1, *shape)
@@ -23,7 +24,9 @@ class Clip:
                 self.weights = data["weights"].astype(np.float32)
                 if "next_gate" in data:
                     gates = data["next_gate"]
-                    if gates.shape == (len(actions),) and len(gates) >= stack:
+                    if gates.shape == (len(actions),):
+                        self.gate_numbers = gates.astype(np.int64)
+                    if self.gate_numbers is not None and len(gates) >= stack:
                         # Learn the approach before contact, where steering still has time to work.
                         end = max(1, len(gates) - 3)
                         rows = np.arange(max(0, end - 60), end)
@@ -55,18 +58,24 @@ class Clip:
             uniform[:focus_count] = rng.choice(self.approach_rows, size=focus_count)
         return uniform
 
-    def batch(self, rows):
+    def batch(self, rows, *, gate_labels=False):
         indices = np.maximum(rows[:, None] + self.offsets, self.start[rows, None])
         batch = self.frames[indices], self.actions[rows], self.weights[rows]
-        return (*batch, self.imu[indices]) if self.imu is not None else batch
+        if self.imu is not None:
+            batch = (*batch, self.imu[indices])
+        if gate_labels:
+            gates = self.gate_numbers[rows] if self.gate_numbers is not None else np.full(len(rows), -1)
+            batch = (*batch, gates)
+        return batch
 
 
 class Demonstrations:
-    def __init__(self, real_paths, sim_paths, stack, height, width, seed, with_imu=False, primary_fraction=.40):
+    def __init__(self, real_paths, sim_paths, stack, height, width, seed, with_imu=False, primary_fraction=.40, gate_labels=False):
         self.real = [Clip(path, stack, height, width, with_imu) for path in real_paths]
         self.sim = [Clip(path, stack, height, width, with_imu) for path in sim_paths]
         self.rng = np.random.default_rng(seed)
         self.primary_fraction = primary_fraction
+        self.gate_labels = gate_labels
         self.independent = []
         self.assisted = []
         self.handoff = []
@@ -75,7 +84,7 @@ class Demonstrations:
 
     def _sample_group(self, group, count, *, prioritize_approach=False):
         counts = np.bincount(self.rng.integers(len(group), size=count), minlength=len(group))
-        return [clip.batch(clip.sample_rows(self.rng, rows, prioritize_approach))
+        return [clip.batch(clip.sample_rows(self.rng, rows, prioritize_approach), gate_labels=self.gate_labels)
                 for clip, rows in zip(group, counts) if rows]
 
     def sample(self, count):

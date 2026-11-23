@@ -501,6 +501,18 @@ pub(super) fn track(race: &Race, firmware: bool) -> Option<(Vec3, Vec3)> {
     let mut accel = gains.velocity * velocity_error + gains.position * correction + curvature_accel
         - race.drone.rotation * crate::drag(race.drone.rotation.conjugate() * race.drone.velocity)
             / crate::MASS_KG;
+    if race.passed == 0 {
+        // On takeoff, arrest the climb before the opening instead of letting
+        // the launch carry the aircraft above the planned line.
+        let depth = (target.center - position).dot(target.normal);
+        let closing = race.drone.velocity.dot(target.normal);
+        if (0.0..3.5).contains(&depth) && closing > 1. {
+            let time = (depth / closing).min(0.65);
+            let predicted_height = position.z + race.drone.velocity.z * time;
+            let error = predicted_height - (target.center.z - 0.08);
+            accel.z -= (3. * error).clamp(0., 3.);
+        }
+    }
     if predictive {
         // Command the change in target velocity before the aircraft reaches
         // the turn so that rate and rotor lag do not delay the maneuver.

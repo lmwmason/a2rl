@@ -93,9 +93,21 @@ impl Teacher {
                     self.sprint(race, &mut command);
                     line::gate_height_guard(race, accel, &mut command);
                 }
-                // The low first gate leaves little room to arrest a launch pulse.
-                if race.passed == 0 && race.drone.position.z < 0.55 {
-                    command[1] = command[1].min(0.1);
+                // Lift off with a brief, repeatable pulse for the low first gate.
+                // Return to path tracking once the climb carries us clear of the pad.
+                if race.passed == 0 {
+                    let height = race.drone.position.z;
+                    let climb = race.drone.velocity.z.max(0.);
+                    if height < 0.55 {
+                        command[1] = if height + climb * climb / 16. < 0.95 {
+                            0.1
+                        } else {
+                            command[1].min(0.1)
+                        };
+                    } else if climb > 0. {
+                        let excess = height + 0.2 * climb - race.gates[0].center.z;
+                        command[1] = (command[1] - (0.28 * excess).clamp(0., 0.24)).max(-1.);
+                    }
                 }
                 return command;
             }

@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="FPV policy evaluation, training metrics, and checkpoint replays">
   <title>Flight Policy Research</title>
-  <link rel="stylesheet" href="style.css?v=evaluation-only">
-  <script src="dashboard.js?v=loop-replays" defer></script>
+  <link rel="stylesheet" href="style.css?v=replay-button">
+  <script src="dashboard.js?v=replay-button" defer></script>
 </head>
 <body>
   <main>
@@ -20,7 +20,7 @@
           </div>
         </div>
         <div class="screen">
-          <video id="fpv" muted playsinline controls hidden aria-label="FPV replay"></video>
+          <video id="fpv" muted playsinline controls loop hidden aria-label="FPV replay"></video>
           <div id="mode2-sticks" class="mode2-sticks" role="group" aria-label="Recorded Mode 2 stick positions" hidden>
             <div class="stick">
               <span>Yaw / Throttle</span>
@@ -38,6 +38,7 @@
           <span id="replay-stage">—</span>
           <span>Gates <strong id="flight-gates">—</strong></span>
           <span id="replay-result">—</span>
+          <button id="restart-replay" class="download replay-button" type="button" hidden>Replay</button>
           <a id="download-replay" class="download" hidden>Download this video</a>
         </footer>
       </section>

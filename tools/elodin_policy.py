@@ -67,7 +67,8 @@ def rigid_state(update):
 
 class CameraFeed:
     """Render FPV camera frames from Elodin state."""
-    def __init__(self, lib, path, fps, breakup, exposure, seed, dataset=None, *, mount_pitch=None, chase=False):
+    def __init__(self, lib, path, fps, breakup, exposure, seed, dataset=None, *, mount_pitch=None, chase=False,
+                 telemetry=None, record_memory=False):
         from training.sim import CameraRenderer
 
         self.width, self.height = 480, 360
@@ -83,6 +84,11 @@ class CameraFeed:
         self.frame_number = -1
         self.first_frame_seconds = None
         self.actions = []
+        self.telemetry = telemetry
+        self.record_memory = record_memory
+        self.kinematics = []
+        self.observations = []
+        self.course_centers = ()
         self.dataset = dataset
         self.samples = []
         self.closed = False
@@ -135,8 +141,28 @@ class CameraFeed:
         except (OSError, RuntimeError, ValueError) as error:
             self.chase_failure = error
 
-    def record_command(self, command):
+    def record_command(self, command, update, image):
         self.actions.append(mode2_sticks(command))
+        if self.telemetry is not None:
+            self.kinematics.append((float(update.t), int(update.next_gate_index), *rigid_state(update)))
+            if self.record_memory:
+                self.observations.append(policy_observation(image, update))
+
+    def save_telemetry(self):
+        if not self.kinematics:
+            return
+        rows = np.asarray(self.kinematics, dtype=np.float64)
+        payload = dict(seconds=rows[:, 0], next_gate_index=rows[:, 1].astype(np.int16),
+                       position_m=rows[:, 2:5], velocity_m_s=rows[:, 5:8],
+                       quaternion_xyzw=rows[:, 8:12], gyro_rad_s=rows[:, 12:15],
+                       applied_sticks=np.asarray(self.actions, dtype=np.float32),
+                       course_centers_m=np.asarray(self.course_centers, dtype=np.float64))
+        if self.observations:
+            rgb, imu = zip(*self.observations)
+            payload.update(rgb=np.asarray(rgb), imu=np.asarray(imu))
+        temporary = self.telemetry.with_suffix(".tmp.npz")
+        np.savez_compressed(temporary, **payload)
+        temporary.replace(self.telemetry)
 
     def record_demonstration(self, image, update, command, weight=1., executed=None):
         if self.dataset and update.t >= .75 and command.arm >= 1700:
@@ -179,6 +205,7 @@ class CameraFeed:
                     "sample_rate": self.fps, "actions": self.actions,
                 }, separators=(",", ":")) + "\n")
                 print(f"[A2RL] FPV replay: {len(self.actions)} frames written to {self.path}", flush=True)
+            self.save_telemetry()
         finally:
             if self.chase_worker is not None:
                 self.chase_worker.join()
@@ -248,7 +275,7 @@ def autopilot(update):
     image = camera.update(update) if camera is not None else None
     if image is not None:
         # The harness sends the previous command before sampling this tick.
-        camera.record_command(last_command)
+        camera.record_command(last_command, update, image)
     if ended and camera is not None:
         camera.close()
     last_command = choose_command(update, image, ended)

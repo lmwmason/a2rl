@@ -115,6 +115,8 @@ def configure_course(course, lib, season2, asset, camera_feed, report_path):
             raise RuntimeError(f"Cannot read A2RL gate {i}")
     course.EASY_COURSE = tuple(replace(frame, index=lap * n + frame.index)
                                for lap in range(2) for frame in frames[:n])
+    if camera_feed:
+        camera_feed.course_centers = tuple(frame.center for frame in course.EASY_COURSE)
     spawn = course.spawn_gates
     course.spawn_gates = lambda world, path: spawn(world, tuple(frames))
     pitch = 0.0 if season2 else 90.0
@@ -330,6 +332,7 @@ def main():
         if not hasattr(lib, "sim_render_pose"):
             raise RuntimeError("Rebuild the simulator library for the shared FPV camera.")
         pitch_override = os.environ.get("A2RL_FPV_MOUNT_PITCH")
+        telemetry = os.environ.get("A2RL_ELODIN_TELEMETRY")
         elodin_policy.camera = elodin_policy.CameraFeed(
             lib, Path(path).expanduser().resolve() if path else None, int(cfg.fpv_rate),
             float(os.environ.get("A2RL_FPV_BREAKUP", "0")),
@@ -338,6 +341,8 @@ def main():
             Path(dataset).expanduser().resolve() if dataset else None,
             mount_pitch=float(pitch_override) if pitch_override is not None else None,
             chase=os.environ.get("A2RL_ELODIN_CHASE") == "1",
+            telemetry=Path(telemetry) if telemetry else None,
+            record_memory=os.environ.get("A2RL_ELODIN_MEMORY_OBSERVATIONS") == "1",
         )
     explicit_report = os.environ.get("A2RL_ELODIN_REPORT")
     report = (Path(explicit_report).expanduser().resolve() if explicit_report else

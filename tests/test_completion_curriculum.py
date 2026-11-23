@@ -114,6 +114,8 @@ def test_gate_exit_progress_scores_only_completed_transitions():
               "reward_trace": report}
     reference = result | {"reward_trace": report | {"exit_progress_m": [0., None]}}
     assert reward_terms(result, reference, exit_progress_weight=.35)["gate_exit"] > 0.
+    assert reward_terms(result, reference, exit_progress_weight=.35, exit_progress_gates=(1,))["gate_exit"] > 0.
+    assert reward_terms(result, reference, exit_progress_weight=.35, exit_progress_gates=(2,))["gate_exit"] == 0.
     assert "gate_exit" not in reward_terms(result, reference)
     missed = result | {"gates": 1, "contact": True, "gate_times": [1.]}
     assert reward_terms(missed, reference, exit_progress_weight=.35)["gate_exit"] == 0.

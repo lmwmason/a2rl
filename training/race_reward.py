@@ -64,7 +64,7 @@ class GateTrace:
                 "crossing_offsets_m": self.crossing_offsets_m}
 
 
-def reward_terms(result, reference, *, exit_progress_weight=0.):
+def reward_terms(result, reference, *, exit_progress_weight=0., exit_progress_gates=()):
     trace = result["reward_trace"]
     actual = result["gate_times"]
     baseline = reference["gate_times"]
@@ -95,7 +95,9 @@ def reward_terms(result, reference, *, exit_progress_weight=0.):
                        reference["reward_trace"]["exit_progress_m"][:paired])
         terms["gate_exit"] = exit_progress_weight * sum(
             math.tanh((current - previous) / .5)
-            for current, previous in advances if current is not None and previous is not None
+            for index, (current, previous) in enumerate(advances)
+            if (not exit_progress_gates or index % 12 + 1 in exit_progress_gates)
+            and current is not None and previous is not None
         )
     return terms
 

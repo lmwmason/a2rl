@@ -73,10 +73,16 @@ def train(args):
     episodes = state.get("rollouts", 0)
     radius = state.get("exploration_radius", args.radius)
     settings = SimpleNamespace(harness=args.harness, out=output, public=None, in_process=True,
-                               metrics_only=True, rollout_corrections=False, reward_trace=True)
+                               metrics_only=True, rollout_corrections=False, reward_trace=True,
+                               telemetry=bool(args.exit_progress_weight))
     os.environ["A2RL_HANDOFF_SITL_EXECUTABLE"] = str(args.firmware)
-    score = partial(reward_terms, exit_progress_weight=args.exit_progress_weight)
-    variant = "-gate-exit-v1" if args.exit_progress_weight else ""
+    exit_gates = tuple(sorted(set(args.exit_progress_gates)))
+    score = partial(reward_terms, exit_progress_weight=args.exit_progress_weight,
+                    exit_progress_gates=exit_gates)
+    variant = ""
+    if args.exit_progress_weight:
+        gates = "-".join(map(str, exit_gates)) or "all"
+        variant = f"-gate-exit-v2-{gates}"
     while (not args.stop_after_round or iteration < args.stop_after_round) and not (args.run / SPEED_MARKER).is_file():
         iteration += 1
         side = STARTS[(iteration - 1) % len(STARTS)]
@@ -141,6 +147,7 @@ def train(args):
             "steps": steps, "rollouts": episodes, "algorithm": "Antithetic evolutionary policy search",
             "exploration_radius": radius, "reward_version": REWARD_VERSION,
             "exit_progress_weight": args.exit_progress_weight,
+            "exit_progress_gates": exit_gates,
             "mean_return": mean(sum(terms.values()) for terms in scores),
             "reward_components": {key: mean(terms[key] for terms in scores) for key in scores[0]},
             "accepted": accepted, "gates_mean": mean(result["gates"] for result in outcomes),
@@ -181,6 +188,8 @@ def main():
                         help="Last round number to execute, or zero for unlimited.")
     parser.add_argument("--exit-progress-weight", type=float, default=0.,
                         help="Optional weight for progress into the following gate after crossing.")
+    parser.add_argument("--exit-progress-gates", type=int, nargs="+", default=[],
+                        help="Restrict the exit bonus to these 1-based gate numbers on each lap.")
     args = parser.parse_args()
     args.run, args.harness, args.firmware = (path.resolve() for path in (args.run, args.harness, args.firmware))
     if (not 1 <= args.directions <= 8 or not 1 <= args.port_offset <= 49800 - 200 * args.directions
@@ -190,6 +199,8 @@ def main():
         parser.error("Speed training requires the pace-qualified checkpoint and executable SITL firmware.")
     if args.stop_after_round < 0 or not 0. <= args.exit_progress_weight <= 1.:
         parser.error("Use a nonnegative round count and a gate exit weight from zero to one.")
+    if any(not 1 <= gate <= 12 for gate in args.exit_progress_gates):
+        parser.error("Exit bonus gate numbers must be between 1 and 12.")
     torch.set_num_threads(1)
     with (args.run / "training.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)

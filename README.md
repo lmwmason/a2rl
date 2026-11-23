@@ -142,6 +142,8 @@ A CNN checkpoint can also be continued with a larger RGB and IMU observation his
 
 A separate completion experiment can generate slower demonstrations with `A2RL_ELODIN_TEACHER_PACE=.80`. The pace setting applies to teacher labels and interventions. The student still runs on the stock aircraft, and `--gate-progress-loss` supervises the shared visual-inertial features using recorded gate labels during training.
 
+Completion experiments may use `--preserve-successful-prefixes` to retain a portion of the actions actually flown on independently cleared approaches, while continuing to train from teacher labels around failures. The optional `--action-horizon 4` predicts four consecutive stick targets. Inference averages overlapping forecasts for the current control tick and uses the same RGB and IMU observations.
+
 The dashboard's Student view opens the latest Elodin + Betaflight student recording with its matching stick inputs. The status panel reports the worker’s training progress. The loopback feed serves only the status and published replay assets. An HTTPS tunnel connects the public dashboard to this feed on GPU 4.
 
 ## Watch or download replays

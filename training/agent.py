@@ -89,7 +89,8 @@ class Critic(nn.Module):
 
 
 class Agent:
-    def __init__(self, stack, device, hover_stick, with_imu=False, backbone="cnn", pretrained=False):
+    def __init__(self, stack, device, hover_stick, with_imu=False, backbone="cnn",
+                 pretrained=False, action_horizon=1):
         self.device = device
         self.stack = stack
         self.backbone = backbone
@@ -111,6 +112,12 @@ class Agent:
         self.critic_opt = torch.optim.Adam([*self.critic.parameters(), *self.observation_parameters()], lr=1e-4)
         self.actor_opt = torch.optim.Adam(self.actor.parameters(), lr=1e-4)
         self.reference_actor = None
+        self.action_horizon = action_horizon
+        self.future_actor = None
+        if action_horizon > 1:
+            self.future_actor = nn.Linear(self.actor[-1].in_features, (action_horizon - 1) * 4).to(device)
+            nn.init.zeros_(self.future_actor.weight)
+            nn.init.zeros_(self.future_actor.bias)
 
     def observation_parameters(self):
         parameters = list(self.encoder.parameters())
@@ -136,6 +143,19 @@ class Agent:
         if noise:
             action = (action + torch.randn_like(action) * noise).clamp(-1., 1.)
         return action.cpu().numpy()
+
+    def action_sequence(self, features):
+        hidden = self.actor[:-1](features)
+        current = self.actor[-1](hidden).unsqueeze(1)
+        if self.future_actor is None:
+            return current.tanh()
+        future = current + self.future_actor(hidden).reshape(-1, self.action_horizon - 1, 4)
+        return torch.cat((current, future), dim=1).tanh()
+
+    @torch.no_grad()
+    def forecast(self, frames, imu):
+        obs = pixel_tensor(frames, self.device).float() / 255. - .5
+        return self.action_sequence(self.policy_features(obs, imu)).cpu().numpy()
 
     def update(self, batch, noise, *, update_actor=True, demonstration=None, imitation_weight=0.):
         obs, action, reward, discount, next_obs, *inertial = batch
@@ -192,6 +212,9 @@ class Agent:
                   "target": self.target.state_dict()}
         if self.imu_encoder is not None:
             params["imu_encoder"] = self.imu_encoder.state_dict()
+        if self.future_actor is not None:
+            params["future_actor"] = self.future_actor.state_dict()
+            params["action_horizon"] = self.action_horizon
         if self.backbone != "cnn":
             params["vision_backbone"] = self.backbone
             params["frame_stack"] = self.stack
@@ -208,6 +231,10 @@ class Agent:
         if self.imu_encoder is not None:
             self.imu_encoder.load_state_dict(params["imu_encoder"])
         self.actor.load_state_dict(params["actor"])
+        if "future_actor" in params:
+            if self.future_actor is None or params.get("action_horizon") != self.action_horizon:
+                raise ValueError("Checkpoint prediction horizon does not match this policy.")
+            self.future_actor.load_state_dict(params["future_actor"])
         for model, key in ((self.critic, "critic"), (self.target, "target")):
             state = params[key]
             if self.imu_encoder is not None and state["q1.0.weight"].shape[1] == 132:
@@ -280,6 +307,7 @@ def load_policy(weights):
     params = torch.load(BytesIO(weights), map_location="cpu", weights_only=True)
     stack = checkpoint_stack(params)
     agent = Agent(stack, "cpu", 0., with_imu="imu_encoder" in params,
-                  backbone=params.get("vision_backbone", "cnn"))
+                  backbone=params.get("vision_backbone", "cnn"),
+                  action_horizon=params.get("action_horizon", 1))
     agent.set_weights(params)
     return agent

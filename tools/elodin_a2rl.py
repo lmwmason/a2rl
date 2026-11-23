@@ -158,7 +158,7 @@ def configure_course(course, lib, season2, asset, camera_feed, report_path):
         if camera_feed:
             camera_feed.close()
             if (finished and not crashed) or (elodin_policy.shadow_expert and len(camera_feed.samples) >= 8):
-                camera_feed.save_demonstration()
+                camera_feed.save_demonstration(last + 1, elodin_policy.shadow_expert and not elodin_policy.assisted_rollout)
         if report_path:
             from training.betaflight_link import timed_mean_throttle
 
@@ -334,7 +334,7 @@ def main():
     handoff = elodin_policy.completion_profile.get("handoff")
     if handoff is not None:
         if (not elodin_policy.assisted_rollout or not 0 <= handoff["after_gates"] < handoff["target_gates"] <= len(course.EASY_COURSE)
-                or not os.environ.get("A2RL_ELODIN_IN_PROCESS") == "1"):
+                or os.environ.get("A2RL_ELODIN_IN_PROCESS") != "1" or not 0. <= handoff.get("delay_s", 0.) <= 1.):
             raise ValueError("Gate handoffs require an in-process assisted rollout with an ordered segment.")
         elodin_policy.handoff = handoff
     if teacher or elodin_policy.shadow_expert:

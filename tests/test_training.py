@@ -68,7 +68,22 @@ class DemonstrationTest(unittest.TestCase):
         image, label, _ = clip.batch(np.array([1, 2, 3]))
         np.testing.assert_array_equal(image[:, :, 0, 0, 0], [[0, 1], [2, 2], [2, 3]])
         np.testing.assert_array_equal(label, actions[1:])
+        _, _, _, future = clip.batch(np.arange(4), action_horizon=3)
+        np.testing.assert_array_equal(future, actions[[[1, 1], [1, 1], [3, 3], [3, 3]]])
 
+
+    def test_self_imitation_retains_only_successful_independent_commands(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "clip.npz"
+            frames = np.zeros((10, 1, 1, 3), dtype=np.uint8)
+            original = np.zeros((10, 4), dtype=np.float32)
+            np.savez(path, frames=frames, actions=original, executed=np.ones_like(original),
+                     timestamps=np.arange(10) / 30, next_gate=np.arange(10),
+                     weights=np.ones(10, dtype=np.float32), independent=True, passed=4)
+            clip = Clip(path, 2, 1, 1, preserve_success=True)
+            self.assertEqual(clip.preserved_rows, 4)
+            np.testing.assert_allclose(clip.actions[:4], .65)
+            np.testing.assert_array_equal(clip.actions[4:], original[4:])
 
     def test_completion_batch_emphasizes_independent_approaches(self):
         with TemporaryDirectory() as directory:

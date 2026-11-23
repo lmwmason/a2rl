@@ -1,5 +1,6 @@
 """Bind the project's RGB+IMU policy to Elodin's Betaflight RC channels."""
 import atexit
+from collections import deque
 import ctypes as ct
 import json
 import os
@@ -18,6 +19,7 @@ hover = .17
 control_rate = 30
 last_expert_sample = -1
 pilot = None
+forecasts = deque()
 frames = imu = None
 held = RCCommand()
 last_command = held
@@ -28,6 +30,7 @@ assisted_rollout = False
 completion_profile = {}
 handoff = None
 handoff_frames = 0
+handoff_ready_since = None
 intervention_ticks = 0
 reference_command = None
 student_influence_frames = 0
@@ -109,21 +112,24 @@ class CameraFeed:
         if self.path:
             self.actions.append(mode2_sticks(command))
 
-    def record_demonstration(self, image, update, command, weight=1.):
+    def record_demonstration(self, image, update, command, weight=1., executed=None):
         if self.dataset and update.t >= .75 and command.arm >= 1700:
             frame, inertial = policy_observation(image, update)
-            self.samples.append((frame, inertial, update.t, mode2_sticks(command), weight, update.next_gate_index))
+            self.samples.append((frame, inertial, update.t, mode2_sticks(command), weight, update.next_gate_index,
+                                 mode2_sticks(command if executed is None else executed)))
 
-    def save_demonstration(self):
+    def save_demonstration(self, passed=0, independent=False):
         if self.dataset and self.samples:
-            frames, inertial, times, actions, weights, gates = zip(*self.samples)
+            frames, inertial, times, actions, weights, gates, executed = zip(*self.samples)
             self.dataset.parent.mkdir(parents=True, exist_ok=True)
             np.save(self.dataset.with_suffix(".imu.npy"), np.asarray(inertial, dtype=np.float32))
             temporary = self.dataset.with_suffix(".tmp.npz")
             np.savez_compressed(temporary, frames=np.asarray(frames),
                                 actions=np.asarray(actions, dtype=np.float32),
                                 timestamps=np.asarray(times),
-                                weights=np.asarray(weights, dtype=np.float32), next_gate=np.asarray(gates, dtype=np.int16))
+                                weights=np.asarray(weights, dtype=np.float32), next_gate=np.asarray(gates, dtype=np.int16),
+                                executed=np.asarray(executed, dtype=np.float32),
+                                independent=bool(independent), passed=int(passed))
             temporary.replace(self.dataset)
             print(f"[A2RL] Saved {len(times)} RGB/IMU/Mode 2 samples to {self.dataset}", flush=True)
 
@@ -222,17 +228,18 @@ def autopilot(update):
             if update.next_gate_index == completion_profile.get("focus_gate"):
                 weight *= 2.
             if handoff is not None:
-                weight = 5. if update.next_gate_index >= handoff["after_gates"] else .20
+                weight = 5. if handoff_frames > 0 else .20
             if completion_profile.get("intervention") and intervention_ticks:
                 weight = 4.
             target = reference_command if assisted_rollout else expert(update)
-            camera.record_demonstration(image, update, target, weight)
+            camera.record_demonstration(image, update, target, weight, executed=last_command)
     return last_command
 
 
 def choose_command(update, image, ended):
     global pilot, frames, imu, held, last_expert_sample, reference_command
     global student_influence_frames, reduced_assistance_frames, handoff_frames, intervention_ticks
+    global handoff_ready_since
     if ended or update.t < heat_arm_time:
         return RCCommand()
     if update.t < heat_arm_time + .25:
@@ -269,11 +276,20 @@ def choose_command(update, image, ended):
         imu[:-1], imu[-1] = imu[1:], sensor
     if handoff is not None:
         reference_command = expert(update)
-        if update.next_gate_index < handoff["after_gates"]:
+        if update.next_gate_index >= handoff["after_gates"] and handoff_ready_since is None:
+            handoff_ready_since = update.t
+        if handoff_ready_since is None or update.t < handoff_ready_since + handoff.get("delay_s", 0.):
             held = reference_command
             return held
         handoff_frames += 1
-    sticks = pilot.action(frames[None], imu=imu[None])[0]
+    if pilot.action_horizon > 1:
+        forecasts.appendleft(pilot.forecast(frames[None], imu[None])[0])
+        if len(forecasts) > pilot.action_horizon:
+            forecasts.pop()
+        sticks = np.average([prediction[age] for age, prediction in enumerate(forecasts)],
+                            axis=0, weights=.45 ** np.arange(len(forecasts)))
+    else:
+        sticks = pilot.action(frames[None], imu=imu[None])[0]
     if handoff is not None:
         held = rc_command(sticks)
         return held

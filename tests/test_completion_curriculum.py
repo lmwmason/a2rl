@@ -24,6 +24,8 @@ def test_gate_handoff_moves_earlier_after_two_clear_segments(tmp_path):
     assert handoff_schedule(independent, log) == {"after_gates": 2, "target_gates": 5}
     log.write_text((json.dumps(result | {"gates": 4, "contact": True}) + "\n") * 3)
     assert handoff_schedule(independent, log) == {"after_gates": 4, "target_gates": 5}
+    log.write_text((json.dumps(result | {"after_gates": 4, "gates": 4, "contact": True}) + "\n") * 3)
+    assert handoff_schedule(independent, log) == {"after_gates": 4, "target_gates": 5, "delay_s": .15}
 
 
 def test_preserve_best_measured_checkpoint_when_latest_regresses(tmp_path):

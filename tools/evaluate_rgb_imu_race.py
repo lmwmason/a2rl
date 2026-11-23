@@ -40,16 +40,25 @@ def handoff_schedule(history, log_path):
     if not previous:
         return {"after_gates": max(1, target - 2), "target_gates": target}
     prefix = previous[-1]["after_gates"]
-    peers = [row for row in previous if row["after_gates"] == prefix][-3:]
+    delay = previous[-1].get("delay_s", 0.)
+    peers = [row for row in previous if row["after_gates"] == prefix and row.get("delay_s", 0.) == delay][-3:]
     clears = sum(row["gates"] >= target and not row["contact"] and row["student_frames"] > 0 for row in peers)
     if clears >= 2:
-        if prefix == 0:
+        if delay:
+            delay = round(max(0., delay - .15), 2)
+        elif prefix == 0:
             target = min(24, target + 1)
         else:
             prefix -= 1
     elif len(peers) == 3 and clears == 0:
-        prefix = min(target - 1, prefix + 1)
-    return {"after_gates": prefix, "target_gates": target}
+        if prefix < target - 1:
+            prefix += 1
+        else:
+            delay = round(min(.75, delay + .15), 2)
+    plan = {"after_gates": prefix, "target_gates": target}
+    if delay:
+        plan["delay_s"] = delay
+    return plan
 
 
 def evaluate(args, weights, session, side, correction=None, *, assisted=False, seconds=35, profile=None, port_offset=0):
@@ -295,8 +304,7 @@ def watch(args):
                             except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as error:
                                 print(f"Handoff failed to produce a report: {error}", flush=True)
                             else:
-                                note = {"round": progress.get("round"), "after_gates": handoff["after_gates"],
-                                        "target_gates": handoff["target_gates"], "gates": outcome["gates"],
+                                note = {"round": progress.get("round"), **handoff, "gates": outcome["gates"],
                                         "contact": outcome["contact"], "contact_kind": outcome.get("contact_kind"),
                                         "student_frames": outcome.get("handoff_frames", 0)}
                                 with (args.out / "handoff-history.jsonl").open("a") as log:

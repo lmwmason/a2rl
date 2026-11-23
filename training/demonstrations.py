@@ -5,11 +5,12 @@ import numpy as np
 
 
 class Clip:
-    def __init__(self, path, stack, height, width, with_imu=False):
+    def __init__(self, path, stack, height, width, with_imu=False, *, preserve_success=False):
         path = Path(path)
         shape = (height, width, 3)
         self.approach_rows = None
         self.gate_numbers = None
+        self.preserved_rows = 0
         if path.is_dir():
             actions = np.fromfile(path / "actions.f32", dtype="<f4").reshape(-1, 4)
             self.frames = np.memmap(path / "frames.rgb", mode="r", dtype=np.uint8).reshape(-1, *shape)
@@ -26,6 +27,15 @@ class Clip:
                     gates = data["next_gate"]
                     if gates.shape == (len(actions),):
                         self.gate_numbers = gates.astype(np.int64)
+                    if (preserve_success and self.gate_numbers is not None and {"executed", "independent", "passed"} <= set(data.files)
+                            and bool(data["independent"]) and int(data["passed"]) >= 3):
+                        executed = data["executed"]
+                        if executed.shape != actions.shape or not np.isfinite(executed).all():
+                            raise ValueError(f"Malformed executed actions in {path}.")
+                        passed = int(data["passed"])
+                        cleared = (self.gate_numbers >= 0) & (self.gate_numbers < passed)
+                        actions[cleared] = .65 * executed[cleared] + .35 * actions[cleared]
+                        self.preserved_rows = int(cleared.sum())
                     if self.gate_numbers is not None and len(gates) >= stack:
                         # Learn the approach before contact, where steering still has time to work.
                         end = max(1, len(gates) - 3)
@@ -47,6 +57,9 @@ class Clip:
                 raise ValueError(f"Malformed synchronized IMU samples for {path}.")
         self.offsets = np.arange(1 - stack, 1)
         self.start = np.maximum.accumulate(np.where(gaps, np.arange(len(gaps)), 0))
+        last = len(gaps) - 1
+        boundaries = np.r_[np.where(gaps[1:], np.arange(last), last), last]
+        self.end = np.minimum.accumulate(boundaries[::-1])[::-1]
 
     def __len__(self):
         return len(self.actions)
@@ -58,7 +71,7 @@ class Clip:
             uniform[:focus_count] = rng.choice(self.approach_rows, size=focus_count)
         return uniform
 
-    def batch(self, rows, *, gate_labels=False):
+    def batch(self, rows, *, gate_labels=False, action_horizon=1):
         indices = np.maximum(rows[:, None] + self.offsets, self.start[rows, None])
         batch = self.frames[indices], self.actions[rows], self.weights[rows]
         if self.imu is not None:
@@ -66,16 +79,20 @@ class Clip:
         if gate_labels:
             gates = self.gate_numbers[rows] if self.gate_numbers is not None else np.full(len(rows), -1)
             batch = (*batch, gates)
+        if action_horizon > 1:
+            future = np.minimum(rows[:, None] + np.arange(1, action_horizon), self.end[rows, None])
+            batch = (*batch, self.actions[future])
         return batch
 
 
 class Demonstrations:
-    def __init__(self, real_paths, sim_paths, stack, height, width, seed, with_imu=False, primary_fraction=.40, gate_labels=False):
+    def __init__(self, real_paths, sim_paths, stack, height, width, seed, with_imu=False, primary_fraction=.40, gate_labels=False, action_horizon=1):
         self.real = [Clip(path, stack, height, width, with_imu) for path in real_paths]
         self.sim = [Clip(path, stack, height, width, with_imu) for path in sim_paths]
         self.rng = np.random.default_rng(seed)
         self.primary_fraction = primary_fraction
         self.gate_labels = gate_labels
+        self.action_horizon = action_horizon
         self.independent = []
         self.assisted = []
         self.handoff = []
@@ -84,7 +101,8 @@ class Demonstrations:
 
     def _sample_group(self, group, count, *, prioritize_approach=False):
         counts = np.bincount(self.rng.integers(len(group), size=count), minlength=len(group))
-        return [clip.batch(clip.sample_rows(self.rng, rows, prioritize_approach), gate_labels=self.gate_labels)
+        return [clip.batch(clip.sample_rows(self.rng, rows, prioritize_approach), gate_labels=self.gate_labels,
+                           action_horizon=self.action_horizon)
                 for clip, rows in zip(group, counts) if rows]
 
     def sample(self, count):

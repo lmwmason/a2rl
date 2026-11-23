@@ -84,7 +84,11 @@ def evaluate(args, weights, session, side, correction=None, *, assisted=False, s
         "ELODIN_ASSETS_DIR": str(args.out / "assets"),
         "A2RL_SIM_LIB": str(ROOT / "target/release/liba2rl_sim.so"),
     }
-    environment.pop("A2RL_FPV_MOUNT_PITCH", None)
+    camera_pitch = getattr(args, "camera_pitch", None)
+    if camera_pitch is None:
+        environment.pop("A2RL_FPV_MOUNT_PITCH", None)
+    else:
+        environment["A2RL_FPV_MOUNT_PITCH"] = str(camera_pitch)
     environment.pop("A2RL_ELODIN_DEMONSTRATION", None)
     if port_offset and (firmware := os.environ.get("A2RL_HANDOFF_SITL_EXECUTABLE")):
         environment["A2RL_SITL_EXECUTABLE"] = firmware
@@ -356,7 +360,10 @@ def main():
     parser.add_argument("--evaluation-port-offset", type=int, default=0,
                         help="Use a separate Betaflight SITL instance for independent evaluation.")
     parser.add_argument("--metrics-only", action="store_true", help="Write reports without encoding replay media.")
+    parser.add_argument("--camera-pitch", type=float, help="Evaluate a separate camera mount configuration in degrees.")
     args = parser.parse_args()
+    if args.camera_pitch is not None and not 0. <= args.camera_pitch < 90.:
+        parser.error("Camera pitch must be finite and between 0 and 90 degrees.")
     if not 0 <= args.evaluation_port_offset <= 50000 or (args.evaluation_port_offset and args.handoff_completion):
         parser.error("An alternate evaluation port needs a separate evaluator without gate handoffs.")
     if args.metrics_only and args.public:

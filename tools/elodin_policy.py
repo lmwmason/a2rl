@@ -28,6 +28,7 @@ assisted_rollout = False
 completion_profile = {}
 handoff = None
 handoff_frames = 0
+intervention_ticks = 0
 reference_command = None
 student_influence_frames = 0
 reduced_assistance_frames = 0
@@ -222,6 +223,8 @@ def autopilot(update):
                 weight *= 2.
             if handoff is not None:
                 weight = 5. if update.next_gate_index >= handoff["after_gates"] else .20
+            if completion_profile.get("intervention") and intervention_ticks:
+                weight = 4.
             target = reference_command if assisted_rollout else expert(update)
             camera.record_demonstration(image, update, target, weight)
     return last_command
@@ -229,7 +232,7 @@ def autopilot(update):
 
 def choose_command(update, image, ended):
     global pilot, frames, imu, held, last_expert_sample, reference_command
-    global student_influence_frames, reduced_assistance_frames, handoff_frames
+    global student_influence_frames, reduced_assistance_frames, handoff_frames, intervention_ticks
     if ended or update.t < heat_arm_time:
         return RCCommand()
     if update.t < heat_arm_time + .25:
@@ -277,6 +280,20 @@ def choose_command(update, image, ended):
     if assisted_rollout:
         reference_command = expert(update)
         held = reference_command
+        if completion_profile.get("intervention"):
+            if update.next_gate_index < completion_profile.get("intervention_after", 0):
+                return held
+            reference = np.asarray(mode2_sticks(reference_command))
+            tolerance = np.asarray([.16, .075, .18, .18])
+            if np.any(np.abs(sticks - reference) > tolerance):
+                intervention_ticks = 5
+            if intervention_ticks:
+                intervention_ticks -= 1
+            else:
+                held = rc_command(sticks)
+                student_influence_frames += 1
+                reduced_assistance_frames += 1
+            return held
         # Give the learner brief control perturbations after takeoff while the
         # expert keeps the rollout close enough to reach the rest of the course.
         sample = int(update.t * control_rate + 1e-6)

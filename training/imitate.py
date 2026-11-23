@@ -8,7 +8,7 @@ from time import sleep
 import numpy as np
 import torch
 
-from .agent import Agent, pixel_tensor, random_shift, stick_loss
+from .agent import Agent, extend_cnn_history, pixel_tensor, random_shift, stick_loss
 from .demonstrations import Clip, Demonstrations
 
 
@@ -42,6 +42,8 @@ def main():
     parser.add_argument("--batch", type=int, default=96)
     parser.add_argument("--seed", type=int, default=21)
     parser.add_argument("--stack", type=int, default=4, help="Number of consecutive RGB frames per observation.")
+    parser.add_argument("--extend-history", action="store_true",
+                        help="Start a larger RGB+IMU window from the latest CNN weights.")
     parser.add_argument("--offline", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--imu", action="store_true", help="Fuse synchronized gyro and accelerometer samples with RGB.")
     parser.add_argument("--backbone", choices=("cnn", "mobilenet-v3-small"), default="cnn")
@@ -75,7 +77,7 @@ def main():
                   backbone=weights.get("vision_backbone", "cnn") if weights else args.backbone,
                   pretrained=weights is None and args.backbone != "cnn")
     if weights is not None:
-        agent.set_weights(weights)
+        agent.set_weights(extend_cnn_history(weights, stack) if args.extend_history else weights)
     progress = weights.get("training_progress", {}) if resumed else {}
     first_round, first_step, first_samples = (progress.get(key, 0) for key in ("round", "updates", "steps"))
     demos = Demonstrations(args.real, args.sim, stack, height, width, args.seed, with_imu=args.imu,
@@ -84,7 +86,8 @@ def main():
         print(json.dumps({"imitation_datasets": [
             {"path": str(path), "frames": len(clip)}
             for path, clip in zip(args.real + args.sim, demos.real + demos.sim)
-        ], "batch": args.batch, "primary_fraction": args.primary_fraction, "device": args.device}), flush=True)
+        ], "batch": args.batch, "primary_fraction": args.primary_fraction, "device": args.device,
+           "frame_stack": stack}), flush=True)
     if {path.resolve() for path in args.real + args.sim} & {path.resolve() for path in args.held_out}:
         parser.error("Hold out complete flights from training.")
     held_out = [Clip(path, stack, height, width, args.imu) for path in args.held_out]
@@ -125,7 +128,11 @@ def main():
                 demos.handoff = [correction_clips[path] for path in handoff] if stage == "finish" else []
                 last_correction = recent[-1].name
             if (step - 1) % args.eval_every == 0 and stage == "finish" and args.completion_marker.is_file():
-                agent.load(args.completion_marker)
+                if args.extend_history:
+                    qualified = torch.load(args.completion_marker, map_location="cpu", weights_only=True)
+                    agent.set_weights(extend_cnn_history(qualified, stack))
+                else:
+                    agent.load(args.completion_marker)
                 optimizer.state.clear()
                 best_rank = None
                 demos.primary_fraction = .80

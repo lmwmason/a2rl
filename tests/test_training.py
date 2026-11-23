@@ -6,7 +6,7 @@ from tempfile import TemporaryDirectory
 import numpy as np
 import torch
 
-from training.agent import Agent
+from training.agent import Agent, extend_cnn_history
 from training.betaflight_link import timed_mean_throttle
 from training.demonstrations import Clip, Demonstrations
 from training.replay import Replay
@@ -125,6 +125,16 @@ class SharedCameraTest(unittest.TestCase):
 
 
 class QualifiedPolicyTest(unittest.TestCase):
+    def test_extended_history_preserves_initial_cnn_policy(self):
+        old = Agent(2, "cpu", 0., with_imu=True)
+        new = Agent(6, "cpu", 0., with_imu=True)
+        new.set_weights(extend_cnn_history(old.weights(), 6))
+        rng = np.random.default_rng(2)
+        frames = rng.integers(0, 256, (2, 6, 16, 12, 3), dtype=np.uint8)
+        inertial = rng.normal(size=(2, 6, 6)).astype(np.float32)
+        expected = old.action(frames[:, -2:].copy(), imu=inertial[:, -2:])
+        np.testing.assert_allclose(new.action(frames, imu=inertial), expected, atol=1e-6)
+
     def test_rl_updates_keep_the_reference_and_frozen_features_and_allow_rollback(self):
         with TemporaryDirectory() as directory:
             path = Path(directory) / "qualified.pt"

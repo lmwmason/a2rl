@@ -30,7 +30,7 @@ class Clip:
                         self.approach_rows = rows[gates[rows] >= gates[-1] - 1]
                         if not len(self.approach_rows):
                             self.approach_rows = None
-        if len(actions) < stack or self.frames.shape != (len(actions), *shape):
+        if not len(actions) or self.frames.shape != (len(actions), *shape):
             raise ValueError(f"The RGB frame count or resolution is invalid in {path}.")
         if (actions.shape != (len(self.frames), 4) or not np.isfinite(actions).all()
                 or self.weights.shape != (len(actions),) or not np.isfinite(self.weights).all()

@@ -138,6 +138,8 @@ The application benchmark uses the reference airframe profile, 70° camera mount
 
 The handoff curriculum initializes the approach in a continuous firmware rollout flown by the teacher, then transfers full control to the student while collecting expert labels. The curriculum moves the transfer earlier when the same segment clears repeatedly. Independent qualification always starts from the launch pad with the student in control. Set `--handoff-port-offset 1000` and `A2RL_HANDOFF_SITL_EXECUTABLE` to an instance-patched Betaflight binary to run handoffs concurrently with independent evaluations.
 
+A CNN checkpoint can also be continued with a larger RGB and IMU observation history by setting `A2RL_TRAIN_STACK`. The extra history starts with zero input weights and learns from the same recorded trajectories. An independent evaluator may use a separate patched Betaflight instance with `--evaluation-port-offset` and can skip replay encoding with `--metrics-only`.
+
 The dashboard's Student view opens the latest Elodin + Betaflight student recording with its matching stick inputs. The status panel reports the worker’s training progress. The loopback feed serves only the status and published replay assets. An HTTPS tunnel connects the public dashboard to this feed on GPU 4.
 
 ## Watch or download replays

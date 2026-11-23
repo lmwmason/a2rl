@@ -4,6 +4,11 @@ set -euo pipefail
 export A2RL_COURSE=2026-practice
 python=${A2RL_TRAIN_PYTHON:-python3}
 device=${A2RL_TRAIN_DEVICE:-cuda}
+stack=${A2RL_TRAIN_STACK:-8}
+history=()
+if [[ "$stack" != 8 ]]; then
+    history=(--extend-history)
+fi
 run=${1:?Usage: run_rgb_imu_race.sh RUN_DIR SEED_WEIGHTS DEMO...}
 seed=${2:?Missing RGB+IMU seed weights}
 shift 2
@@ -18,7 +23,7 @@ imitation="$run/recovery"
 qualified="$run/imitation-qualified.pt"
 
 if [[ ! -s "$qualified" ]]; then
-    "$python" -u -m training.imitate --device "$device" --imu --stack 8 \
+    "$python" -u -m training.imitate --device "$device" --imu --stack "$stack" "${history[@]}" \
         --initialize "$seed" --real "$@" --out "$imitation" \
         --correction-directory "$run/firmware-recovery" --until "$qualified" \
         --completion-marker "$run/completion-qualified.pt" \

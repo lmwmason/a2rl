@@ -58,7 +58,7 @@ def evaluate(args, weights, session, side, correction=None, *, assisted=False, s
     if report.is_file():
         return json.loads(report.read_text())
     database = Path(mkdtemp(prefix="attempt-", dir=session))
-    training_only = bool((profile or {}).get("handoff"))
+    training_only = bool((profile or {}).get("handoff")) or getattr(args, "metrics_only", False)
     environment = os.environ | {
         "A2RL_COURSE": "2026-practice",
         "A2RL_ELODIN_ROOT": str(args.harness),
@@ -280,7 +280,9 @@ def watch(args):
                                 print(json.dumps({"handoff_result": note}), flush=True)
                     else:
                         nominal_profile = {key: value for key, value in (profile or {}).items() if key != "handoff"}
-                        result = evaluate(args, weights, session, side, correction, seconds=seconds, profile=nominal_profile)
+                        options = {"port_offset": args.evaluation_port_offset} if getattr(args, "evaluation_port_offset", 0) else {}
+                        result = evaluate(args, weights, session, side, correction,
+                                          seconds=seconds, profile=nominal_profile, **options)
                     if result.get("assisted"):
                         raise ValueError("Assisted rollouts cannot count toward qualification.")
                     if index == 0 and not handoff_enabled:
@@ -328,7 +330,14 @@ def main():
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--handoff-port-offset", type=int, default=0,
                         help="Use a second, port-offset SITL instance for concurrent handoffs.")
+    parser.add_argument("--evaluation-port-offset", type=int, default=0,
+                        help="Use a separate Betaflight SITL instance for independent evaluation.")
+    parser.add_argument("--metrics-only", action="store_true", help="Write reports without encoding replay media.")
     args = parser.parse_args()
+    if not 0 <= args.evaluation_port_offset <= 50000 or (args.evaluation_port_offset and args.handoff_completion):
+        parser.error("An alternate evaluation port needs a separate evaluator without gate handoffs.")
+    if args.metrics_only and args.public:
+        parser.error("Publishing replays requires video encoding.")
     if not 0 <= args.handoff_port_offset <= 50000:
         parser.error("The SITL handoff port offset must be between 0 and 50000.")
     if not (args.elodin or args.in_process):

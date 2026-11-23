@@ -254,9 +254,31 @@ class Agent:
         self.actor_opt.state.clear()
 
 
+def checkpoint_stack(params):
+    if "frame_stack" in params:
+        return int(params["frame_stack"])
+    return params["encoder"]["0.weight"].shape[1] // 3
+
+
+def extend_cnn_history(params, stack):
+    previous = checkpoint_stack(params)
+    if stack == previous:
+        return params
+    if stack < previous or params.get("vision_backbone", "cnn") != "cnn":
+        raise ValueError("History extension requires an RGB CNN checkpoint with fewer frames.")
+    extra = stack - previous
+    expanded = {**params, "frame_stack": stack}
+    rgb = params["encoder"]["0.weight"]
+    expanded["encoder"] = {**params["encoder"], "0.weight": F.pad(rgb, (0, 0, 0, 0, 3 * extra, 0))}
+    if "imu_encoder" in params:
+        imu = params["imu_encoder"]["1.weight"]
+        expanded["imu_encoder"] = {**params["imu_encoder"], "1.weight": F.pad(imu, (6 * extra, 0))}
+    return expanded
+
+
 def load_policy(weights):
     params = torch.load(BytesIO(weights), map_location="cpu", weights_only=True)
-    stack = params["frame_stack"] if "frame_stack" in params else params["encoder"]["0.weight"].shape[1] // 3
+    stack = checkpoint_stack(params)
     agent = Agent(stack, "cpu", 0., with_imu="imu_encoder" in params,
                   backbone=params.get("vision_backbone", "cnn"))
     agent.set_weights(params)
